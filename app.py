@@ -439,8 +439,10 @@ def get_sidebar_logo_html():
     """
 
 # ==========================================
-# 4. CALLBACKS DE INTERFAZ
+# 4. CALLBACKS DE INTERFAZ Y ESTADOS
 # ==========================================
+
+# Fuerza valor negativo en cilindros automáticamente
 def force_negative_cyl_od():
     if st.session_state.cil_od > 0: st.session_state.cil_od = -abs(st.session_state.cil_od)
 def force_negative_cyl_oi():
@@ -472,13 +474,27 @@ def on_altura_focal_change():
     digits = "".join(c for c in st.session_state.altura_focal_input if c.isdigit())
     st.session_state.altura_focal_input = f"{digits} mm" if digits else ""
 
-for k in ["subtotal_input", "abono_input", "descuento_input", "altura_focal_input", "monto_rec_input", "monto_gasto_input", "p_compra_input", "p_venta_input", "p_compra_m", "p_venta_m"]:
+# Inicialización segura de todos los estados para los cuadros de texto
+for k in [
+    "doc_input", "nom_input", "cel_input", "dir_input", "ocu_input", "edad_input", "mot_input", "ctrl_input", 
+    "dp_od_input", "dp_oi_input", "obs_input", "subtotal_input", "abono_input", "descuento_input", 
+    "altura_focal_input", "monto_rec_input", "monto_gasto_input", "p_compra_input", "p_venta_input", 
+    "p_compra_m", "p_venta_m"
+]:
     if k not in st.session_state: st.session_state[k] = ""
+
+for k in ["esf_od", "cil_od", "eje_od", "esf_oi", "cil_oi", "eje_oi", "add_input"]:
+    if k not in st.session_state:
+        st.session_state[k] = 0.0 if "eje" not in k else 0
+
 if "last_fac_search" not in st.session_state: st.session_state.last_fac_search = ""
 
+# Lógica de reseteo limpio tras guardar
 if "trigger_clear_doc" in st.session_state and st.session_state.trigger_clear_doc:
-    for k in ["doc_input", "nom_input", "cel_input", "dir_input", "ocu_input", "edad_input", "mot_input", "ctrl_input", "dp_od_input", "dp_oi_input", "obs_input"]: st.session_state[k] = ""
-    for k in ["esf_od", "cil_od", "eje_od", "esf_oi", "cil_oi", "eje_oi", "add_input"]: st.session_state[k] = 0.0 if "eje" not in k else 0
+    for k in ["doc_input", "nom_input", "cel_input", "dir_input", "ocu_input", "edad_input", "mot_input", "ctrl_input", "dp_od_input", "dp_oi_input", "obs_input"]: 
+        st.session_state[k] = ""
+    for k in ["esf_od", "cil_od", "eje_od", "esf_oi", "cil_oi", "eje_oi", "add_input"]: 
+        st.session_state[k] = 0.0 if "eje" not in k else 0
     st.session_state.trigger_clear_doc = False
 
 if "trigger_clear_factura" in st.session_state and st.session_state.trigger_clear_factura:
@@ -570,9 +586,12 @@ if modulo == "👨‍⚕️ Consultorio":
                 res_exist = supabase.table("pacientes").select("*").eq("documento", doc_autofill).execute()
                 if res_exist.data:
                     p = res_exist.data[0]
-                    st.session_state.doc_input = p.get("documento", ""); st.session_state.nom_input = p.get("nombre_completo", "")
-                    st.session_state.cel_input = p.get("celular", ""); st.session_state.dir_input = p.get("direccion", "")
-                    st.session_state.ocu_input = p.get("ocupacion", ""); st.session_state.edad_input = p.get("edad", "")
+                    st.session_state.doc_input = p.get("documento", "")
+                    st.session_state.nom_input = p.get("nombre_completo", "")
+                    st.session_state.cel_input = p.get("celular", "")
+                    st.session_state.dir_input = p.get("direccion", "")
+                    st.session_state.ocu_input = p.get("ocupacion", "")
+                    st.session_state.edad_input = p.get("edad", "")
                     st.toast("✅ Paciente cargado.")
                 else: st.warning("No encontrado.")
 
@@ -802,6 +821,7 @@ elif modulo == "🛍️ Óptica y Facturación":
                 btn_generar_paquete = col_btn1.button("📄 Generar Factura y Órdenes", type="primary", use_container_width=True, disabled=factura_existe)
                 btn_generar_rx = col_btn2.button("👁️ Generar Receta Clínica", use_container_width=True)
                 
+                # ==== ESTA ES LA SECCIÓN DEL PDF SOLICITADA ====
                 if btn_generar_paquete:
                     if not desc_producto or sub_val == 0 or not titular_nombre or not titular_doc:
                         st.warning("⚠️ Debes rellenar la descripción, el subtotal y los datos del titular válidos.")
