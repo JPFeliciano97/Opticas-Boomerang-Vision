@@ -29,14 +29,22 @@ st.markdown("""
         #MainMenu {visibility: hidden;}
         .block-container {padding-top: 2rem; padding-bottom: 2rem;}
         
-        /* CAMPOS DE ENTRADA: Fondo gris claro notable y borde firme para máximo contraste */
-        div[data-baseweb="input"], div[data-baseweb="select"] > div, div[data-baseweb="base-input"], textarea {
-            border: 2px solid #4b5563 !important;
-            background-color: #d1d5db !important;
+        /* CONTENEDOR PRINCIPAL DE ENTRADAS: Fondo gris claro notable y borde firme */
+        div[data-baseweb="input"], div[data-baseweb="select"] > div, textarea {
+            border: 1.5px solid #4b5563 !important;
+            background-color: #cbd5e1 !important;
             border-radius: 6px !important;
             box-shadow: none !important;
         }
         
+        /* ELIMINAR DOBLE BORDE EN CONTENEDORES INTERNOS (BaseWeb / DateInputs / NumberInputs) */
+        div[data-baseweb="base-input"] {
+            border: none !important;
+            background-color: transparent !important;
+            box-shadow: none !important;
+        }
+        
+        /* CAMPOS DE TEXTO E INPUTS REALES */
         .stTextInput input, .stNumberInput input, .stTextArea textarea, .stDateInput input {
             background-color: transparent !important;
             border: none !important;
@@ -54,8 +62,8 @@ st.markdown("""
         
         /* CONTENEDOR Y BOTONES DE NÚMERO (+ / -) */
         div[data-baseweb="spinbutton"] {
-            background-color: #d1d5db !important;
-            border: 2px solid #4b5563 !important;
+            background-color: #cbd5e1 !important;
+            border: 1.5px solid #4b5563 !important;
             border-radius: 6px !important;
             box-shadow: none !important;
         }
@@ -75,9 +83,9 @@ st.markdown("""
 
         /* ESTILO PARA ST.PILLS */
         div[data-testid="stPills"] button {
-            background-color: #e9ecef !important;
+            background-color: #e2e8f0 !important;
             border: none !important;
-            color: #495057 !important;
+            color: #475569 !important;
             border-radius: 6px !important;
             font-weight: 500 !important;
         }
