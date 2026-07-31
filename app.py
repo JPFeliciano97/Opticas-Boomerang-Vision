@@ -16,13 +16,15 @@ import streamlit.components.v1 as components
 # =====================================================================
 st.set_page_config(page_title="Boomerang Visión", layout="wide", page_icon="👓", initial_sidebar_state="expanded")
 
-# Forzar idioma español para componentes de fecha (BaseWeb / HTML)
+# Inyección de JS agresiva para intentar forzar el calendario a Español
 components.html("""
     <script>
         const doc = window.parent.document;
-        doc.documentElement.lang = 'es';
+        doc.documentElement.lang = 'es-CO';
+        Object.defineProperty(window.parent.navigator, 'language', {value: 'es-CO', configurable: true});
+        Object.defineProperty(window.parent.navigator, 'languages', {value: ['es-CO', 'es'], configurable: true});
     </script>
-""", height=0)
+""", height=0, width=0)
 
 st.markdown("""
     <style>
@@ -30,24 +32,33 @@ st.markdown("""
         .block-container {padding-top: 2rem; padding-bottom: 2rem;}
         
         /* =========================================================
-           CORRECCIÓN DEFINITIVA DE FONDOS Y BORDES (TODA LA INTERFAZ)
+           ESTILOS PULIDOS: BORDES FINOS Y SIN ARTEFACTOS
            ========================================================= */
 
-        /* 1. SELECCIÓN ABSOLUTA DEL CONTENEDOR EXTERNO DE TODOS LOS INPUTS */
-        /* Atrapa la capa superior real de cajas de texto, números, fechas, selectores y text areas */
+        /* 1. CONTENEDOR EXTERNO - Borde delgado (1px) y fondo gris claro */
         div[data-testid="stTextInput"] > div:last-child,
         div[data-testid="stNumberInput"] > div:last-child,
         div[data-testid="stDateInput"] > div:last-child,
         div[data-testid="stSelectbox"] > div:last-child,
         div[data-testid="stTextArea"] > div:last-child {
-            background-color: #e2e8f0 !important; /* FONDO GRIS CLARO EVIDENTE */
-            border: 2px solid #94a3b8 !important; /* BORDE GRIS OSCURO */
+            background-color: #f1f5f9 !important; 
+            border: 1px solid #cbd5e1 !important; 
             border-radius: 6px !important;
             overflow: hidden !important; 
         }
 
-        /* 2. ERRADICACIÓN DEL DOBLE BORDE (Como el que ocurría en "Fecha Nacimiento") */
-        /* Vuelve completamente invisibles las capas intermedias e internas que inyecta Streamlit */
+        /* 2. EFECTO FOCO/SELECCIÓN (ROJO) - Mismo grosor exacto */
+        div[data-testid="stTextInput"] > div:last-child:focus-within,
+        div[data-testid="stNumberInput"] > div:last-child:focus-within,
+        div[data-testid="stDateInput"] > div:last-child:focus-within,
+        div[data-testid="stSelectbox"] > div:last-child:focus-within,
+        div[data-testid="stTextArea"] > div:last-child:focus-within {
+            background-color: #ffebee !important; 
+            border: 1px solid #E61B23 !important; 
+            box-shadow: inset 0 0 0 1px #E61B23 !important; /* Inset shadow elimina puntos externos */
+        }
+
+        /* 3. LIMPIEZA DE ARTEFACTOS INTERNOS (Líneas grises inferiores y puntos) */
         div[data-baseweb="input"],
         div[data-baseweb="base-input"],
         div[data-baseweb="select"] > div {
@@ -56,35 +67,44 @@ st.markdown("""
             box-shadow: none !important;
         }
 
-        /* 3. FORZAR TRANSPARENCIA Y TEXTO OSCURO EN LA ETIQUETA HTML FINAL */
+        /* Ocultar agresivamente pseudo-elementos (elimina la barra gris abajo de los números) */
+        div[data-baseweb="base-input"]::after,
+        div[data-baseweb="base-input"]::before,
+        div[data-baseweb="input"]::after,
+        div[data-baseweb="input"]::before {
+            display: none !important;
+            content: none !important;
+            border: none !important;
+            background: transparent !important;
+        }
+
+        /* Asegurar que las esquinas internas sean transparentes (elimina el punto) */
+        div[data-testid="stTextInput"] div[data-baseweb="base-input"] > div,
+        div[data-testid="stNumberInput"] div[data-baseweb="base-input"] > div {
+            border: none !important;
+            box-shadow: none !important;
+            outline: none !important;
+            background: transparent !important;
+        }
+
+        /* 4. TEXTO OSCURO PARA CONTRASTE */
         div[data-testid="stTextInput"] input, 
         div[data-testid="stNumberInput"] input, 
         div[data-testid="stDateInput"] input,
         div[data-testid="stTextArea"] textarea {
             background-color: transparent !important;
-            color: #0f172a !important; /* Texto oscuro para contrastar con el gris */
+            color: #0f172a !important; 
             border: none !important;
             box-shadow: none !important;
             padding-left: 12px !important;
+            outline: none !important;
         }
 
-        /* Asegurar que el texto del Selectbox también sea oscuro */
         div[data-testid="stSelectbox"] div[data-baseweb="select"] {
             color: #0f172a !important;
         }
 
-        /* 4. EFECTO AL HACER CLIC / ENFOCAR EL CAMPO (ROJO BOOMERANG) */
-        div[data-testid="stTextInput"] > div:last-child:focus-within,
-        div[data-testid="stNumberInput"] > div:last-child:focus-within,
-        div[data-testid="stDateInput"] > div:last-child:focus-within,
-        div[data-testid="stSelectbox"] > div:last-child:focus-within,
-        div[data-testid="stTextArea"] > div:last-child:focus-within {
-            background-color: #ffebee !important; /* Fondo rojizo claro */
-            border-color: #E61B23 !important; /* Borde rojo activo */
-            box-shadow: 0 0 0 1px #E61B23 !important;
-        }
-
-        /* 5. ARREGLAR LOS BOTONES LATERALES DEL NUMBER INPUT (+ / -) */
+        /* BOTONES DEL NUMBER INPUT (+ / -) */
         div[data-baseweb="spinbutton"] {
             background-color: transparent !important;
             border: none !important;
@@ -117,7 +137,7 @@ def init_connection():
 supabase = init_connection()
 
 # =====================================================================
-# 2. SISTEMA DE AUTENTICACIÓN Y ROLES LOCALES (PERSISTENCIA DIARIA)
+# 2. SISTEMA DE AUTENTICACIÓN Y ROLES LOCALES
 # =====================================================================
 USUARIOS_PERMITIDOS = {
     "1022396649": {"pass": "mateo", "nombre": "Dr. Mateo F.", "rol": "admin", "id": "1022396649"},
@@ -688,7 +708,10 @@ if modulo == "👨‍⚕️ Consultorio":
             eje_oi = c7.number_input("Eje OI", min_value=0, max_value=180, step=1, key="eje_oi")
             dp_oi = c8.text_input("D.P. OI (mm)", key="dp_oi_input")
             
-            adicion = st.number_input("Adición (Bifocal/Progresivo)", min_value=0.00, step=0.25, format="%.2f", key="add_input")
+            st.markdown("**Adición (Bifocal/Progresivo)**")
+            col_add, _ = st.columns([1, 4])
+            with col_add:
+                adicion = st.number_input("Adición", label_visibility="collapsed", min_value=0.00, step=0.25, format="%.2f", key="add_input")
 
     with tab_cierre:
         obs = st.text_area("Observaciones Clínicas", height=100, key="obs_input")
