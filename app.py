@@ -29,22 +29,22 @@ st.markdown("""
         #MainMenu {visibility: hidden;}
         .block-container {padding-top: 2rem; padding-bottom: 2rem;}
         
-        /* CAMPOS DE ENTRADA: Fondo gris claro y borde gris oscuro para excelente contraste */
-        div[data-baseweb="input"], div[data-baseweb="select"] > div, textarea {
-            border: 1.5px solid #6c757d !important;
-            background-color: #e9ecef !important;
+        /* CAMPOS DE ENTRADA: Fondo gris claro notable y borde firme para máximo contraste */
+        div[data-baseweb="input"], div[data-baseweb="select"] > div, div[data-baseweb="base-input"], textarea {
+            border: 2px solid #4b5563 !important;
+            background-color: #d1d5db !important;
             border-radius: 6px !important;
             box-shadow: none !important;
         }
         
-        .stTextInput input, .stNumberInput input, .stTextArea textarea {
+        .stTextInput input, .stNumberInput input, .stTextArea textarea, .stDateInput input {
             background-color: transparent !important;
             border: none !important;
             box-shadow: none !important;
             color: #111111 !important;
         }
         
-        /* ESTADO SELECCIONADO / ENFOCADO: Un solo borde rojo y fondo rojo claro (sin doble borde) */
+        /* ESTADO SELECCIONADO / ENFOCADO: Borde rojo y fondo rojo claro */
         div[data-baseweb="input"]:focus-within, div[data-baseweb="select"] > div:focus-within, textarea:focus {
             border-color: #E61B23 !important;
             background-color: #ffebee !important;
@@ -52,10 +52,10 @@ st.markdown("""
             outline: none !important;
         }
         
-        /* CONTENEDOR Y BOTONES DE NÚMERO (+ / -) CORREGIDOS Y SIN RECORTES */
+        /* CONTENEDOR Y BOTONES DE NÚMERO (+ / -) */
         div[data-baseweb="spinbutton"] {
-            background-color: #e9ecef !important;
-            border: 1.5px solid #6c757d !important;
+            background-color: #d1d5db !important;
+            border: 2px solid #4b5563 !important;
             border-radius: 6px !important;
             box-shadow: none !important;
         }
@@ -73,7 +73,7 @@ st.markdown("""
             background-color: rgba(0,0,0,0.05) !important;
         }
 
-        /* ESTILO PARA ST.PILLS (Fondo gris suave, sin bordes; rojo al seleccionar) */
+        /* ESTILO PARA ST.PILLS */
         div[data-testid="stPills"] button {
             background-color: #e9ecef !important;
             border: none !important;
