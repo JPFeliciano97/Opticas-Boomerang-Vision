@@ -15,10 +15,31 @@ from datetime import datetime
 # =====================================================================
 st.set_page_config(page_title="Boomerang Visión ERP", layout="wide", page_icon="👓", initial_sidebar_state="expanded")
 
+# Inyección de CSS para restaurar el contraste de los inputs y ocultar menú
 st.markdown("""
     <style>
         #MainMenu {visibility: hidden;}
         .block-container {padding-top: 2rem; padding-bottom: 2rem;}
+        
+        /* Contraste de cuadros de texto (Modo Claro) */
+        .stTextInput input, .stNumberInput input, .stTextArea textarea, .stDateInput input {
+            border: 1px solid #8c8c8c !important;
+            border-radius: 4px !important;
+        }
+        .stSelectbox div[data-baseweb="select"] {
+            border: 1px solid #8c8c8c !important;
+            border-radius: 4px !important;
+        }
+        
+        /* Contraste de cuadros de texto (Modo Oscuro) */
+        @media (prefers-color-scheme: dark) {
+            .stTextInput input, .stNumberInput input, .stTextArea textarea, .stDateInput input {
+                border: 1px solid #666666 !important;
+            }
+            .stSelectbox div[data-baseweb="select"] {
+                border: 1px solid #666666 !important;
+            }
+        }
     </style>
 """, unsafe_allow_html=True)
 
@@ -66,9 +87,24 @@ if not st.session_state.user_info:
     col_l1, col_l2, col_l3 = st.columns([1, 1.2, 1])
     with col_l2:
         with st.container(border=True):
-            b64_logo = get_image_base64("logo2.png") if os.path.exists("logo2.png") else get_image_base64("logo.png")
-            if b64_logo:
-                st.markdown(f'<div style="text-align: center;"><img src="data:image/png;base64,{b64_logo}" width="80%"></div><br>', unsafe_allow_html=True)
+            # Arreglo definitivo del logo en la pantalla de inicio de sesión
+            b64_logo1 = get_image_base64("logo.png")
+            b64_logo2 = get_image_base64("logo2.png")
+            
+            if b64_logo1 or b64_logo2:
+                img_light = f'<img src="data:image/png;base64,{b64_logo1}" class="login-logo-light">' if b64_logo1 else f'<img src="data:image/png;base64,{b64_logo2}" class="login-logo-light">'
+                img_dark = f'<img src="data:image/png;base64,{b64_logo2}" class="login-logo-dark">' if b64_logo2 else f'<img src="data:image/png;base64,{b64_logo1}" class="login-logo-dark">'
+                st.markdown(f"""
+                    <style>
+                        .login-logo-light {{ display: block; max-width: 80%; margin: auto; }}
+                        .login-logo-dark {{ display: none; max-width: 80%; margin: auto; }}
+                        @media (prefers-color-scheme: dark) {{
+                            .login-logo-light {{ display: none; }}
+                            .login-logo-dark {{ display: block; }}
+                        }}
+                    </style>
+                    <div style="text-align: center;">{img_light}{img_dark}</div><br>
+                """, unsafe_allow_html=True)
             else:
                 st.markdown("<h2 style='text-align: center;'>👓 Boomerang Visión</h2>", unsafe_allow_html=True)
             
@@ -821,7 +857,6 @@ elif modulo == "🛍️ Óptica y Facturación":
                 btn_generar_paquete = col_btn1.button("📄 Generar Factura y Órdenes", type="primary", use_container_width=True, disabled=factura_existe)
                 btn_generar_rx = col_btn2.button("👁️ Generar Receta Clínica", use_container_width=True)
                 
-                # ==== ESTA ES LA SECCIÓN DEL PDF SOLICITADA ====
                 if btn_generar_paquete:
                     if not desc_producto or sub_val == 0 or not titular_nombre or not titular_doc:
                         st.warning("⚠️ Debes rellenar la descripción, el subtotal y los datos del titular válidos.")
