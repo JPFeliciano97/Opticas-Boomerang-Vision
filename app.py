@@ -13,34 +13,37 @@ from datetime import datetime
 # =====================================================================
 # 1. CONFIGURACIÓN INICIAL DE PÁGINA Y BD
 # =====================================================================
-st.set_page_config(page_title="Boomerang Visión ERP", layout="wide", page_icon="👓", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Boomerang Visión", layout="wide", page_icon="👓", initial_sidebar_state="expanded")
 
 st.markdown("""
     <style>
         #MainMenu {visibility: hidden;}
         .block-container {padding-top: 2rem; padding-bottom: 2rem;}
         
-        /* MEJORA GENERAL DE CONTRASTE EN CAMPOS DE ENTRADA (MODO CLARO) */
+        /* CAMPOS DE ENTRADA: Borde gris oscuro, fondo gris claro */
         .stTextInput input, .stNumberInput input, .stSelectbox select, .stTextArea textarea {
-            border: 1px solid #b0b5bc !important;
-            background-color: #ffffff !important;
+            border: 1px solid #6c757d !important;
+            background-color: #f1f3f5 !important;
             color: #111111 !important;
             border-radius: 6px !important;
         }
-        .stTextInput input:focus, .stNumberInput input:focus, .stTextArea textarea:focus {
+        
+        /* ESTADO SELECCIONADO / ENFOCADO: Fondo rojo claro y borde rojo */
+        .stTextInput input:focus, .stNumberInput input:focus, .stSelectbox select:focus, .stTextArea textarea:focus {
             border-color: #E61B23 !important;
-            box-shadow: 0 0 0 2px rgba(230, 27, 35, 0.2) !important;
+            background-color: #ffebee !important;
+            box-shadow: none !important;
         }
         
         /* BOTONES DE INCREMENTO Y DECREMENTO (+ / -) EN NUMBER INPUT */
         .stNumberInput button {
-            background-color: #f1f3f5 !important;
-            border: 1px solid #b0b5bc !important;
+            background-color: #e9ecef !important;
+            border: 1px solid #6c757d !important;
             color: #333333 !important;
         }
         .stNumberInput button:hover {
-            background-color: #e2e6ea !important;
-            border-color: #888888 !important;
+            background-color: #dee2e6 !important;
+            border-color: #495057 !important;
         }
 
         /* ESTILO PARA ST.PILLS (Fondo gris suave, sin bordes; rojo al seleccionar) */
@@ -88,7 +91,6 @@ def get_image_base64(path):
     return None
 
 if "user_info" not in st.session_state: st.session_state.user_info = None
-if "theme_mode" not in st.session_state: st.session_state.theme_mode = "Claro"
 
 if st.session_state.user_info is None and "auth_token" in st.query_params:
     try:
@@ -104,7 +106,7 @@ if not st.session_state.user_info:
     col_l1, col_l2, col_l3 = st.columns([1, 1.2, 1])
     with col_l2:
         with st.container(border=True):
-            b64_logo = get_image_base64("logo.png") if os.path.exists("logo.png") else get_image_base64("logo2.png")
+            b64_logo = get_image_base64("logo.png")
             if b64_logo:
                 st.markdown(f'<div style="text-align: center;"><img src="data:image/png;base64,{b64_logo}" width="80%"></div><br>', unsafe_allow_html=True)
             else:
@@ -470,10 +472,7 @@ def dibujar_prescripcion_clinica(pdf, paciente, historia, detalles_rx, logo_path
     pdf.set_font("helvetica", "B", 8); pdf.cell(195, 6, "Nota: NO SE DA GARANTIA POR TRABAJOS EN OTRA OPTICA", ln=1)
 
 def get_sidebar_logo_html():
-    logo_file = "logo.png" if st.session_state.theme_mode == "Claro" else "logo2.png"
-    b64_logo = get_image_base64(logo_file)
-    if not b64_logo:
-        b64_logo = get_image_base64("logo.png")
+    b64_logo = get_image_base64("logo.png")
     img_tag = f'<img src="data:image/png;base64,{b64_logo}" style="max-width: 85%; display: block; margin: auto; margin-bottom: 20px;">' if b64_logo else ""
     return f'<div style="text-align: center;">{img_tag}</div>'
 
@@ -550,10 +549,6 @@ if "current_module" not in st.session_state or st.session_state.current_module n
     st.session_state.current_module = all_mods[0] if all_mods else ""
 
 with st.sidebar:
-    theme_choice = st.radio("🎨 Apariencia", ["☀️ Claro", "🌙 Oscuro"], index=0 if st.session_state.theme_mode == "Claro" else 1, horizontal=True, key="theme_radio")
-    st.session_state.theme_mode = "Claro" if "Claro" in theme_choice else "Oscuro"
-    st.markdown("---")
-    
     st.markdown(get_sidebar_logo_html(), unsafe_allow_html=True)
     st.caption(f"👤 Sesión activa: **{st.session_state.user_info['nombre']}**")
     if st.button("🚪 Cerrar Sesión", use_container_width=True):
@@ -592,7 +587,7 @@ with st.sidebar:
                 st.rerun()
                 
     st.markdown("---")
-    st.caption("🚀 Boomerang Visión ERP - Versión 1.0")
+    st.caption("🚀 Boomerang Visión - Versión 1.0")
 
 modulo = st.session_state.current_module
 
@@ -768,7 +763,6 @@ elif modulo == "🛍️ Óptica y Facturación":
                 else:
                     historia = {"rx_final_od": "N/A", "rx_final_oi": "N/A", "adicion": "", "dp": "", "observaciones": "NO APLICA RX"}
 
-                # Validar existencia de Adición (> 0)
                 formula_tiene_add = has_valid_addition(historia.get('adicion'))
 
                 tipo_gafas = st.selectbox("Formato de Impresión:", ["Lejos", "Cerca", "Adición (Bifocal/Progresivo)", "Dos Pares"])
