@@ -1,4 +1,4 @@
-import streamlit as st
+import streamlit as st 	
 from supabase import create_client
 import os
 import base64
@@ -11,7 +11,7 @@ from fpdf import FPDF
 from datetime import datetime
 
 # =====================================================================
-# 1. CONFIGURACIÓN INICIAL DE PÁGINA Y ESTILOS CSS
+# 1. CONFIGURACIÓN INICIAL DE PÁGINA Y BD
 # =====================================================================
 st.set_page_config(page_title="Boomerang Visión ERP", layout="wide", page_icon="👓", initial_sidebar_state="expanded")
 
@@ -19,32 +19,12 @@ st.markdown("""
     <style>
         #MainMenu {visibility: hidden;}
         .block-container {padding-top: 2rem; padding-bottom: 2rem;}
-        
-        /* Contraste de cuadros de texto (Modo Claro) */
-        .stTextInput input, .stNumberInput input, .stTextArea textarea, .stDateInput input {
-            border: 1px solid #8c8c8c !important;
-            border-radius: 4px !important;
-        }
-        .stSelectbox div[data-baseweb="select"] {
-            border: 1px solid #8c8c8c !important;
-            border-radius: 4px !important;
-        }
-        
-        /* Contraste de cuadros de texto (Modo Oscuro) */
-        @media (prefers-color-scheme: dark) {
-            .stTextInput input, .stNumberInput input, .stTextArea textarea, .stDateInput input {
-                border: 1px solid #666666 !important;
-            }
-            .stSelectbox div[data-baseweb="select"] {
-                border: 1px solid #666666 !important;
-            }
-        }
     </style>
 """, unsafe_allow_html=True)
 
 load_dotenv()
-url = st.secrets.get("SUPABASE_URL") or os.getenv("SUPABASE_URL")
-key = st.secrets.get("SUPABASE_KEY") or os.getenv("SUPABASE_KEY")
+url = os.getenv("SUPABASE_URL")
+key = os.getenv("SUPABASE_KEY")
 
 @st.cache_resource
 def init_connection():
@@ -86,23 +66,9 @@ if not st.session_state.user_info:
     col_l1, col_l2, col_l3 = st.columns([1, 1.2, 1])
     with col_l2:
         with st.container(border=True):
-            b64_logo1 = get_image_base64("logo.png")
-            b64_logo2 = get_image_base64("logo2.png")
-            
-            if b64_logo1 or b64_logo2:
-                img_light = f'<img src="data:image/png;base64,{b64_logo1}" class="login-logo-light">' if b64_logo1 else f'<img src="data:image/png;base64,{b64_logo2}" class="login-logo-light">'
-                img_dark = f'<img src="data:image/png;base64,{b64_logo2}" class="login-logo-dark">' if b64_logo2 else f'<img src="data:image/png;base64,{b64_logo1}" class="login-logo-dark">'
-                st.markdown(f"""
-                    <style>
-                        .login-logo-light {{ display: block; max-width: 80%; margin: auto; }}
-                        .login-logo-dark {{ display: none; max-width: 80%; margin: auto; }}
-                        @media (prefers-color-scheme: dark) {{
-                            .login-logo-light {{ display: none; }}
-                            .login-logo-dark {{ display: block; }}
-                        }}
-                    </style>
-                    <div style="text-align: center;">{img_light}{img_dark}</div><br>
-                """, unsafe_allow_html=True)
+            b64_logo = get_image_base64("logo2.png") if os.path.exists("logo2.png") else get_image_base64("logo.png")
+            if b64_logo:
+                st.markdown(f'<div style="text-align: center;"><img src="data:image/png;base64,{b64_logo}" width="80%"></div><br>', unsafe_allow_html=True)
             else:
                 st.markdown("<h2 style='text-align: center;'>👓 Boomerang Visión</h2>", unsafe_allow_html=True)
             
@@ -473,7 +439,7 @@ def get_sidebar_logo_html():
     """
 
 # ==========================================
-# 4. CALLBACKS DE INTERFAZ Y ESTADOS
+# 4. CALLBACKS DE INTERFAZ
 # ==========================================
 def force_negative_cyl_od():
     if st.session_state.cil_od > 0: st.session_state.cil_od = -abs(st.session_state.cil_od)
@@ -506,25 +472,13 @@ def on_altura_focal_change():
     digits = "".join(c for c in st.session_state.altura_focal_input if c.isdigit())
     st.session_state.altura_focal_input = f"{digits} mm" if digits else ""
 
-for k in [
-    "doc_input", "nom_input", "cel_input", "dir_input", "ocu_input", "edad_input", "mot_input", "ctrl_input", 
-    "dp_od_input", "dp_oi_input", "obs_input", "subtotal_input", "abono_input", "descuento_input", 
-    "altura_focal_input", "monto_rec_input", "monto_gasto_input", "p_compra_input", "p_venta_input", 
-    "p_compra_m", "p_venta_m"
-]:
+for k in ["subtotal_input", "abono_input", "descuento_input", "altura_focal_input", "monto_rec_input", "monto_gasto_input", "p_compra_input", "p_venta_input", "p_compra_m", "p_venta_m"]:
     if k not in st.session_state: st.session_state[k] = ""
-
-for k in ["esf_od", "cil_od", "eje_od", "esf_oi", "cil_oi", "eje_oi", "add_input"]:
-    if k not in st.session_state:
-        st.session_state[k] = 0.0 if "eje" not in k else 0
-
 if "last_fac_search" not in st.session_state: st.session_state.last_fac_search = ""
 
 if "trigger_clear_doc" in st.session_state and st.session_state.trigger_clear_doc:
-    for k in ["doc_input", "nom_input", "cel_input", "dir_input", "ocu_input", "edad_input", "mot_input", "ctrl_input", "dp_od_input", "dp_oi_input", "obs_input"]: 
-        st.session_state[k] = ""
-    for k in ["esf_od", "cil_od", "eje_od", "esf_oi", "cil_oi", "eje_oi", "add_input"]: 
-        st.session_state[k] = 0.0 if "eje" not in k else 0
+    for k in ["doc_input", "nom_input", "cel_input", "dir_input", "ocu_input", "edad_input", "mot_input", "ctrl_input", "dp_od_input", "dp_oi_input", "obs_input"]: st.session_state[k] = ""
+    for k in ["esf_od", "cil_od", "eje_od", "esf_oi", "cil_oi", "eje_oi", "add_input"]: st.session_state[k] = 0.0 if "eje" not in k else 0
     st.session_state.trigger_clear_doc = False
 
 if "trigger_clear_factura" in st.session_state and st.session_state.trigger_clear_factura:
@@ -595,7 +549,7 @@ with st.sidebar:
                 st.rerun()
                 
     st.markdown("---")
-    st.caption("🚀 Boomerang Visión ERP - V1.1.8 UI")
+    st.caption("🚀 Boomerang Visión ERP - V1.1.6 UI")
 
 modulo = st.session_state.current_module
 
@@ -616,12 +570,9 @@ if modulo == "👨‍⚕️ Consultorio":
                 res_exist = supabase.table("pacientes").select("*").eq("documento", doc_autofill).execute()
                 if res_exist.data:
                     p = res_exist.data[0]
-                    st.session_state.doc_input = p.get("documento", "")
-                    st.session_state.nom_input = p.get("nombre_completo", "")
-                    st.session_state.cel_input = p.get("celular", "")
-                    st.session_state.dir_input = p.get("direccion", "")
-                    st.session_state.ocu_input = p.get("ocupacion", "")
-                    st.session_state.edad_input = p.get("edad", "")
+                    st.session_state.doc_input = p.get("documento", ""); st.session_state.nom_input = p.get("nombre_completo", "")
+                    st.session_state.cel_input = p.get("celular", ""); st.session_state.dir_input = p.get("direccion", "")
+                    st.session_state.ocu_input = p.get("ocupacion", ""); st.session_state.edad_input = p.get("edad", "")
                     st.toast("✅ Paciente cargado.")
                 else: st.warning("No encontrado.")
 
@@ -894,12 +845,9 @@ elif modulo == "🛍️ Óptica y Facturación":
                             pdf.add_page(); dibujar_orden_laboratorio(pdf, paciente, hist_factura, venta_data, tipo_gafas.upper())
                         
                         pdf_bytes = bytes(pdf.output())
-                        b64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
                         st.session_state.global_toast = f"Venta registrada. Factura #{num_factura}"
                         st.download_button(label="📥 Descargar Facturación", data=pdf_bytes, file_name=f"Facturacion_{num_factura}.pdf", mime="application/pdf")
-                        
-                        # PREVISUALIZACIÓN RESTAURADA AL MÉTODO ORIGINAL QUE SÍ FUNCIONA[cite: 3]
-                        st.markdown(f'<iframe src="data:application/pdf;base64,{b64_pdf}" width="100%" height="600" type="application/pdf"></iframe>', unsafe_allow_html=True)
+                        st.markdown(f'<iframe src="data:application/pdf;base64,{base64.b64encode(pdf_bytes).decode("utf-8")}" width="100%" height="600" type="application/pdf"></iframe>', unsafe_allow_html=True)
                         st.session_state.trigger_clear_factura = True
 
                 if btn_generar_rx:
@@ -907,12 +855,9 @@ elif modulo == "🛍️ Óptica y Facturación":
                     pdf_rx.set_compression(True); pdf_rx.add_page()
                     dibujar_prescripcion_clinica(pdf_rx, paciente, historia, detalles_rx)
                     pdf_bytes_rx = bytes(pdf_rx.output())
-                    b64_rx = base64.b64encode(pdf_bytes_rx).decode("utf-8")
                     st.toast("🎉 ¡Receta Clínica Generada!")
                     st.download_button(label="📥 Descargar Receta Clínica", data=pdf_bytes_rx, file_name=f"Receta_{paciente['documento']}.pdf", mime="application/pdf")
-                    
-                    # PREVISUALIZACIÓN RESTAURADA AL MÉTODO ORIGINAL QUE SÍ FUNCIONA[cite: 3]
-                    st.markdown(f'<iframe src="data:application/pdf;base64,{b64_rx}" width="100%" height="600" type="application/pdf"></iframe>', unsafe_allow_html=True)
+                    st.markdown(f'<iframe src="data:application/pdf;base64,{base64.b64encode(pdf_bytes_rx).decode("utf-8")}" width="100%" height="600" type="application/pdf"></iframe>', unsafe_allow_html=True)
 
     with tab_recaudo:
         st.markdown("<h4 style='color: #4CAF50;'>💵 Recaudar Saldo y Cambiar Estado a Entregado</h4>", unsafe_allow_html=True)
