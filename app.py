@@ -898,8 +898,8 @@ elif modulo == "🛍️ Óptica y Facturación":
                         st.session_state.global_toast = f"Venta registrada. Factura #{num_factura}"
                         st.download_button(label="📥 Descargar Facturación", data=pdf_bytes, file_name=f"Facturacion_{num_factura}.pdf", mime="application/pdf")
                         
-                        # PREVISUALIZADOR COMPATIBLE CON CHROME Y FIREFOX USANDO <object>
-                        st.markdown(f'<object data="data:application/pdf;base64,{b64_pdf}" type="application/pdf" width="100%" height="600px"></object>', unsafe_allow_html=True)
+                        # PREVISUALIZADOR COMPATIBLE CON CHROME Y FIREFOX USANDO <embed>
+                        st.markdown(f'<embed src="data:application/pdf;base64,{b64_pdf}" type="application/pdf" width="100%" height="600px"/>', unsafe_allow_html=True)
                         st.session_state.trigger_clear_factura = True
 
                 if btn_generar_rx:
@@ -911,8 +911,8 @@ elif modulo == "🛍️ Óptica y Facturación":
                     st.toast("🎉 ¡Receta Clínica Generada!")
                     st.download_button(label="📥 Descargar Receta Clínica", data=pdf_bytes_rx, file_name=f"Receta_{paciente['documento']}.pdf", mime="application/pdf")
                     
-                    # PREVISUALIZADOR COMPATIBLE CON CHROME Y FIREFOX USANDO <object>
-                    st.markdown(f'<object data="data:application/pdf;base64,{b64_rx}" type="application/pdf" width="100%" height="600px"></object>', unsafe_allow_html=True)
+                    # PREVISUALIZADOR COMPATIBLE CON CHROME Y FIREFOX USANDO <embed>
+                    st.markdown(f'<embed src="data:application/pdf;base64,{b64_rx}" type="application/pdf" width="100%" height="600px"/>', unsafe_allow_html=True)
 
     with tab_recaudo:
         st.markdown("<h4 style='color: #4CAF50;'>💵 Recaudar Saldo y Cambiar Estado a Entregado</h4>", unsafe_allow_html=True)
