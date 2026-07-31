@@ -9,21 +9,30 @@ import altair as alt
 from dotenv import load_dotenv
 from fpdf import FPDF
 from datetime import datetime
+import streamlit.components.v1 as components
 
 # =====================================================================
 # 1. CONFIGURACIÓN INICIAL DE PÁGINA Y BD
 # =====================================================================
 st.set_page_config(page_title="Boomerang Visión", layout="wide", page_icon="👓", initial_sidebar_state="expanded")
 
+# Forzar idioma español para componentes de fecha (BaseWeb / HTML)
+components.html("""
+    <script>
+        const doc = window.parent.document;
+        doc.documentElement.lang = 'es';
+    </script>
+""", height=0)
+
 st.markdown("""
     <style>
         #MainMenu {visibility: hidden;}
         .block-container {padding-top: 2rem; padding-bottom: 2rem;}
         
-        /* CAMPOS DE ENTRADA: Borde gris claro (60% más claro), fondo gris suave */
+        /* CAMPOS DE ENTRADA: Fondo blanco y borde gris oscuro bien definido para alto contraste */
         div[data-baseweb="input"], div[data-baseweb="select"] > div, textarea {
-            border: 1px solid #ced4da !important;
-            background-color: #f1f3f5 !important;
+            border: 1.5px solid #6c757d !important;
+            background-color: #ffffff !important;
             border-radius: 6px !important;
             box-shadow: none !important;
         }
@@ -43,10 +52,10 @@ st.markdown("""
             outline: none !important;
         }
         
-        /* CONTENEDOR Y BOTONES DE NÚMERO (+ / -) CORREGIDOS Y SIN REORTES */
+        /* CONTENEDOR Y BOTONES DE NÚMERO (+ / -) CORREGIDOS Y SIN RECORTES */
         div[data-baseweb="spinbutton"] {
-            background-color: #f1f3f5 !important;
-            border: 1px solid #ced4da !important;
+            background-color: #ffffff !important;
+            border: 1.5px solid #6c757d !important;
             border-radius: 6px !important;
             box-shadow: none !important;
         }
