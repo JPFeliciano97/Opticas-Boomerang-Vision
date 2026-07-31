@@ -844,22 +844,51 @@ elif modulo == "🛍️ Óptica y Facturación":
                         else:
                             pdf.add_page(); dibujar_orden_laboratorio(pdf, paciente, hist_factura, venta_data, tipo_gafas.upper())
                         
-                        # ============ CORRECCIÓN AQUÍ ============
-                        pdf_bytes = bytes(pdf.output(dest='S'))  # <--- Forzar a bytes
+                        # ============ CORRECCIÓN COMPLETA AQUÍ ============
+                        pdf_bytes = bytes(pdf.output(dest='S'))
+                        b64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
                         st.session_state.global_toast = f"Venta registrada. Factura #{num_factura}"
-                        st.download_button(label="📥 Descargar Facturación", data=pdf_bytes, file_name=f"Facturacion_{num_factura}.pdf", mime="application/pdf")
-                        st.markdown(f'<iframe src="data:application/pdf;base64,{base64.b64encode(pdf_bytes).decode("utf-8")}" width="100%" height="600" type="application/pdf"></iframe>', unsafe_allow_html=True)
+                        st.download_button(
+                            label="📥 Descargar Facturación",
+                            data=pdf_bytes,
+                            file_name=f"Facturacion_{num_factura}.pdf",
+                            mime="application/pdf"
+                        )
+                        # Reemplazamos iframe por object con fallback
+                        st.markdown(
+                            f"""
+                            <object data="data:application/pdf;base64,{b64_pdf}" type="application/pdf" width="100%" height="600px">
+                                <p>Tu navegador no puede mostrar el PDF. 
+                                <a href="data:application/pdf;base64,{b64_pdf}" download="Facturacion_{num_factura}.pdf">Descárgalo aquí</a>.</p>
+                            </object>
+                            """,
+                            unsafe_allow_html=True
+                        )
                         st.session_state.trigger_clear_factura = True
 
                 if btn_generar_rx:
                     pdf_rx = FPDF(orientation="P", unit="mm", format="Letter")
                     pdf_rx.set_compression(True); pdf_rx.add_page()
                     dibujar_prescripcion_clinica(pdf_rx, paciente, historia, detalles_rx)
-                    # ============ CORRECCIÓN AQUÍ ============
-                    pdf_bytes_rx = bytes(pdf_rx.output(dest='S'))  # <--- Forzar a bytes
+                    # ============ CORRECCIÓN COMPLETA AQUÍ ============
+                    pdf_bytes_rx = bytes(pdf_rx.output(dest='S'))
+                    b64_rx = base64.b64encode(pdf_bytes_rx).decode("utf-8")
                     st.toast("🎉 ¡Receta Clínica Generada!")
-                    st.download_button(label="📥 Descargar Receta Clínica", data=pdf_bytes_rx, file_name=f"Receta_{paciente['documento']}.pdf", mime="application/pdf")
-                    st.markdown(f'<iframe src="data:application/pdf;base64,{base64.b64encode(pdf_bytes_rx).decode("utf-8")}" width="100%" height="600" type="application/pdf"></iframe>', unsafe_allow_html=True)
+                    st.download_button(
+                        label="📥 Descargar Receta Clínica",
+                        data=pdf_bytes_rx,
+                        file_name=f"Receta_{paciente['documento']}.pdf",
+                        mime="application/pdf"
+                    )
+                    st.markdown(
+                        f"""
+                        <object data="data:application/pdf;base64,{b64_rx}" type="application/pdf" width="100%" height="600px">
+                            <p>Tu navegador no puede mostrar el PDF. 
+                            <a href="data:application/pdf;base64,{b64_rx}" download="Receta_{paciente['documento']}.pdf">Descárgalo aquí</a>.</p>
+                        </object>
+                        """,
+                        unsafe_allow_html=True
+                    )
 
     with tab_recaudo:
         st.markdown("<h4 style='color: #4CAF50;'>💵 Recaudar Saldo y Cambiar Estado a Entregado</h4>", unsafe_allow_html=True)
