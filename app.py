@@ -29,62 +29,71 @@ st.markdown("""
         #MainMenu {visibility: hidden;}
         .block-container {padding-top: 2rem; padding-bottom: 2rem;}
         
-        /* CONTENEDOR PRINCIPAL DE ENTRADAS: Fondo gris claro notable y borde firme */
-        div[data-baseweb="input"], div[data-baseweb="select"] > div, textarea {
-            border: 1.5px solid #4b5563 !important;
-            background-color: #cbd5e1 !important;
+        /* =========================================================
+           CORRECCIÓN DEFINITIVA DE FONDOS Y BORDES (TODA LA INTERFAZ)
+           ========================================================= */
+
+        /* 1. SELECCIÓN ABSOLUTA DEL CONTENEDOR EXTERNO DE TODOS LOS INPUTS */
+        /* Atrapa la capa superior real de cajas de texto, números, fechas, selectores y text areas */
+        div[data-testid="stTextInput"] > div:last-child,
+        div[data-testid="stNumberInput"] > div:last-child,
+        div[data-testid="stDateInput"] > div:last-child,
+        div[data-testid="stSelectbox"] > div:last-child,
+        div[data-testid="stTextArea"] > div:last-child {
+            background-color: #e2e8f0 !important; /* FONDO GRIS CLARO EVIDENTE */
+            border: 2px solid #94a3b8 !important; /* BORDE GRIS OSCURO */
             border-radius: 6px !important;
-            box-shadow: none !important;
-        }
-        
-        /* ELIMINAR DOBLE BORDE EN CONTENEDORES INTERNOS (BaseWeb / DateInputs / NumberInputs) */
-        div[data-baseweb="base-input"] {
-            border: none !important;
-            background-color: transparent !important;
-            box-shadow: none !important;
-        }
-        
-        /* CAMPOS DE TEXTO E INPUTS REALES */
-        .stTextInput input, .stNumberInput input, .stTextArea textarea, .stDateInput input {
-            background-color: transparent !important;
-            border: none !important;
-            box-shadow: none !important;
-            color: #111111 !important;
-        }
-        
-        /* ESTADO SELECCIONADO / ENFOCADO: Borde rojo y fondo rojo claro */
-        div[data-baseweb="input"]:focus-within, div[data-baseweb="select"] > div:focus-within, textarea:focus {
-            border-color: #E61B23 !important;
-            background-color: #ffebee !important;
-            box-shadow: none !important;
-            outline: none !important;
-        }
-        
-        /* CONTENEDOR Y BOTONES DE NÚMERO (+ / -) */
-        div[data-baseweb="spinbutton"] {
-            background-color: #cbd5e1 !important;
-            border: 1.5px solid #4b5563 !important;
-            border-radius: 6px !important;
-            box-shadow: none !important;
-        }
-        div[data-baseweb="spinbutton"]:focus-within {
-            border-color: #E61B23 !important;
-            background-color: #ffebee !important;
-            box-shadow: none !important;
-        }
-        .stNumberInput button {
-            background-color: transparent !important;
-            border: none !important;
-            color: #333333 !important;
-        }
-        .stNumberInput button:hover {
-            background-color: rgba(0,0,0,0.05) !important;
+            overflow: hidden !important; 
         }
 
+        /* 2. ERRADICACIÓN DEL DOBLE BORDE (Como el que ocurría en "Fecha Nacimiento") */
+        /* Vuelve completamente invisibles las capas intermedias e internas que inyecta Streamlit */
+        div[data-baseweb="input"],
+        div[data-baseweb="base-input"],
+        div[data-baseweb="select"] > div {
+            background-color: transparent !important;
+            border: none !important;
+            box-shadow: none !important;
+        }
+
+        /* 3. FORZAR TRANSPARENCIA Y TEXTO OSCURO EN LA ETIQUETA HTML FINAL */
+        div[data-testid="stTextInput"] input, 
+        div[data-testid="stNumberInput"] input, 
+        div[data-testid="stDateInput"] input,
+        div[data-testid="stTextArea"] textarea {
+            background-color: transparent !important;
+            color: #0f172a !important; /* Texto oscuro para contrastar con el gris */
+            border: none !important;
+            box-shadow: none !important;
+            padding-left: 12px !important;
+        }
+
+        /* Asegurar que el texto del Selectbox también sea oscuro */
+        div[data-testid="stSelectbox"] div[data-baseweb="select"] {
+            color: #0f172a !important;
+        }
+
+        /* 4. EFECTO AL HACER CLIC / ENFOCAR EL CAMPO (ROJO BOOMERANG) */
+        div[data-testid="stTextInput"] > div:last-child:focus-within,
+        div[data-testid="stNumberInput"] > div:last-child:focus-within,
+        div[data-testid="stDateInput"] > div:last-child:focus-within,
+        div[data-testid="stSelectbox"] > div:last-child:focus-within,
+        div[data-testid="stTextArea"] > div:last-child:focus-within {
+            background-color: #ffebee !important; /* Fondo rojizo claro */
+            border-color: #E61B23 !important; /* Borde rojo activo */
+            box-shadow: 0 0 0 1px #E61B23 !important;
+        }
+
+        /* 5. ARREGLAR LOS BOTONES LATERALES DEL NUMBER INPUT (+ / -) */
+        div[data-baseweb="spinbutton"] {
+            background-color: transparent !important;
+            border: none !important;
+        }
+        
         /* ESTILO PARA ST.PILLS */
         div[data-testid="stPills"] button {
-            background-color: #e2e8f0 !important;
-            border: none !important;
+            background-color: #f1f5f9 !important;
+            border: 1px solid #cbd5e1 !important;
             color: #475569 !important;
             border-radius: 6px !important;
             font-weight: 500 !important;
