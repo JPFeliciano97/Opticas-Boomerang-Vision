@@ -1,6 +1,7 @@
 streamlit
 supabase
 pandas
-python-dotenv
+altair
 fpdf2
+python-dotenv
 openpyxl
