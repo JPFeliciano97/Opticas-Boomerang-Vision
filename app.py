@@ -20,15 +20,41 @@ st.markdown("""
         #MainMenu {visibility: hidden;}
         .block-container {padding-top: 2rem; padding-bottom: 2rem;}
         
-        /* MEJORA DE CONTRASTE EN CAMPOS DE ENTRADA (MODO CLARO) */
+        /* MEJORA GENERAL DE CONTRASTE EN CAMPOS DE ENTRADA (MODO CLARO) */
         .stTextInput input, .stNumberInput input, .stSelectbox select, .stTextArea textarea {
-            border: 1px solid #999999 !important;
+            border: 1px solid #b0b5bc !important;
             background-color: #ffffff !important;
-            color: #000000 !important;
+            color: #111111 !important;
+            border-radius: 6px !important;
         }
         .stTextInput input:focus, .stNumberInput input:focus, .stTextArea textarea:focus {
             border-color: #E61B23 !important;
-            box-shadow: 0 0 0 1px #E61B23 !important;
+            box-shadow: 0 0 0 2px rgba(230, 27, 35, 0.2) !important;
+        }
+        
+        /* BOTONES DE INCREMENTO Y DECREMENTO (+ / -) EN NUMBER INPUT */
+        .stNumberInput button {
+            background-color: #f1f3f5 !important;
+            border: 1px solid #b0b5bc !important;
+            color: #333333 !important;
+        }
+        .stNumberInput button:hover {
+            background-color: #e2e6ea !important;
+            border-color: #888888 !important;
+        }
+
+        /* ESTILO PARA ST.PILLS (Fondo gris suave, sin bordes; rojo al seleccionar) */
+        div[data-testid="stPills"] button {
+            background-color: #e9ecef !important;
+            border: none !important;
+            color: #495057 !important;
+            border-radius: 6px !important;
+            font-weight: 500 !important;
+        }
+        div[data-testid="stPills"] button[aria-selected="true"] {
+            background-color: #ffebee !important;
+            border: 1px solid #E61B23 !important;
+            color: #E61B23 !important;
         }
     </style>
 """, unsafe_allow_html=True)
@@ -62,6 +88,7 @@ def get_image_base64(path):
     return None
 
 if "user_info" not in st.session_state: st.session_state.user_info = None
+if "theme_mode" not in st.session_state: st.session_state.theme_mode = "Claro"
 
 if st.session_state.user_info is None and "auth_token" in st.query_params:
     try:
@@ -443,23 +470,12 @@ def dibujar_prescripcion_clinica(pdf, paciente, historia, detalles_rx, logo_path
     pdf.set_font("helvetica", "B", 8); pdf.cell(195, 6, "Nota: NO SE DA GARANTIA POR TRABAJOS EN OTRA OPTICA", ln=1)
 
 def get_sidebar_logo_html():
-    b64_logo_light = get_image_base64("logo.png")   # Logo para fondo claro
-    b64_logo_dark = get_image_base64("logo2.png")  # Logo para fondo oscuro (letras blancas)
-    
-    img_light = f'<img src="data:image/png;base64,{b64_logo_light}" class="logo-light">' if b64_logo_light else ""
-    img_dark = f'<img src="data:image/png;base64,{b64_logo_dark}" class="logo-dark">' if b64_logo_dark else (f'<img src="data:image/png;base64,{b64_logo_light}" class="logo-dark">' if b64_logo_light else "")
-    
-    return f"""
-    <style>
-        .logo-light {{ display: block; max-width: 85%; margin: auto; margin-bottom: 20px; }}
-        .logo-dark {{ display: none; max-width: 85%; margin: auto; margin-bottom: 20px; }}
-        @media (prefers-color-scheme: dark) {{
-            .logo-light {{ display: none; }}
-            .logo-dark {{ display: block; }}
-        }}
-    </style>
-    <div style="text-align: center;">{img_light}{img_dark}</div>
-    """
+    logo_file = "logo.png" if st.session_state.theme_mode == "Claro" else "logo2.png"
+    b64_logo = get_image_base64(logo_file)
+    if not b64_logo:
+        b64_logo = get_image_base64("logo.png")
+    img_tag = f'<img src="data:image/png;base64,{b64_logo}" style="max-width: 85%; display: block; margin: auto; margin-bottom: 20px;">' if b64_logo else ""
+    return f'<div style="text-align: center;">{img_tag}</div>'
 
 # ==========================================
 # 4. CALLBACKS DE INTERFAZ
@@ -525,7 +541,7 @@ user_rol = st.session_state.user_info["rol"]
 user_id = st.session_state.user_info["id"]
 
 clinica_mods = ["👨‍⚕️ Consultorio"] if (user_rol == "admin" and user_id in ["1022396649", "1024585129"]) or user_rol == "doctor_limitado" else []
-comercial_mods = ["🛍️ Óptica y Facturación", "📊 Cuadre de Caja Físico"] if user_rol in ["admin", "asesor_limitado"] else []
+comercial_mods = ["🛍️ Óptica y Facturación", "📊 Resumen de Caja"] if user_rol in ["admin", "asesor_limitado"] else []
 operaciones_mods = ["📦 Inventario", "🔬 Control de Laboratorios"] if user_rol in ["admin", "asesor_limitado"] else []
 admin_mods = ["📅 CRM y Fidelización", "📈 Analítica y Estadísticas"] if user_rol == "admin" else []
 
@@ -534,6 +550,10 @@ if "current_module" not in st.session_state or st.session_state.current_module n
     st.session_state.current_module = all_mods[0] if all_mods else ""
 
 with st.sidebar:
+    theme_choice = st.radio("🎨 Apariencia", ["☀️ Claro", "🌙 Oscuro"], index=0 if st.session_state.theme_mode == "Claro" else 1, horizontal=True, key="theme_radio")
+    st.session_state.theme_mode = "Claro" if "Claro" in theme_choice else "Oscuro"
+    st.markdown("---")
+    
     st.markdown(get_sidebar_logo_html(), unsafe_allow_html=True)
     st.caption(f"👤 Sesión activa: **{st.session_state.user_info['nombre']}**")
     if st.button("🚪 Cerrar Sesión", use_container_width=True):
@@ -959,10 +979,10 @@ elif modulo == "🛍️ Óptica y Facturación":
                 st.error("No existe ninguna factura con ese número.")
 
 # ------------------------------------------
-# MÓDULO 3: CUADRE DE CAJA (DD/MM/YYYY)
+# MÓDULO 3: RESUMEN DE CAJA (DD/MM/YYYY)
 # ------------------------------------------
-elif modulo == "📊 Cuadre de Caja Físico":
-    styled_header("Cuadre de Caja Físico e Historial Diario", "📊")
+elif modulo == "📊 Resumen de Caja":
+    styled_header("Resumen de Caja Físico e Historial Diario", "📊")
     
     col_fc1, col_fc2 = st.columns([2, 1])
     with col_fc1:
@@ -990,7 +1010,7 @@ elif modulo == "📊 Cuadre de Caja Físico":
         efectivo_caja = base_caja_inicial + (abono_efectivo + recaudo_efectivo) - gastos_efectivo
         total_bancos = abono_bancos + recaudo_bancos
 
-        st.markdown("### 💵 Arqueo de Caja")
+        st.markdown("### 💵 Resumen de Caja")
         col_m1, col_m2, col_m3 = st.columns(3)
         col_m1.metric("💵 Efectivo Físico (En Gaveta)", f"${format_currency_co(efectivo_caja)}")
         col_m2.metric("🏦 Total Bancos (Digital)", f"${format_currency_co(total_bancos)}")
