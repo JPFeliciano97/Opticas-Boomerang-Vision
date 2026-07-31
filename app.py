@@ -44,8 +44,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 load_dotenv()
-url = os.getenv("SUPABASE_URL")
-key = os.getenv("SUPABASE_KEY")
+url = st.secrets.get("SUPABASE_URL") or os.getenv("SUPABASE_URL")
+key = st.secrets.get("SUPABASE_KEY") or os.getenv("SUPABASE_KEY")
 
 @st.cache_resource
 def init_connection():
@@ -87,7 +87,6 @@ if not st.session_state.user_info:
     col_l1, col_l2, col_l3 = st.columns([1, 1.2, 1])
     with col_l2:
         with st.container(border=True):
-            # Arreglo definitivo del logo en la pantalla de inicio de sesión
             b64_logo1 = get_image_base64("logo.png")
             b64_logo2 = get_image_base64("logo2.png")
             
@@ -477,8 +476,6 @@ def get_sidebar_logo_html():
 # ==========================================
 # 4. CALLBACKS DE INTERFAZ Y ESTADOS
 # ==========================================
-
-# Fuerza valor negativo en cilindros automáticamente
 def force_negative_cyl_od():
     if st.session_state.cil_od > 0: st.session_state.cil_od = -abs(st.session_state.cil_od)
 def force_negative_cyl_oi():
@@ -510,7 +507,6 @@ def on_altura_focal_change():
     digits = "".join(c for c in st.session_state.altura_focal_input if c.isdigit())
     st.session_state.altura_focal_input = f"{digits} mm" if digits else ""
 
-# Inicialización segura de todos los estados para los cuadros de texto
 for k in [
     "doc_input", "nom_input", "cel_input", "dir_input", "ocu_input", "edad_input", "mot_input", "ctrl_input", 
     "dp_od_input", "dp_oi_input", "obs_input", "subtotal_input", "abono_input", "descuento_input", 
@@ -525,7 +521,6 @@ for k in ["esf_od", "cil_od", "eje_od", "esf_oi", "cil_oi", "eje_oi", "add_input
 
 if "last_fac_search" not in st.session_state: st.session_state.last_fac_search = ""
 
-# Lógica de reseteo limpio tras guardar
 if "trigger_clear_doc" in st.session_state and st.session_state.trigger_clear_doc:
     for k in ["doc_input", "nom_input", "cel_input", "dir_input", "ocu_input", "edad_input", "mot_input", "ctrl_input", "dp_od_input", "dp_oi_input", "obs_input"]: 
         st.session_state[k] = ""
@@ -601,7 +596,7 @@ with st.sidebar:
                 st.rerun()
                 
     st.markdown("---")
-    st.caption("🚀 Boomerang Visión ERP - V1.1.6 UI")
+    st.caption("🚀 Boomerang Visión ERP - V1.1.7 UI")
 
 modulo = st.session_state.current_module
 
@@ -900,9 +895,16 @@ elif modulo == "🛍️ Óptica y Facturación":
                             pdf.add_page(); dibujar_orden_laboratorio(pdf, paciente, hist_factura, venta_data, tipo_gafas.upper())
                         
                         pdf_bytes = bytes(pdf.output())
+                        b64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
                         st.session_state.global_toast = f"Venta registrada. Factura #{num_factura}"
                         st.download_button(label="📥 Descargar Facturación", data=pdf_bytes, file_name=f"Facturacion_{num_factura}.pdf", mime="application/pdf")
-                        st.markdown(f'<iframe src="data:application/pdf;base64,{base64.b64encode(pdf_bytes).decode("utf-8")}" width="100%" height="600" type="application/pdf"></iframe>', unsafe_allow_html=True)
+                        
+                        # PREVISUALIZACIÓN ROBUSTA CON <object> Y <embed>
+                        st.markdown(f'''
+                            <object data="data:application/pdf;base64,{b64_pdf}" type="application/pdf" width="100%" height="600px">
+                                <embed src="data:application/pdf;base64,{b64_pdf}" type="application/pdf" width="100%" height="600px" />
+                            </object>
+                        ''', unsafe_allow_html=True)
                         st.session_state.trigger_clear_factura = True
 
                 if btn_generar_rx:
@@ -910,9 +912,16 @@ elif modulo == "🛍️ Óptica y Facturación":
                     pdf_rx.set_compression(True); pdf_rx.add_page()
                     dibujar_prescripcion_clinica(pdf_rx, paciente, historia, detalles_rx)
                     pdf_bytes_rx = bytes(pdf_rx.output())
+                    b64_rx = base64.b64encode(pdf_bytes_rx).decode("utf-8")
                     st.toast("🎉 ¡Receta Clínica Generada!")
                     st.download_button(label="📥 Descargar Receta Clínica", data=pdf_bytes_rx, file_name=f"Receta_{paciente['documento']}.pdf", mime="application/pdf")
-                    st.markdown(f'<iframe src="data:application/pdf;base64,{base64.b64encode(pdf_bytes_rx).decode("utf-8")}" width="100%" height="600" type="application/pdf"></iframe>', unsafe_allow_html=True)
+                    
+                    # PREVISUALIZACIÓN ROBUSTA CON <object> Y <embed>
+                    st.markdown(f'''
+                        <object data="data:application/pdf;base64,{b64_rx}" type="application/pdf" width="100%" height="600px">
+                            <embed src="data:application/pdf;base64,{b64_rx}" type="application/pdf" width="100%" height="600px" />
+                        </object>
+                    ''', unsafe_allow_html=True)
 
     with tab_recaudo:
         st.markdown("<h4 style='color: #4CAF50;'>💵 Recaudar Saldo y Cambiar Estado a Entregado</h4>", unsafe_allow_html=True)
