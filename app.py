@@ -19,6 +19,17 @@ st.markdown("""
     <style>
         #MainMenu {visibility: hidden;}
         .block-container {padding-top: 2rem; padding-bottom: 2rem;}
+        
+        /* MEJORA DE CONTRASTE EN CAMPOS DE ENTRADA (MODO CLARO) */
+        .stTextInput input, .stNumberInput input, .stSelectbox select, .stTextArea textarea {
+            border: 1px solid #999999 !important;
+            background-color: #ffffff !important;
+            color: #000000 !important;
+        }
+        .stTextInput input:focus, .stNumberInput input:focus, .stTextArea textarea:focus {
+            border-color: #E61B23 !important;
+            box-shadow: 0 0 0 1px #E61B23 !important;
+        }
     </style>
 """, unsafe_allow_html=True)
 
@@ -66,7 +77,7 @@ if not st.session_state.user_info:
     col_l1, col_l2, col_l3 = st.columns([1, 1.2, 1])
     with col_l2:
         with st.container(border=True):
-            b64_logo = get_image_base64("logo2.png") if os.path.exists("logo2.png") else get_image_base64("logo.png")
+            b64_logo = get_image_base64("logo.png") if os.path.exists("logo.png") else get_image_base64("logo2.png")
             if b64_logo:
                 st.markdown(f'<div style="text-align: center;"><img src="data:image/png;base64,{b64_logo}" width="80%"></div><br>', unsafe_allow_html=True)
             else:
@@ -432,10 +443,11 @@ def dibujar_prescripcion_clinica(pdf, paciente, historia, detalles_rx, logo_path
     pdf.set_font("helvetica", "B", 8); pdf.cell(195, 6, "Nota: NO SE DA GARANTIA POR TRABAJOS EN OTRA OPTICA", ln=1)
 
 def get_sidebar_logo_html():
-    b64_logo1 = get_image_base64("logo.png")
-    b64_logo2 = get_image_base64("logo2.png")
-    img_light = f'<img src="data:image/png;base64,{b64_logo1}" class="logo-light">' if b64_logo1 else ""
-    img_dark = f'<img src="data:image/png;base64,{b64_logo2}" class="logo-dark">' if b64_logo2 else img_light.replace('logo-light', 'logo-dark')
+    b64_logo_light = get_image_base64("logo.png")   # Logo para fondo claro
+    b64_logo_dark = get_image_base64("logo2.png")  # Logo para fondo oscuro (letras blancas)
+    
+    img_light = f'<img src="data:image/png;base64,{b64_logo_light}" class="logo-light">' if b64_logo_light else ""
+    img_dark = f'<img src="data:image/png;base64,{b64_logo_dark}" class="logo-dark">' if b64_logo_dark else (f'<img src="data:image/png;base64,{b64_logo_light}" class="logo-dark">' if b64_logo_light else "")
     
     return f"""
     <style>
@@ -560,7 +572,7 @@ with st.sidebar:
                 st.rerun()
                 
     st.markdown("---")
-    st.caption("🚀 Boomerang Visión ERP - V1.1.7 UI")
+    st.caption("🚀 Boomerang Visión ERP - Versión 1.0")
 
 modulo = st.session_state.current_module
 
