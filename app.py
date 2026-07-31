@@ -9,107 +9,16 @@ import altair as alt
 from dotenv import load_dotenv
 from fpdf import FPDF
 from datetime import datetime
-import streamlit.components.v1 as components
 
 # =====================================================================
 # 1. CONFIGURACIÓN INICIAL DE PÁGINA Y BD
 # =====================================================================
-st.set_page_config(page_title="Boomerang Visión", layout="wide", page_icon="👓", initial_sidebar_state="expanded")
-
-components.html("""
-    <script>
-        const doc = window.parent.document;
-        doc.documentElement.lang = 'es-CO';
-        Object.defineProperty(window.parent.navigator, 'language', {value: 'es-CO', configurable: true});
-        Object.defineProperty(window.parent.navigator, 'languages', {value: ['es-CO', 'es'], configurable: true});
-    </script>
-""", height=0, width=0)
+st.set_page_config(page_title="Boomerang Visión ERP", layout="wide", page_icon="👓", initial_sidebar_state="expanded")
 
 st.markdown("""
     <style>
         #MainMenu {visibility: hidden;}
         .block-container {padding-top: 2rem; padding-bottom: 2rem;}
-        
-        div[data-testid="stTextInput"] > div:last-child,
-        div[data-testid="stNumberInput"] > div:last-child,
-        div[data-testid="stDateInput"] > div:last-child,
-        div[data-testid="stSelectbox"] > div:last-child,
-        div[data-testid="stTextArea"] > div:last-child {
-            background-color: #f1f5f9 !important; 
-            border: 1px solid #cbd5e1 !important; 
-            border-radius: 6px !important;
-            overflow: hidden !important; 
-        }
-
-        div[data-testid="stTextInput"] > div:last-child:focus-within,
-        div[data-testid="stNumberInput"] > div:last-child:focus-within,
-        div[data-testid="stDateInput"] > div:last-child:focus-within,
-        div[data-testid="stSelectbox"] > div:last-child:focus-within,
-        div[data-testid="stTextArea"] > div:last-child:focus-within {
-            background-color: #ffebee !important; 
-            border: 1px solid #E61B23 !important; 
-            box-shadow: inset 0 0 0 1px #E61B23 !important; 
-        }
-
-        div[data-baseweb="input"],
-        div[data-baseweb="base-input"],
-        div[data-baseweb="select"] > div {
-            background-color: transparent !important;
-            border: none !important;
-            box-shadow: none !important;
-        }
-
-        div[data-baseweb="base-input"]::after,
-        div[data-baseweb="base-input"]::before,
-        div[data-baseweb="input"]::after,
-        div[data-baseweb="input"]::before {
-            display: none !important;
-            content: none !important;
-            border: none !important;
-            background: transparent !important;
-        }
-
-        div[data-testid="stTextInput"] div[data-baseweb="base-input"] > div,
-        div[data-testid="stNumberInput"] div[data-baseweb="base-input"] > div {
-            border: none !important;
-            box-shadow: none !important;
-            outline: none !important;
-            background: transparent !important;
-        }
-
-        div[data-testid="stTextInput"] input, 
-        div[data-testid="stNumberInput"] input, 
-        div[data-testid="stDateInput"] input,
-        div[data-testid="stTextArea"] textarea {
-            background-color: transparent !important;
-            color: #0f172a !important; 
-            border: none !important;
-            box-shadow: none !important;
-            padding-left: 12px !important;
-            outline: none !important;
-        }
-
-        div[data-testid="stSelectbox"] div[data-baseweb="select"] {
-            color: #0f172a !important;
-        }
-
-        div[data-baseweb="spinbutton"] {
-            background-color: transparent !important;
-            border: none !important;
-        }
-        
-        div[data-testid="stPills"] button {
-            background-color: #f1f5f9 !important;
-            border: 1px solid #cbd5e1 !important;
-            color: #475569 !important;
-            border-radius: 6px !important;
-            font-weight: 500 !important;
-        }
-        div[data-testid="stPills"] button[aria-selected="true"] {
-            background-color: #ffebee !important;
-            border: 1px solid #E61B23 !important;
-            color: #E61B23 !important;
-        }
     </style>
 """, unsafe_allow_html=True)
 
@@ -124,7 +33,7 @@ def init_connection():
 supabase = init_connection()
 
 # =====================================================================
-# 2. SISTEMA DE AUTENTICACIÓN Y ROLES LOCALES
+# 2. SISTEMA DE AUTENTICACIÓN Y ROLES LOCALES (PERSISTENCIA DIARIA)
 # =====================================================================
 USUARIOS_PERMITIDOS = {
     "1022396649": {"pass": "mateo", "nombre": "Dr. Mateo F.", "rol": "admin", "id": "1022396649"},
@@ -141,8 +50,7 @@ def get_image_base64(path):
             return base64.b64encode(img_file.read()).decode()
     return None
 
-if "user_info" not in st.session_state:
-    st.session_state.user_info = None
+if "user_info" not in st.session_state: st.session_state.user_info = None
 
 if st.session_state.user_info is None and "auth_token" in st.query_params:
     try:
@@ -151,15 +59,14 @@ if st.session_state.user_info is None and "auth_token" in st.query_params:
         token_user_id, token_date = decoded_token.split("||")
         if token_date == datetime.now().strftime("%Y-%m-%d") and token_user_id in USUARIOS_PERMITIDOS:
             st.session_state.user_info = USUARIOS_PERMITIDOS[token_user_id]
-    except Exception:
-        pass
+    except Exception: pass
 
 if not st.session_state.user_info:
     st.markdown("<br><br><br>", unsafe_allow_html=True)
     col_l1, col_l2, col_l3 = st.columns([1, 1.2, 1])
     with col_l2:
         with st.container(border=True):
-            b64_logo = get_image_base64("logo.png")
+            b64_logo = get_image_base64("logo2.png") if os.path.exists("logo2.png") else get_image_base64("logo.png")
             if b64_logo:
                 st.markdown(f'<div style="text-align: center;"><img src="data:image/png;base64,{b64_logo}" width="80%"></div><br>', unsafe_allow_html=True)
             else:
@@ -195,11 +102,9 @@ def format_currency_co(val):
     if val_str.endswith(".0"): val_str = val_str[:-2]
     digits = clean_numeric_string(val_str)
     if not digits: return ""
-    rev = digits[::-1]
-    res = ""
+    rev = digits[::-1]; res = ""
     for i, char in enumerate(rev):
-        if i > 0 and i % 3 == 0:
-            res += "'" if i % 6 == 0 else "."
+        if i > 0 and i % 3 == 0: res += "'" if i % 6 == 0 else "."
         res += char
     return res[::-1]
 
@@ -210,29 +115,16 @@ def format_add(add_val):
         return ""
     return val_str
 
-def has_valid_addition(add_val):
-    if not add_val: return False
-    try:
-        val_str = str(add_val).strip().upper()
-        if val_str in ["0", "0.0", "0.00", "+0.00", "-0.00", "N/A", "NEUTRO"]:
-            return False
-        clean_f = float(val_str.replace('+', '').strip())
-        return clean_f > 0.0
-    except:
-        return False
-
 def get_whatsapp_link(celular, mensaje):
     digits = clean_numeric_string(celular)
     if not digits: return "#"
-    if not digits.startswith("57") and len(digits) == 10:
-        digits = "57" + digits
+    if not digits.startswith("57") and len(digits) == 10: digits = "57" + digits
     encoded_msg = urllib.parse.quote(mensaje)
     return f"https://wa.me/{digits}?text={encoded_msg}"
 
 def convert_df_to_excel(df, sheet_name="Reporte"):
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name=sheet_name)
+    with pd.ExcelWriter(output, engine='openpyxl') as writer: df.to_excel(writer, index=False, sheet_name=sheet_name)
     return output.getvalue()
 
 def styled_header(text, icon=""):
@@ -277,14 +169,12 @@ def get_cerca_rx(rx_str, adicion_val):
             sph_cerca_str = "NEUTRO" if esf_cerca == 0.0 else f"{esf_cerca:+.2f}"
             if cilindro == 0.0: return sph_cerca_str
             return f"{sph_cerca_str} {cilindro:.2f} x {eje}°"
-    except Exception:
-        pass
+    except Exception: pass
     return rx_str
 
 def procesar_historia_factura(historia, tipo_gafas):
     h = historia.copy()
-    if tipo_gafas == "Lejos":
-        h['adicion'] = ""
+    if tipo_gafas == "Lejos": h['adicion'] = ""
     elif tipo_gafas == "Cerca":
         h['rx_final_od'] = get_cerca_rx(h.get('rx_final_od'), h.get('adicion'))
         h['rx_final_oi'] = get_cerca_rx(h.get('rx_final_oi'), h.get('adicion'))
@@ -296,28 +186,8 @@ def parse_for_grid(rx_str):
     if "X" not in rx_str.upper(): return rx_str.upper(), "", ""
     parts = rx_str.upper().replace('X', ' ').split()
     esf = "NEUTRO" if parts[0] in ['N', 'NEUTRO'] else parts[0].upper()
-    cil = parts[1]
-    eje = parts[2].upper()
+    cil = parts[1]; eje = parts[2].upper()
     return esf, cil, eje
-
-def mostrar_pdf_seguro(pdf_bytes):
-    b64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
-    html_code = f"""
-        <iframe id="pdf_frame" width="100%" height="600" style="border: none;"></iframe>
-        <script>
-            const b64Data = '{b64_pdf}';
-            const byteCharacters = atob(b64Data);
-            const byteNumbers = new Array(byteCharacters.length);
-            for (let i = 0; i < byteCharacters.length; i++) {{
-                byteNumbers[i] = byteCharacters.charCodeAt(i);
-            }}
-            const byteArray = new Uint8Array(byteNumbers);
-            const blob = new Blob([byteArray], {{ type: 'application/pdf' }});
-            const url = URL.createObjectURL(blob);
-            document.getElementById('pdf_frame').src = url;
-        </script>
-    """
-    components.html(html_code, height=610)
 
 def dibujar_media_carta(pdf, paciente, historia, venta, tipo_documento, logo_path="logo.png"):
     pdf.set_font("helvetica", "B", 10)
@@ -328,11 +198,9 @@ def dibujar_media_carta(pdf, paciente, historia, venta, tipo_documento, logo_pat
     pdf.text(10, 27, "C.C. UNISUR Local 1114")
     pdf.text(10, 31, "TEL. 601-9045922")
     pdf.text(10, 35, "CEL: 3118831369")
-    if os.path.exists(logo_path):
-        pdf.image(logo_path, x=145, y=10, w=55)
+    if os.path.exists(logo_path): pdf.image(logo_path, x=145, y=10, w=55)
     
-    pdf.set_font("helvetica", "", 9)
-    pdf.set_xy(10, 39)
+    pdf.set_font("helvetica", "", 9); pdf.set_xy(10, 39)
     pdf.cell(20, 6, "FECHA", border=1)
     pdf.set_font("helvetica", "B", 9)
     pdf.cell(65, 6, datetime.now().strftime("%d/%m/%Y %H:%M"), border=1)
@@ -342,62 +210,38 @@ def dibujar_media_carta(pdf, paciente, historia, venta, tipo_documento, logo_pat
     pdf.set_font("helvetica", "B", 10)
     pdf.cell(55, 6, f"No. {venta['numero_factura']}", border=1, ln=1, align="C")
     
-    pdf.set_font("helvetica", "", 8.5)
-    pdf.set_xy(10, 46)
-    pdf.cell(20, 6, "NOMBRE:", border=1)
-    pdf.set_font("helvetica", "B", 8.5)
-    pdf.cell(85, 6, venta['titular_nombre'], border=1)
-    pdf.set_font("helvetica", "", 8.5)
-    pdf.cell(15, 6, "TEL:", border=1)
-    pdf.cell(75, 6, str(venta['titular_tel']), border=1, ln=1)
+    pdf.set_font("helvetica", "", 8.5); pdf.set_xy(10, 46)
+    pdf.cell(20, 6, "NOMBRE:", border=1); pdf.set_font("helvetica", "B", 8.5)
+    pdf.cell(85, 6, venta['titular_nombre'], border=1); pdf.set_font("helvetica", "", 8.5)
+    pdf.cell(15, 6, "TEL:", border=1); pdf.cell(75, 6, str(venta['titular_tel']), border=1, ln=1)
     
     pdf.set_xy(10, 52)
-    pdf.cell(20, 6, "DIRECCION:", border=1)
-    pdf.cell(85, 6, str(paciente.get('direccion', '') or ''), border=1)
-    pdf.cell(15, 6, "D.I:", border=1)
-    pdf.cell(75, 6, str(venta['titular_doc']), border=1, ln=1)
+    pdf.cell(20, 6, "DIRECCION:", border=1); pdf.cell(85, 6, str(paciente.get('direccion', '') or ''), border=1)
+    pdf.cell(15, 6, "D.I:", border=1); pdf.cell(75, 6, str(venta['titular_doc']), border=1, ln=1)
     
-    pdf.set_font("helvetica", "B", 8.5)
-    pdf.set_xy(10, 60)
-    pdf.cell(15, 6, "COD.", border=1, align="C")
-    pdf.cell(110, 6, "DESCRIPCION", border=1, align="C")
-    pdf.cell(15, 6, "CANT.", border=1, align="C")
-    pdf.cell(27, 6, "V.UNIT.", border=1, align="C")
-    pdf.cell(28, 6, "TOTAL", border=1, ln=1, align="C")
+    pdf.set_font("helvetica", "B", 8.5); pdf.set_xy(10, 60)
+    pdf.cell(15, 6, "COD.", border=1, align="C"); pdf.cell(110, 6, "DESCRIPCION", border=1, align="C")
+    pdf.cell(15, 6, "CANT.", border=1, align="C"); pdf.cell(27, 6, "V.UNIT.", border=1, align="C"); pdf.cell(28, 6, "TOTAL", border=1, ln=1, align="C")
     
-    pdf.set_font("helvetica", "", 8.5)
-    pdf.set_xy(10, 66)
-    pdf.cell(15, 8, "1", border=1, align="C")
-    pdf.cell(110, 8, venta['descripcion'], border=1)
-    pdf.cell(15, 8, "1", border=1, align="C")
-    pdf.cell(27, 8, f"$ {format_currency_co(venta['subtotal'])}", border=1, align="R")
+    pdf.set_font("helvetica", "", 8.5); pdf.set_xy(10, 66)
+    pdf.cell(15, 8, "1", border=1, align="C"); pdf.cell(110, 8, venta['descripcion'], border=1)
+    pdf.cell(15, 8, "1", border=1, align="C"); pdf.cell(27, 8, f"$ {format_currency_co(venta['subtotal'])}", border=1, align="R")
     pdf.cell(28, 8, f"$ {format_currency_co(venta['subtotal'])}", border=1, ln=1, align="R")
     
     pdf.set_xy(10, 74)
-    pdf.cell(15, 6, "", border=1)
-    pdf.cell(110, 6, "", border=1)
-    pdf.cell(15, 6, "", border=1)
-    pdf.cell(27, 6, "", border=1)
-    pdf.cell(28, 6, "", border=1, ln=1)
+    pdf.cell(15, 6, "", border=1); pdf.cell(110, 6, "", border=1); pdf.cell(15, 6, "", border=1); pdf.cell(27, 6, "", border=1); pdf.cell(28, 6, "", border=1, ln=1)
 
-    pdf.set_font("helvetica", "B", 8.5)
-    pdf.set_xy(10, 81)
+    pdf.set_font("helvetica", "B", 8.5); pdf.set_xy(10, 81)
     pdf.cell(110, 5, f"ENTREGA: {venta['fecha_entrega']}", border=1, ln=1)
     
-    pdf.set_font("helvetica", "", 8)
-    pdf.set_xy(10, 86)
+    pdf.set_font("helvetica", "", 8); pdf.set_xy(10, 86)
     pdf.cell(70, 5, f"RX FINAL: {paciente['nombre_completo']}", border="L,T,B")
-    pdf.set_font("helvetica", "B", 8)
-    pdf.cell(40, 5, "AV", border="T,B", ln=1, align="C")
+    pdf.set_font("helvetica", "B", 8); pdf.cell(40, 5, "AV", border="T,B", ln=1, align="C")
     
-    pdf.set_font("helvetica", "", 8)
-    pdf.set_xy(10, 91)
-    pdf.cell(70, 5, f"OD: {format_rx_ui(historia.get('rx_final_od', 'N/A'))}", border="L,B")
-    pdf.cell(40, 5, "20/20", border="B", ln=1, align="C")
+    pdf.set_font("helvetica", "", 8); pdf.set_xy(10, 91)
+    pdf.cell(70, 5, f"OD: {format_rx_ui(historia.get('rx_final_od', 'N/A'))}", border="L,B"); pdf.cell(40, 5, "20/20", border="B", ln=1, align="C")
     
-    pdf.set_xy(10, 96)
-    pdf.cell(70, 5, f"OI: {format_rx_ui(historia.get('rx_final_oi', 'N/A'))}", border="L,B")
-    pdf.cell(40, 5, "20/20", border="B", ln=1, align="C")
+    pdf.set_xy(10, 96); pdf.cell(70, 5, f"OI: {format_rx_ui(historia.get('rx_final_oi', 'N/A'))}", border="L,B"); pdf.cell(40, 5, "20/20", border="B", ln=1, align="C")
     
     add_str = format_add(historia.get('adicion'))
     add_text = f" ADD: {add_str}" if add_str else ""
@@ -405,83 +249,52 @@ def dibujar_media_carta(pdf, paciente, historia, venta, tipo_documento, logo_pat
     pdf.set_xy(10, 101)
     pdf.cell(110, 5, f"DP: {historia.get('dp', '')}{add_text}{alt_text}", border="L,B,R", ln=1)
     
-    totales = [
-        ("SUBTOTAL", venta['subtotal']), 
-        ("DESCUENTO", venta['descuento']), 
-        ("TOTAL", venta['total']), 
-        ("ABONO", venta['abono']), 
-        ("SALDO", venta['saldo'])
-    ]
+    totales = [("SUBTOTAL", venta['subtotal']), ("DESCUENTO", venta['descuento']), ("TOTAL", venta['total']), ("ABONO", venta['abono']), ("SALDO", venta['saldo'])]
     for i, (concepto, valor) in enumerate(totales):
         pdf.set_xy(120, 81 + (i * 5))
-        pdf.set_font("helvetica", "", 8)
-        pdf.cell(50, 5, concepto, border=1, align="C")
+        pdf.set_font("helvetica", "", 8); pdf.cell(50, 5, concepto, border=1, align="C")
         pdf.set_font("helvetica", "B" if concepto in ["TOTAL", "SALDO"] else "", 8)
         pdf.cell(35, 5, f"$ {format_currency_co(valor)}", border=1, ln=1, align="R")
 
-    pdf.set_font("helvetica", "", 7.5)
-    pdf.set_xy(120, 106)
+    pdf.set_font("helvetica", "", 7.5); pdf.set_xy(120, 106)
     obs_texto = f"OBS: {historia.get('observaciones', '') or ''}"
     pdf.cell(85, 5, (obs_texto[:95] + '...') if len(obs_texto) > 95 else obs_texto, border=1)
 
-    pdf.set_font("helvetica", "B", 8)
-    pdf.set_xy(10, 112)
+    pdf.set_font("helvetica", "B", 8); pdf.set_xy(10, 112)
     pdf.cell(195, 4.5, "DESPUES DE 30 DIAS NO RESPONDEMOS POR TRABAJOS", border=1, ln=1, align="C")
     
-    pdf.set_xy(10, 117)
-    pdf.set_font("helvetica", "B", 7.5)
-    pdf.cell(25, 10, "GARANTIA:", border=1, align="C")
-    pdf.set_xy(35, 117)
-    pdf.set_font("helvetica", "", 6.5)
+    pdf.set_xy(10, 117); pdf.set_font("helvetica", "B", 7.5); pdf.cell(25, 10, "GARANTIA:", border=1, align="C")
+    pdf.set_xy(35, 117); pdf.set_font("helvetica", "", 6.5)
     pdf.multi_cell(170, 3.3, "* Lentes oftálmicos aplica por defectos de fabricación por un mes.\n** No hay garantía por manipulación indebida o limpieza con productos abrasivos.\n*** No se da garantía por fórmulas de otro sitio.", border=1)
     
-    pdf.set_font("helvetica", "I", 7)
-    pdf.set_xy(10, 128)
+    pdf.set_font("helvetica", "I", 7); pdf.set_xy(10, 128)
     pdf.cell(195, 4, f"BOOMERANG VISION  --  {tipo_documento}", align="C", ln=1)
 
 def dibujar_orden_laboratorio(pdf, paciente, historia, venta, tipo_orden="", logo_path="logo.png"):
-    pdf.rect(10, 10, 80, 18)
-    pdf.set_font("helvetica", "B", 34)
-    pdf.set_xy(10, 10)
+    pdf.rect(10, 10, 80, 18); pdf.set_font("helvetica", "B", 34); pdf.set_xy(10, 10)
     pdf.cell(80, 18, f"{venta['numero_factura']}", border=0, align="C")
     
-    if os.path.exists(logo_path):
-        pdf.image(logo_path, x=95, y=10, w=52)
+    if os.path.exists(logo_path): pdf.image(logo_path, x=95, y=10, w=52)
         
-    pdf.set_font("helvetica", "B", 10)
-    pdf.set_xy(150, 10)
-    pdf.cell(55, 4, "Boomerang Vision", ln=1, align="R")
-    pdf.set_font("helvetica", "", 8)
-    pdf.set_xy(150, 14)
-    pdf.cell(55, 4, "C.C. UNISUR Local 1114", ln=1, align="R")
-    pdf.set_xy(150, 18)
-    pdf.cell(55, 4, "TEL. 601-9045922", ln=1, align="R")
+    pdf.set_font("helvetica", "B", 10); pdf.set_xy(150, 10); pdf.cell(55, 4, "Boomerang Vision", ln=1, align="R")
+    pdf.set_font("helvetica", "", 8); pdf.set_xy(150, 14); pdf.cell(55, 4, "C.C. UNISUR Local 1114", ln=1, align="R")
+    pdf.set_xy(150, 18); pdf.cell(55, 4, "TEL. 601-9045922", ln=1, align="R")
     
-    pdf.set_xy(10, 30)
-    pdf.set_font("helvetica", "B", 12)
+    pdf.set_xy(10, 30); pdf.set_font("helvetica", "B", 12)
     pdf.cell(125, 6, "ORDEN DE LABORATORIO", border="T,B")
     
     pdf.set_font("helvetica", "", 8.5)
     pdf.cell(15, 6, "FECHA", border="T,B")
-    pdf.set_font("helvetica", "", 9)
-    pdf.cell(55, 6, datetime.now().strftime("%d/%m/%Y %H:%M"), border="T,B", ln=1)
+    pdf.set_font("helvetica", "", 9); pdf.cell(55, 6, datetime.now().strftime("%d/%m/%Y %H:%M"), border="T,B", ln=1)
     
-    pdf.set_xy(10, 38)
-    pdf.set_font("helvetica", "", 8.5)
-    pdf.cell(20, 6, "NOMBRE:  ", border="B")
-    pdf.set_font("helvetica", "B", 9)
-    pdf.cell(100, 6, venta['titular_nombre'].upper(), border="B")
-    pdf.set_font("helvetica", "", 8.5)
-    pdf.cell(15, 6, "TEL:      ", border="B")
-    pdf.set_font("helvetica", "", 9)
-    pdf.cell(60, 6, str(venta['titular_tel']), border="B", ln=1)
+    pdf.set_xy(10, 38); pdf.set_font("helvetica", "", 8.5); pdf.cell(20, 6, "NOMBRE:  ", border="B")
+    pdf.set_font("helvetica", "B", 9); pdf.cell(100, 6, venta['titular_nombre'].upper(), border="B")
+    pdf.set_font("helvetica", "", 8.5); pdf.cell(15, 6, "TEL:      ", border="B")
+    pdf.set_font("helvetica", "", 9); pdf.cell(60, 6, str(venta['titular_tel']), border="B", ln=1)
     
-    pdf.set_xy(10, 46)
-    pdf.set_font("helvetica", "B", 8)
-    pdf.cell(195, 5, "DETALLE", border="B", ln=1, align="C")
+    pdf.set_xy(10, 46); pdf.set_font("helvetica", "B", 8); pdf.cell(195, 5, "DETALLE", border="B", ln=1, align="C")
     
-    pdf.set_xy(10, 52)
-    pdf.set_font("helvetica", "", 9)
+    pdf.set_xy(10, 52); pdf.set_font("helvetica", "", 9)
     pdf.cell(150, 7, venta['descripcion'].upper(), border="B")
     pdf.cell(45, 7, f"$  {format_currency_co(venta['total'])}", border="B", ln=1, align="R")
     
@@ -494,197 +307,136 @@ def dibujar_orden_laboratorio(pdf, paciente, historia, venta, tipo_orden="", log
     pdf.set_font("helvetica", "", 9)
     pdf.cell(45, 6, "$             -", border="B", ln=1, align="R")
     
-    pdf.set_xy(10, 67)
-    pdf.set_font("helvetica", "B", 8.5)
-    pdf.cell(195, 5, f"RX FINAL: {paciente['nombre_completo'].upper()}", border=1, ln=1, align="C")
+    pdf.set_xy(10, 67); pdf.set_font("helvetica", "B", 8.5); pdf.cell(195, 5, f"RX FINAL: {paciente['nombre_completo'].upper()}", border=1, ln=1, align="C")
     
     add_str = format_add(historia.get('adicion'))
     texto_add = f"ADD: {add_str}" if add_str else ""
     alt_val = f" {venta['altura_focal']}" if venta.get('altura_focal') else ""
     
-    pdf.set_xy(10, 72)
-    pdf.set_font("helvetica", "B", 9)
+    pdf.set_xy(10, 72); pdf.set_font("helvetica", "B", 9)
     pdf.cell(85, 6, f"OD:    {format_rx_ui(historia.get('rx_final_od', 'N/A'))}", border=1)
-    pdf.cell(75, 6, texto_add, border=1)
-    pdf.cell(35, 6, f"ALTURA: {alt_val}", border=1, ln=1, align="C")
+    pdf.cell(75, 6, texto_add, border=1); pdf.cell(35, 6, f"ALTURA: {alt_val}", border=1, ln=1, align="C")
     
-    pdf.set_xy(10, 78)
-    pdf.cell(85, 6, f"OI:     {format_rx_ui(historia.get('rx_final_oi', 'N/A'))}", border=1)
-    pdf.cell(75, 6, f"DP: {historia.get('dp', '')}", border=1)
-    pdf.cell(35, 6, f"ALTURA: {alt_val}", border=1, ln=1, align="C")
+    pdf.set_xy(10, 78); pdf.cell(85, 6, f"OI:     {format_rx_ui(historia.get('rx_final_oi', 'N/A'))}", border=1)
+    pdf.cell(75, 6, f"DP: {historia.get('dp', '')}", border=1); pdf.cell(35, 6, f"ALTURA: {alt_val}", border=1, ln=1, align="C")
     
-    pdf.set_xy(10, 87)
-    pdf.set_font("helvetica", "B", 18)
-    pdf.multi_cell(110, 8, f"{venta['fecha_entrega'].upper()}", border=0)
+    pdf.set_xy(10, 87); pdf.set_font("helvetica", "B", 18); pdf.multi_cell(110, 8, f"{venta['fecha_entrega'].upper()}", border=0)
     
-    totales_orden = [
-        ("TOTAL", venta['total']), 
-        ("ABONO", venta['abono']), 
-        ("SALDO", venta['saldo'])
-    ]
+    totales_orden = [("TOTAL", venta['total']), ("ABONO", venta['abono']), ("SALDO", venta['saldo'])]
     for i, (concepto, valor) in enumerate(totales_orden):
         pdf.set_xy(125, 87 + (i * 5))
-        pdf.set_font("helvetica", "", 8)
-        pdf.cell(35, 5, concepto, border="B")
-        pdf.set_font("helvetica", "B", 9)
-        pdf.cell(35, 5, f"$  {format_currency_co(valor)}", border="B", ln=1, align="R")
+        pdf.set_font("helvetica", "", 8); pdf.cell(35, 5, concepto, border="B")
+        pdf.set_font("helvetica", "B", 9); pdf.cell(35, 5, f"$  {format_currency_co(valor)}", border="B", ln=1, align="R")
         
-    pdf.set_font("helvetica", "I", 7)
-    pdf.set_xy(10, 128)
+    pdf.set_font("helvetica", "I", 7); pdf.set_xy(10, 128)
     pdf.cell(195, 4, f"BOOMERANG VISION -- ORDEN DE LAB / EXCEL", align="C", ln=1)
 
 def dibujar_prescripcion_clinica(pdf, paciente, historia, detalles_rx, logo_path="logo.png"):
     pdf.set_font("helvetica", "B", 10)
-    if os.path.exists(logo_path):
-        pdf.image(logo_path, x=10, y=10, w=45)
-    pdf.set_xy(60, 10)
-    pdf.set_font("helvetica", "", 9)
+    if os.path.exists(logo_path): pdf.image(logo_path, x=10, y=10, w=45)
+    pdf.set_xy(60, 10); pdf.set_font("helvetica", "", 9)
     pdf.cell(80, 5, "Boomerang Vision MF", ln=1)
-    pdf.set_x(60)
-    pdf.cell(80, 5, "C.C. UNISUR Local 1114 Soacha", ln=1)
-    pdf.set_x(60)
-    pdf.cell(80, 5, "Teléfono 6019045922", ln=1)
+    pdf.set_x(60); pdf.cell(80, 5, "C.C. UNISUR Local 1114 Soacha", ln=1)
+    pdf.set_x(60); pdf.cell(80, 5, "Teléfono 6019045922", ln=1)
     
-    pdf.set_xy(120, 15)
-    pdf.set_font("helvetica", "B", 16)
+    pdf.set_xy(120, 15); pdf.set_font("helvetica", "B", 16)
     pdf.cell(85, 8, "PRESCRIPCION OPTICA", align="C", ln=1)
     
-    pdf.ln(5)
-    y_start = 28
-    pdf.set_xy(10, y_start)
-    pdf.set_font("helvetica", "I", 8)
-    pdf.cell(110, 4, "Nombre del paciente:", border="L,T,R")
-    pdf.cell(25, 4, "Fecha", border=1, align="C")
-    pdf.set_font("helvetica", "", 9)
-    pdf.cell(60, 4, datetime.now().strftime("%d/%m/%Y %I:%M %p"), border=1, align="C", ln=1)
+    pdf.ln(5); y_start = 28
+    pdf.set_xy(10, y_start); pdf.set_font("helvetica", "I", 8)
+    pdf.cell(110, 4, "Nombre del paciente:", border="L,T,R"); pdf.cell(25, 4, "Fecha", border=1, align="C")
+    pdf.set_font("helvetica", "", 9); pdf.cell(60, 4, datetime.now().strftime("%d/%m/%Y %I:%M %p"), border=1, align="C", ln=1)
 
-    pdf.set_x(10)
-    pdf.set_font("helvetica", "", 10)
+    pdf.set_x(10); pdf.set_font("helvetica", "", 10)
     pdf.cell(110, 6, paciente['nombre_completo'].upper(), border="L,B,R")
-    pdf.set_font("helvetica", "I", 8)
-    pdf.cell(45, 3, "Identificación", border="L,R", align="C")
-    pdf.cell(40, 3, "Tipo", border="L,R", align="C", ln=1)
+    pdf.set_font("helvetica", "I", 8); pdf.cell(45, 3, "Identificación", border="L,R", align="C"); pdf.cell(40, 3, "Tipo", border="L,R", align="C", ln=1)
 
-    pdf.set_x(10)
-    pdf.cell(110, 4, "", border=0)
-    pdf.set_font("helvetica", "", 9)
-    pdf.cell(10, 4, "CC", border="L,B", align="C")
-    pdf.cell(35, 4, str(paciente['documento']), border="B,R", align="C")
-    pdf.cell(40, 4, "PARTICULAR", border="L,B,R", align="C", ln=1)
+    pdf.set_x(10); pdf.cell(110, 4, "", border=0)
+    pdf.set_font("helvetica", "", 9); pdf.cell(10, 4, "CC", border="L,B", align="C")
+    pdf.cell(35, 4, str(paciente['documento']), border="B,R", align="C"); pdf.cell(40, 4, "PARTICULAR", border="L,B,R", align="C", ln=1)
 
-    pdf.set_x(10)
-    pdf.set_font("helvetica", "I", 8)
-    pdf.cell(110, 4, "Profesional:", border="L,T,R")
-    pdf.cell(85, 4, "Identificación", border="L,T,R", align="C", ln=1)
+    pdf.set_x(10); pdf.set_font("helvetica", "I", 8)
+    pdf.cell(110, 4, "Profesional:", border="L,T,R"); pdf.cell(85, 4, "Identificación", border="L,T,R", align="C", ln=1)
 
-    pdf.set_x(10)
-    pdf.set_font("helvetica", "", 10)
+    pdf.set_x(10); pdf.set_font("helvetica", "", 10)
     pdf.cell(110, 6, "MATEO FELIPE FELICIANO", border="L,B,R")
-    pdf.set_font("helvetica", "", 9)
-    pdf.cell(15, 6, "CC", border="L,B", align="C")
+    pdf.set_font("helvetica", "", 9); pdf.cell(15, 6, "CC", border="L,B", align="C")
     pdf.cell(70, 6, "1022396649", border="B,R", align="C", ln=1)
 
-    pdf.set_x(10)
-    pdf.set_font("helvetica", "", 9)
-    pdf.cell(20, 6, "", border="L,T")
-    pdf.cell(25, 6, "OJO", border=1, align="C")
-    pdf.cell(30, 6, "ESFERA", border=1, align="C")
-    pdf.cell(30, 6, "CILINDRO", border=1, align="C")
-    pdf.cell(20, 6, "EJE", border=1, align="C")
-    pdf.cell(30, 6, "DNP", border=1, align="C")
-    pdf.cell(40, 6, "AV", border=1, align="C", ln=1)
+    pdf.set_x(10); pdf.set_font("helvetica", "", 9)
+    pdf.cell(20, 6, "", border="L,T"); pdf.cell(25, 6, "OJO", border=1, align="C")
+    pdf.cell(30, 6, "ESFERA", border=1, align="C"); pdf.cell(30, 6, "CILINDRO", border=1, align="C")
+    pdf.cell(20, 6, "EJE", border=1, align="C"); pdf.cell(30, 6, "DNP", border=1, align="C"); pdf.cell(40, 6, "AV", border=1, align="C", ln=1)
     
-    y4 = pdf.get_y()
-    pdf.set_x(10)
+    y4 = pdf.get_y(); pdf.set_x(10)
     pdf.cell(20, 12, "LEJOS", border=1, align="C")
     
-    pdf.set_xy(30, y4)
-    pdf.cell(25, 6, "DERECHO", border=1, align="C")
+    pdf.set_xy(30, y4); pdf.cell(25, 6, "DERECHO", border=1, align="C")
     esf_od, cil_od, eje_od = parse_for_grid(historia.get('rx_final_od'))
-    pdf.cell(30, 6, esf_od, border=1, align="C")
-    pdf.cell(30, 6, cil_od, border=1, align="C")
-    pdf.cell(20, 6, eje_od, border=1, align="C")
+    pdf.cell(30, 6, esf_od, border=1, align="C"); pdf.cell(30, 6, cil_od, border=1, align="C"); pdf.cell(20, 6, eje_od, border=1, align="C")
     dp_od, dp_oi = parse_dp_individual(historia.get('dp'))
-    pdf.cell(30, 6, dp_od, border=1, align="C")
-    pdf.cell(40, 6, detalles_rx.get('av_lejos', '').upper(), border=1, align="C", ln=1)
+    pdf.cell(30, 6, dp_od, border=1, align="C"); pdf.cell(40, 6, detalles_rx.get('av_lejos', '').upper(), border=1, align="C", ln=1)
     
-    pdf.set_xy(30, y4+6)
-    pdf.cell(25, 6, "IZQUIERDO", border=1, align="C")
+    pdf.set_xy(30, y4+6); pdf.cell(25, 6, "IZQUIERDO", border=1, align="C")
     esf_oi, cil_oi, eje_oi = parse_for_grid(historia.get('rx_final_oi'))
-    pdf.cell(30, 6, esf_oi, border=1, align="C")
-    pdf.cell(30, 6, cil_oi, border=1, align="C")
-    pdf.cell(20, 6, eje_oi, border=1, align="C")
-    pdf.cell(30, 6, dp_oi, border=1, align="C")
-    pdf.cell(40, 6, detalles_rx.get('av_lejos', '').upper(), border=1, align="C", ln=1)
+    pdf.cell(30, 6, esf_oi, border=1, align="C"); pdf.cell(30, 6, cil_oi, border=1, align="C"); pdf.cell(20, 6, eje_oi, border=1, align="C")
+    pdf.cell(30, 6, dp_oi, border=1, align="C"); pdf.cell(40, 6, detalles_rx.get('av_lejos', '').upper(), border=1, align="C", ln=1)
     
-    y5 = pdf.get_y()
-    pdf.set_x(10)
+    y5 = pdf.get_y(); pdf.set_x(10)
     pdf.cell(20, 12, "CERCA", border=1, align="C")
     
-    pdf.set_xy(30, y5)
-    pdf.cell(25, 6, "DERECHO", border=1, align="C")
+    pdf.set_xy(30, y5); pdf.cell(25, 6, "DERECHO", border=1, align="C")
     add_str = format_add(historia.get('adicion'))
     cerca_esf = f"{add_str} ADD" if add_str else ""
-    pdf.cell(30, 6, cerca_esf, border=1, align="C")
-    pdf.cell(30, 6, "", border=1, align="C")
-    pdf.cell(20, 6, "", border=1, align="C")
-    pdf.cell(30, 6, "", border=1, align="C")
+    pdf.cell(30, 6, cerca_esf, border=1, align="C"); pdf.cell(30, 6, "", border=1, align="C")
+    pdf.cell(20, 6, "", border=1, align="C"); pdf.cell(30, 6, "", border=1, align="C")
     pdf.cell(40, 6, detalles_rx.get('av_cerca', '').upper() if add_str else "", border=1, align="C", ln=1)
     
-    pdf.set_xy(30, y5+6)
-    pdf.cell(25, 6, "IZQUIERDO", border=1, align="C")
-    pdf.cell(30, 6, cerca_esf, border=1, align="C")
-    pdf.cell(30, 6, "", border=1, align="C")
-    pdf.cell(20, 6, "", border=1, align="C")
-    pdf.cell(30, 6, "", border=1, align="C")
+    pdf.set_xy(30, y5+6); pdf.cell(25, 6, "IZQUIERDO", border=1, align="C")
+    pdf.cell(30, 6, cerca_esf, border=1, align="C"); pdf.cell(30, 6, "", border=1, align="C")
+    pdf.cell(20, 6, "", border=1, align="C"); pdf.cell(30, 6, "", border=1, align="C")
     pdf.cell(40, 6, detalles_rx.get('av_cerca', '').upper() if add_str else "", border=1, align="C", ln=1)
     
-    y6 = pdf.get_y()
-    pdf.set_x(10)
-    pdf.cell(35, 6, "CONTROL:", border=1)
-    pdf.cell(60, 6, detalles_rx.get('prox_control', '').upper(), border=1)
-    pdf.cell(25, 6, "VIGENCIA:", border=1)
-    pdf.cell(75, 6, "30 DIAS", border=1, ln=1)
+    y6 = pdf.get_y(); pdf.set_x(10)
+    pdf.cell(35, 6, "CONTROL:", border=1); pdf.cell(60, 6, detalles_rx.get('prox_control', '').upper(), border=1)
+    pdf.cell(25, 6, "VIGENCIA:", border=1); pdf.cell(75, 6, "30 DIAS", border=1, ln=1)
     
-    pdf.set_x(10)
-    pdf.cell(35, 6, "TIPO LENTE:", border=1)
-    pdf.cell(60, 6, detalles_rx.get('tipo_lente', '').upper(), border=1)
-    pdf.cell(25, 6, "USO:", border=1)
-    pdf.cell(75, 6, detalles_rx.get('uso', '').upper(), border=1, ln=1)
+    pdf.set_x(10); pdf.cell(35, 6, "TIPO LENTE:", border=1); pdf.cell(60, 6, detalles_rx.get('tipo_lente', '').upper(), border=1)
+    pdf.cell(25, 6, "USO:", border=1); pdf.cell(75, 6, detalles_rx.get('uso', '').upper(), border=1, ln=1)
     
-    pdf.set_x(10)
-    pdf.cell(35, 6, "FILTRO:", border=1)
-    pdf.cell(60, 6, detalles_rx.get('filtro', '').upper(), border=1)
-    pdf.cell(50, 6, "TRATAMIENTO:", border=1)
-    pdf.cell(50, 6, "UN AÑO", border=1, ln=1)
+    pdf.set_x(10); pdf.cell(35, 6, "FILTRO:", border=1); pdf.cell(60, 6, detalles_rx.get('filtro', '').upper(), border=1)
+    pdf.cell(50, 6, "TRATAMIENTO:", border=1); pdf.cell(50, 6, "UN AÑO", border=1, ln=1)
     
-    pdf.set_x(10)
-    pdf.set_font("helvetica", "B", 9)
-    pdf.cell(195, 6, "OBSERVACIONES:", border="L,T,R", ln=1)
-    pdf.set_font("helvetica", "", 9)
-    pdf.set_x(10)
+    pdf.set_x(10); pdf.set_font("helvetica", "B", 9); pdf.cell(195, 6, "OBSERVACIONES:", border="L,T,R", ln=1)
+    pdf.set_font("helvetica", "", 9); pdf.set_x(10)
     pdf.multi_cell(195, 5, historia.get('observaciones', '').upper(), border="L,R")
     
-    y_firma = pdf.get_y()
-    pdf.set_xy(120, max(y_firma, y6+35))
-    pdf.set_font("helvetica", "", 8)
-    pdf.set_text_color(100, 100, 100)
-    pdf.cell(75, 4, "Mateo F. Feliciano L.", align="C", ln=1)
-    pdf.set_x(120)
-    pdf.cell(75, 4, "Optómetra U.L.S.", align="C", ln=1)
-    pdf.set_x(120)
-    pdf.cell(75, 4, "T.P. 1022396649", align="C", ln=1)
-    pdf.set_text_color(0, 0, 0)
+    y_firma = pdf.get_y(); pdf.set_xy(120, max(y_firma, y6+35))
+    pdf.set_font("helvetica", "", 8); pdf.set_text_color(100, 100, 100)
+    pdf.cell(75, 4, "Mateo F. Feliciano L.", align="C", ln=1); pdf.set_x(120)
+    pdf.cell(75, 4, "Optómetra U.L.S.", align="C", ln=1); pdf.set_x(120)
+    pdf.cell(75, 4, "T.P. 1022396649", align="C", ln=1); pdf.set_text_color(0, 0, 0)
     
-    pdf.set_x(10)
-    pdf.cell(195, 1, "", border="T", ln=1)
-    pdf.set_font("helvetica", "B", 8)
-    pdf.cell(195, 6, "Nota: NO SE DA GARANTIA POR TRABAJOS EN OTRA OPTICA", ln=1)
+    pdf.set_x(10); pdf.cell(195, 1, "", border="T", ln=1)
+    pdf.set_font("helvetica", "B", 8); pdf.cell(195, 6, "Nota: NO SE DA GARANTIA POR TRABAJOS EN OTRA OPTICA", ln=1)
 
 def get_sidebar_logo_html():
-    b64_logo = get_image_base64("logo.png")
-    img_tag = f'<img src="data:image/png;base64,{b64_logo}" style="max-width: 85%; display: block; margin: auto; margin-bottom: 20px;">' if b64_logo else ""
-    return f'<div style="text-align: center;">{img_tag}</div>'
+    b64_logo1 = get_image_base64("logo.png")
+    b64_logo2 = get_image_base64("logo2.png")
+    img_light = f'<img src="data:image/png;base64,{b64_logo1}" class="logo-light">' if b64_logo1 else ""
+    img_dark = f'<img src="data:image/png;base64,{b64_logo2}" class="logo-dark">' if b64_logo2 else img_light.replace('logo-light', 'logo-dark')
+    
+    return f"""
+    <style>
+        .logo-light {{ display: block; max-width: 85%; margin: auto; margin-bottom: 20px; }}
+        .logo-dark {{ display: none; max-width: 85%; margin: auto; margin-bottom: 20px; }}
+        @media (prefers-color-scheme: dark) {{
+            .logo-light {{ display: none; }}
+            .logo-dark {{ display: block; }}
+        }}
+    </style>
+    <div style="text-align: center;">{img_light}{img_dark}</div>
+    """
 
 # ==========================================
 # 4. CALLBACKS DE INTERFAZ
@@ -707,17 +459,13 @@ def on_descuento_change():
     raw = st.session_state.descuento_input
     tipo = st.session_state.tipo_descuento_widget
     digits = clean_numeric_string(raw)
-    if not digits:
-        st.session_state.descuento_input = ""
-        return
+    if not digits: st.session_state.descuento_input = ""; return
     st.session_state.descuento_input = f"{digits}%" if tipo == "Porcentaje (%)" else format_currency_co(digits)
 
 def on_tipo_descuento_change():
     raw = st.session_state.descuento_input
     digits = clean_numeric_string(raw)
-    if not digits:
-        st.session_state.descuento_input = ""
-        return
+    if not digits: st.session_state.descuento_input = ""; return
     st.session_state.descuento_input = f"{digits}%" if st.session_state.tipo_descuento_widget == "Porcentaje (%)" else format_currency_co(digits)
 
 def on_altura_focal_change():
@@ -726,20 +474,15 @@ def on_altura_focal_change():
 
 for k in ["subtotal_input", "abono_input", "descuento_input", "altura_focal_input", "monto_rec_input", "monto_gasto_input", "p_compra_input", "p_venta_input", "p_compra_m", "p_venta_m"]:
     if k not in st.session_state: st.session_state[k] = ""
-
-if "last_fac_search" not in st.session_state:
-    st.session_state.last_fac_search = ""
+if "last_fac_search" not in st.session_state: st.session_state.last_fac_search = ""
 
 if "trigger_clear_doc" in st.session_state and st.session_state.trigger_clear_doc:
-    for k in ["doc_input", "nom_input", "cel_input", "dir_input", "ocu_input", "edad_input", "mot_input", "ctrl_input", "dp_od_input", "dp_oi_input", "obs_input"]: 
-        st.session_state[k] = ""
-    for k in ["esf_od", "cil_od", "eje_od", "esf_oi", "cil_oi", "eje_oi", "add_input"]: 
-        st.session_state[k] = 0.0 if "eje" not in k else 0
+    for k in ["doc_input", "nom_input", "cel_input", "dir_input", "ocu_input", "edad_input", "mot_input", "ctrl_input", "dp_od_input", "dp_oi_input", "obs_input"]: st.session_state[k] = ""
+    for k in ["esf_od", "cil_od", "eje_od", "esf_oi", "cil_oi", "eje_oi", "add_input"]: st.session_state[k] = 0.0 if "eje" not in k else 0
     st.session_state.trigger_clear_doc = False
 
 if "trigger_clear_factura" in st.session_state and st.session_state.trigger_clear_factura:
-    for k in ["subtotal_input", "abono_input", "descuento_input", "altura_focal_input"]: 
-        st.session_state[k] = ""
+    for k in ["subtotal_input", "abono_input", "descuento_input", "altura_focal_input"]: st.session_state[k] = ""
     st.session_state.trigger_clear_factura = False
 
 if "trigger_clear_recaudo" in st.session_state and st.session_state.trigger_clear_recaudo:
@@ -750,8 +493,7 @@ if "trigger_clear_recaudo" in st.session_state and st.session_state.trigger_clea
 if "global_toast" in st.session_state:
     st.toast(st.session_state.global_toast, icon=st.session_state.get("global_toast_icon", "✅"))
     del st.session_state.global_toast
-    if "global_toast_icon" in st.session_state:
-        del st.session_state.global_toast_icon
+    if "global_toast_icon" in st.session_state: del st.session_state.global_toast_icon
 
 # ==========================================
 # 5. BARRA LATERAL (SECCIONADA Y CONDICIONAL)
@@ -760,7 +502,7 @@ user_rol = st.session_state.user_info["rol"]
 user_id = st.session_state.user_info["id"]
 
 clinica_mods = ["👨‍⚕️ Consultorio"] if (user_rol == "admin" and user_id in ["1022396649", "1024585129"]) or user_rol == "doctor_limitado" else []
-comercial_mods = ["🛍️ Óptica y Facturación", "📊 Resumen de Caja"] if user_rol in ["admin", "asesor_limitado"] else []
+comercial_mods = ["🛍️ Óptica y Facturación", "📊 Cuadre de Caja Físico"] if user_rol in ["admin", "asesor_limitado"] else []
 operaciones_mods = ["📦 Inventario", "🔬 Control de Laboratorios"] if user_rol in ["admin", "asesor_limitado"] else []
 admin_mods = ["📅 CRM y Fidelización", "📈 Analítica y Estadísticas"] if user_rol == "admin" else []
 
@@ -807,7 +549,7 @@ with st.sidebar:
                 st.rerun()
                 
     st.markdown("---")
-    st.caption("🚀 Boomerang Visión - Versión 1.0")
+    st.caption("🚀 Boomerang Visión ERP - V1.1.6 UI")
 
 modulo = st.session_state.current_module
 
@@ -821,24 +563,18 @@ if modulo == "👨‍⚕️ Consultorio":
     
     with tab_adm:
         col_doc_search, col_doc_btn = st.columns([3, 1])
-        with col_doc_search: 
-            doc_autofill = st.text_input("🔍 Cargar paciente existente (Cédula):").upper()
+        with col_doc_search: doc_autofill = st.text_input("🔍 Cargar paciente existente (Cédula):").upper()
         with col_doc_btn:
-            st.write("")
-            st.write("")
+            st.write(""); st.write("")
             if st.button("Buscar", use_container_width=True) and doc_autofill:
                 res_exist = supabase.table("pacientes").select("*").eq("documento", doc_autofill).execute()
                 if res_exist.data:
                     p = res_exist.data[0]
-                    st.session_state.doc_input = p.get("documento", "")
-                    st.session_state.nom_input = p.get("nombre_completo", "")
-                    st.session_state.cel_input = p.get("celular", "")
-                    st.session_state.dir_input = p.get("direccion", "")
-                    st.session_state.ocu_input = p.get("ocupacion", "")
-                    st.session_state.edad_input = p.get("edad", "")
+                    st.session_state.doc_input = p.get("documento", ""); st.session_state.nom_input = p.get("nombre_completo", "")
+                    st.session_state.cel_input = p.get("celular", ""); st.session_state.dir_input = p.get("direccion", "")
+                    st.session_state.ocu_input = p.get("ocupacion", ""); st.session_state.edad_input = p.get("edad", "")
                     st.toast("✅ Paciente cargado.")
-                else:
-                    st.warning("No encontrado.")
+                else: st.warning("No encontrado.")
 
         with st.container(border=True):
             col1, col2, col3 = st.columns(3)
@@ -870,10 +606,7 @@ if modulo == "👨‍⚕️ Consultorio":
             eje_oi = c7.number_input("Eje OI", min_value=0, max_value=180, step=1, key="eje_oi")
             dp_oi = c8.text_input("D.P. OI (mm)", key="dp_oi_input")
             
-            st.markdown("**Adición (Bifocal/Progresivo)**")
-            col_add, _ = st.columns([1, 4])
-            with col_add:
-                adicion = st.number_input("Adición", label_visibility="collapsed", min_value=0.00, step=0.25, format="%.2f", key="add_input")
+            adicion = st.number_input("Adición (Bifocal/Progresivo)", min_value=0.00, step=0.25, format="%.2f", key="add_input")
 
     with tab_cierre:
         obs = st.text_area("Observaciones Clínicas", height=100, key="obs_input")
@@ -884,40 +617,17 @@ if modulo == "👨‍⚕️ Consultorio":
         
         st.markdown("<br>", unsafe_allow_html=True)
         if st.button("💾 Guardar Historia Clínica", type="primary", use_container_width=True):
-            if not documento or not nombre or not celular:
-                st.error("⚠️ Documento, Nombre y Celular obligatorios.")
-            elif not habeas_data_autorizado:
-                st.error("⚠️ Debes confirmar el Habeas Data.")
+            if not documento or not nombre or not celular: st.error("⚠️ Documento, Nombre y Celular obligatorios.")
+            elif not habeas_data_autorizado: st.error("⚠️ Debes confirmar el Habeas Data.")
             else:
-                rx_od_final = build_rx_string(esfera_od, cilindro_od, eje_od)
-                rx_oi_final = build_rx_string(esfera_oi, cilindro_oi, eje_oi)
+                rx_od_final = build_rx_string(esfera_od, cilindro_od, eje_od); rx_oi_final = build_rx_string(esfera_oi, cilindro_oi, eje_oi)
                 dp_combined = f"{dp_od}/{dp_oi}" if dp_od and dp_oi else (dp_od or dp_oi or "")
-                doc_up = str(documento).upper()
-                nom_up = str(nombre).upper()
-                cel_up = str(celular).upper()
+                doc_up = str(documento).upper(); nom_up = str(nombre).upper(); cel_up = str(celular).upper()
                 
-                try:
-                    supabase.table("pacientes").upsert({
-                        "documento": doc_up, "nombre_completo": nom_up, "celular": cel_up, 
-                        "ocupacion": str(ocupacion).upper(), "direccion": str(direccion).upper(), 
-                        "edad": str(edad).upper(), "fecha_nacimiento": fecha_nacimiento.strftime("%Y-%m-%d"), 
-                        "habeas_data": True, "habeas_data_fecha": datetime.now().isoformat()
-                    }).execute()
-                except Exception:
-                    supabase.table("pacientes").upsert({
-                        "documento": doc_up, "nombre_completo": nom_up, "celular": cel_up, 
-                        "ocupacion": str(ocupacion).upper(), "direccion": str(direccion).upper(), 
-                        "fecha_nacimiento": fecha_nacimiento.strftime("%Y-%m-%d"), 
-                        "habeas_data": True, "habeas_data_fecha": datetime.now().isoformat()
-                    }).execute()
+                try: supabase.table("pacientes").upsert({"documento": doc_up, "nombre_completo": nom_up, "celular": cel_up, "ocupacion": str(ocupacion).upper(), "direccion": str(direccion).upper(), "edad": str(edad).upper(), "fecha_nacimiento": fecha_nacimiento.strftime("%Y-%m-%d"), "habeas_data": True, "habeas_data_fecha": datetime.now().isoformat()}).execute()
+                except Exception: supabase.table("pacientes").upsert({"documento": doc_up, "nombre_completo": nom_up, "celular": cel_up, "ocupacion": str(ocupacion).upper(), "direccion": str(direccion).upper(), "fecha_nacimiento": fecha_nacimiento.strftime("%Y-%m-%d"), "habeas_data": True, "habeas_data_fecha": datetime.now().isoformat()}).execute()
 
-                supabase.table("historias_clinicas").insert({
-                    "paciente_documento": doc_up, "motivo_consulta": str(motivo).upper(), 
-                    "rx_final_od": rx_od_final, "rx_final_oi": rx_oi_final, "dp": dp_combined, 
-                    "ultimo_control": str(ultimo_control).upper(), "observaciones": str(obs).upper(), 
-                    "adicion": f"{adicion:+.2f}" if adicion > 0.0 else "", "fecha": datetime.now().isoformat()
-                }).execute()
-                
+                supabase.table("historias_clinicas").insert({"paciente_documento": doc_up, "motivo_consulta": str(motivo).upper(), "rx_final_od": rx_od_final, "rx_final_oi": rx_oi_final, "dp": dp_combined, "ultimo_control": str(ultimo_control).upper(), "observaciones": str(obs).upper(), "adicion": f"{adicion:+.2f}" if adicion > 0.0 else "", "fecha": datetime.now().isoformat()}).execute()
                 st.session_state.global_toast = f"Historia de {nom_up} guardada."
                 st.session_state.trigger_clear_doc = True
                 st.rerun()
@@ -987,8 +697,7 @@ elif modulo == "🛍️ Óptica y Facturación":
                 try:
                     res_max = supabase.table("ventas_facturacion").select("numero_factura").order("numero_factura", desc=True).limit(1).execute()
                     sugerido = int(res_max.data[0]["numero_factura"]) + 1 if res_max.data else 5342
-                except:
-                    sugerido = 5342
+                except: sugerido = 5342
                 
                 num_factura = st.text_input("N° de Factura", value=str(sugerido))
                 
@@ -998,8 +707,7 @@ elif modulo == "🛍️ Óptica y Facturación":
                         if len(supabase.table("ventas_facturacion").select("numero_factura").eq("numero_factura", num_factura).execute().data) > 0:
                             st.error(f"⚠️ El número de factura **{num_factura}** ya existe.")
                             factura_existe = True
-                    except:
-                        pass
+                    except: pass
 
                 st.markdown("##### Origen de los Lentes")
                 opc_rx = ["Fórmula del Sistema"] if historias_data else []
@@ -1013,24 +721,12 @@ elif modulo == "🛍️ Óptica y Facturación":
                     c_od, c_oi, c_ad, c_dp = st.columns(4)
                     rx_od_ext = c_od.text_input("RX OD").upper()
                     rx_oi_ext = c_oi.text_input("RX OI").upper()
-                    historia = {
-                        "rx_final_od": rx_od_ext or "N/A", 
-                        "rx_final_oi": rx_oi_ext or "N/A", 
-                        "adicion": c_ad.text_input("ADD").upper(), 
-                        "dp": c_dp.text_input("DP").upper(), 
-                        "observaciones": "FÓRMULA EXTERNA"
-                    }
+                    historia = {"rx_final_od": rx_od_ext or "N/A", "rx_final_oi": rx_oi_ext or "N/A", "adicion": c_ad.text_input("ADD").upper(), "dp": c_dp.text_input("DP").upper(), "observaciones": "FÓRMULA EXTERNA"}
                 else:
                     historia = {"rx_final_od": "N/A", "rx_final_oi": "N/A", "adicion": "", "dp": "", "observaciones": "NO APLICA RX"}
 
-                formula_tiene_add = has_valid_addition(historia.get('adicion'))
-
                 tipo_gafas = st.selectbox("Formato de Impresión:", ["Lejos", "Cerca", "Adición (Bifocal/Progresivo)", "Dos Pares"])
                 
-                if tipo_gafas in ["Cerca", "Adición (Bifocal/Progresivo)", "Dos Pares"] and not formula_tiene_add:
-                    st.warning("⚠️ No existe Adición para esta fórmula. Se ha seleccionado automáticamente el formato de Lejos.")
-                    tipo_gafas = "Lejos"
-
                 st.markdown("##### Montura y Descripción")
                 origen_montura = st.pills("Selecciona la montura:", ["Montura de Vitrina", "Montura del Paciente", "No aplica"], default="Montura de Vitrina")
                 
@@ -1099,10 +795,7 @@ elif modulo == "🛍️ Óptica y Facturación":
                     prox_control = col_rx2.text_input("Próximo Control").upper()
                     av_lejos = col_rx1.text_input("AV Lejos").upper()
                     av_cerca = col_rx2.text_input("AV Cerca").upper()
-                    detalles_rx = {
-                        "tipo_lente": tipo_lente, "filtro": filtro, "uso": uso, 
-                        "prox_control": prox_control, "av_lejos": av_lejos, "av_cerca": av_cerca
-                    }
+                    detalles_rx = {"tipo_lente": tipo_lente, "filtro": filtro, "uso": uso, "prox_control": prox_control, "av_lejos": av_lejos, "av_cerca": av_cerca}
                 
                 st.divider()
                 col_btn1, col_btn2 = st.columns([1, 1])
@@ -1114,83 +807,57 @@ elif modulo == "🛍️ Óptica y Facturación":
                         st.warning("⚠️ Debes rellenar la descripción, el subtotal y los datos del titular válidos.")
                     else:
                         venta_data = {
-                            "numero_factura": num_factura, "titular_nombre": titular_nombre, "titular_doc": titular_doc, 
-                            "titular_tel": titular_tel, "descripcion": desc_producto, "subtotal": sub_val, 
-                            "descuento": desc_calc, "total": tot_neto, "abono": abono_val, "saldo": sal_pend, 
-                            "fecha_entrega": fecha_entrega, "altura_focal": altura_focal, "metodo_pago": metodo_pago
+                            "numero_factura": num_factura, "titular_nombre": titular_nombre, "titular_doc": titular_doc, "titular_tel": titular_tel,
+                            "descripcion": desc_producto, "subtotal": sub_val, "descuento": desc_calc, "total": tot_neto, 
+                            "abono": abono_val, "saldo": sal_pend, "fecha_entrega": fecha_entrega, "altura_focal": altura_focal,
+                            "metodo_pago": metodo_pago
                         }
                         try:
                             supabase.table("ventas_facturacion").insert({
-                                "numero_factura": num_factura, "paciente_documento": paciente['documento'], 
-                                "titular_nombre": titular_nombre, "titular_doc": titular_doc, "titular_tel": titular_tel, 
-                                "descripcion": desc_producto, "subtotal": sub_val, "descuento": desc_calc, 
-                                "total": tot_neto, "abono": abono_val, "saldo": sal_pend, "fecha_entrega": fecha_entrega, 
-                                "altura_focal": altura_focal, "metodo_pago": metodo_pago, "estado": "ACTIVA", 
-                                "estado_lab": "Pendiente de enviar", "fecha_venta": datetime.now().isoformat()
+                                "numero_factura": num_factura, "paciente_documento": paciente['documento'], "titular_nombre": titular_nombre,
+                                "titular_doc": titular_doc, "titular_tel": titular_tel, "descripcion": desc_producto, "subtotal": sub_val,
+                                "descuento": desc_calc, "total": tot_neto, "abono": abono_val, "saldo": sal_pend,
+                                "fecha_entrega": fecha_entrega, "altura_focal": altura_focal, "metodo_pago": metodo_pago,
+                                "estado": "ACTIVA", "estado_lab": "Pendiente de enviar", "fecha_venta": datetime.now().isoformat()
                             }).execute()
                             
                             if origen_montura == "Montura de Vitrina" and selected_frame_code:
                                 frame_data = supabase.table("inventario").select("cantidad").eq("codigo", selected_frame_code).execute().data
-                                if frame_data: 
-                                    supabase.table("inventario").update({"cantidad": frame_data[0]["cantidad"] - 1}).eq("codigo", selected_frame_code).execute()
+                                if frame_data: supabase.table("inventario").update({"cantidad": frame_data[0]["cantidad"] - 1}).eq("codigo", selected_frame_code).execute()
                                 case_data = supabase.table("inventario").select("cantidad").eq("codigo", "ESTUCHE-GENERICO").execute().data
-                                if case_data: 
-                                    supabase.table("inventario").update({"cantidad": case_data[0]["cantidad"] - 1}).eq("codigo", "ESTUCHE-GENERICO").execute()
-                        except Exception as e:
-                            st.error(f"Error técnico BD: {e}")
+                                if case_data: supabase.table("inventario").update({"cantidad": case_data[0]["cantidad"] - 1}).eq("codigo", "ESTUCHE-GENERICO").execute()
+                        except Exception as e: st.error(f"Error técnico BD: {e}")
 
                         pdf = FPDF(orientation="P", unit="mm", format="Letter")
                         pdf.set_compression(True)
                         hist_factura = procesar_historia_factura(historia, tipo_gafas)
-                        
-                        pdf.add_page()
-                        dibujar_media_carta(pdf, paciente, hist_factura, venta_data, "COPIA CLIENTE")
-                        pdf.add_page()
-                        dibujar_media_carta(pdf, paciente, hist_factura, venta_data, "COPIA ÓPTICA / CAJA")
+                        pdf.add_page(); dibujar_media_carta(pdf, paciente, hist_factura, venta_data, "COPIA CLIENTE")
+                        pdf.add_page(); dibujar_media_carta(pdf, paciente, hist_factura, venta_data, "COPIA ÓPTICA / CAJA")
                         
                         if tipo_gafas == "Dos Pares":
-                            h_lejos = historia.copy()
-                            h_lejos['adicion'] = ""
-                            pdf.add_page()
-                            dibujar_orden_laboratorio(pdf, paciente, h_lejos, venta_data, "DOS PARES - LEJOS")
-                            
+                            h_lejos = historia.copy(); h_lejos['adicion'] = ""
+                            pdf.add_page(); dibujar_orden_laboratorio(pdf, paciente, h_lejos, venta_data, "DOS PARES - LEJOS")
                             h_cerca = historia.copy()
                             h_cerca['rx_final_od'] = get_cerca_rx(historia.get('rx_final_od'), historia.get('adicion'))
-                            h_cerca['rx_final_oi'] = get_cerca_rx(historia.get('rx_final_oi'), historia.get('adicion'))
-                            h_cerca['adicion'] = ""
-                            pdf.add_page()
-                            dibujar_orden_laboratorio(pdf, paciente, h_cerca, venta_data, "DOS PARES - CERCA")
+                            h_cerca['rx_final_oi'] = get_cerca_rx(historia.get('rx_final_oi'), historia.get('adicion')); h_cerca['adicion'] = ""
+                            pdf.add_page(); dibujar_orden_laboratorio(pdf, paciente, h_cerca, venta_data, "DOS PARES - CERCA")
                         else:
-                            pdf.add_page()
-                            dibujar_orden_laboratorio(pdf, paciente, hist_factura, venta_data, tipo_gafas.upper())
+                            pdf.add_page(); dibujar_orden_laboratorio(pdf, paciente, hist_factura, venta_data, tipo_gafas.upper())
                         
                         pdf_bytes = bytes(pdf.output())
                         st.session_state.global_toast = f"Venta registrada. Factura #{num_factura}"
-                        
-                        st.download_button(
-                            label="📥 Descargar Facturación", 
-                            data=pdf_bytes, 
-                            file_name=f"Facturacion_{num_factura}.pdf", 
-                            mime="application/pdf"
-                        )
-                        mostrar_pdf_seguro(pdf_bytes)
+                        st.download_button(label="📥 Descargar Facturación", data=pdf_bytes, file_name=f"Facturacion_{num_factura}.pdf", mime="application/pdf")
+                        st.markdown(f'<iframe src="data:application/pdf;base64,{base64.b64encode(pdf_bytes).decode("utf-8")}" width="100%" height="600" type="application/pdf"></iframe>', unsafe_allow_html=True)
                         st.session_state.trigger_clear_factura = True
 
                 if btn_generar_rx:
                     pdf_rx = FPDF(orientation="P", unit="mm", format="Letter")
-                    pdf_rx.set_compression(True)
-                    pdf_rx.add_page()
+                    pdf_rx.set_compression(True); pdf_rx.add_page()
                     dibujar_prescripcion_clinica(pdf_rx, paciente, historia, detalles_rx)
                     pdf_bytes_rx = bytes(pdf_rx.output())
                     st.toast("🎉 ¡Receta Clínica Generada!")
-                    
-                    st.download_button(
-                        label="📥 Descargar Receta Clínica", 
-                        data=pdf_bytes_rx, 
-                        file_name=f"Receta_{paciente['documento']}.pdf", 
-                        mime="application/pdf"
-                    )
-                    mostrar_pdf_seguro(pdf_bytes_rx)
+                    st.download_button(label="📥 Descargar Receta Clínica", data=pdf_bytes_rx, file_name=f"Receta_{paciente['documento']}.pdf", mime="application/pdf")
+                    st.markdown(f'<iframe src="data:application/pdf;base64,{base64.b64encode(pdf_bytes_rx).decode("utf-8")}" width="100%" height="600" type="application/pdf"></iframe>', unsafe_allow_html=True)
 
     with tab_recaudo:
         st.markdown("<h4 style='color: #4CAF50;'>💵 Recaudar Saldo y Cambiar Estado a Entregado</h4>", unsafe_allow_html=True)
@@ -1218,10 +885,8 @@ elif modulo == "🛍️ Óptica y Facturación":
 
                 st.write("")
                 if st.button("✅ Registrar Pago y Actualizar Estado", type="primary", use_container_width=True):
-                    if monto_rec <= 0:
-                        st.error("⚠️ Debes digitar un monto mayor a cero.")
-                    elif monto_rec > saldo_actual_int:
-                        st.error(f"⚠️ El monto supera el saldo pendiente de ${format_currency_co(saldo_actual_int)}.")
+                    if monto_rec <= 0: st.error("⚠️ Debes digitar un monto mayor a cero.")
+                    elif monto_rec > saldo_actual_int: st.error(f"⚠️ El monto supera el saldo pendiente de ${format_currency_co(saldo_actual_int)}.")
                     else:
                         nuevo_saldo = saldo_actual_int - monto_rec
                         nuevo_abono = int(fac_pen['abono']) + monto_rec
@@ -1252,8 +917,7 @@ elif modulo == "🛍️ Óptica y Facturación":
             res_anular = supabase.table("ventas_facturacion").select("*").eq("numero_factura", num_anular).execute()
             if res_anular.data:
                 fac_a = res_anular.data[0]
-                if fac_a.get("estado") == "ANULADA":
-                    st.error("⚠️ Esta factura ya se encuentra ANULADA.")
+                if fac_a.get("estado") == "ANULADA": st.error("⚠️ Esta factura ya se encuentra ANULADA.")
                 else:
                     st.warning(f"⚠️ ¿Confirmas la anulación de la Factura N° **{fac_a['numero_factura']}** de **{fac_a['titular_nombre']}** por valor de **${format_currency_co(fac_a['total'])}**?")
                     if st.button("🚨 CONFIRMAR ANULACIÓN DE FACTURA", type="primary"):
@@ -1265,10 +929,10 @@ elif modulo == "🛍️ Óptica y Facturación":
                 st.error("No existe ninguna factura con ese número.")
 
 # ------------------------------------------
-# MÓDULO 3: RESUMEN DE CAJA (DD/MM/YYYY)
+# MÓDULO 3: CUADRE DE CAJA (DD/MM/YYYY)
 # ------------------------------------------
-elif modulo == "📊 Resumen de Caja":
-    styled_header("Resumen de Caja Físico e Historial Diario", "📊")
+elif modulo == "📊 Cuadre de Caja Físico":
+    styled_header("Cuadre de Caja Físico e Historial Diario", "📊")
     
     col_fc1, col_fc2 = st.columns([2, 1])
     with col_fc1:
@@ -1296,7 +960,7 @@ elif modulo == "📊 Resumen de Caja":
         efectivo_caja = base_caja_inicial + (abono_efectivo + recaudo_efectivo) - gastos_efectivo
         total_bancos = abono_bancos + recaudo_bancos
 
-        st.markdown("### 💵 Resumen de Caja")
+        st.markdown("### 💵 Arqueo de Caja")
         col_m1, col_m2, col_m3 = st.columns(3)
         col_m1.metric("💵 Efectivo Físico (En Gaveta)", f"${format_currency_co(efectivo_caja)}")
         col_m2.metric("🏦 Total Bancos (Digital)", f"${format_currency_co(total_bancos)}")
@@ -1307,8 +971,7 @@ elif modulo == "📊 Resumen de Caja":
         
         movimientos = [{"Hora": "08:00", "Tipo": "BASE", "Detalle": "Apertura de Caja Inicial", "Monto": base_caja_inicial, "Método": "EFECTIVO"}]
         for v in ventas:
-            if v.get('abono', 0) > 0:
-                movimientos.append({"Hora": v['fecha_venta'][11:16], "Tipo": "VENTA", "Detalle": f"Fac #{v['numero_factura']} - {v['titular_nombre']}", "Monto": v['abono'], "Método": v['metodo_pago']})
+            if v.get('abono', 0) > 0: movimientos.append({"Hora": v['fecha_venta'][11:16], "Tipo": "VENTA", "Detalle": f"Fac #{v['numero_factura']} - {v['titular_nombre']}", "Monto": v['abono'], "Método": v['metodo_pago']})
         for r in recaudos:
             movimientos.append({"Hora": r['fecha_pago'][11:16], "Tipo": "RECAUDO", "Detalle": f"Saldo Fac #{r['numero_factura']}", "Monto": r['monto_pagado'], "Método": r['metodo_pago']})
         for g in gastos:
@@ -1318,8 +981,7 @@ elif modulo == "📊 Resumen de Caja":
             df_mov = pd.DataFrame(movimientos).sort_values(by="Hora", ascending=False)
             
             def color_mov(val):
-                if isinstance(val, (int, float)): 
-                    return f"color: {'#E61B23' if val < 0 else '#00A650'}; font-weight: bold;"
+                if isinstance(val, (int, float)): return f"color: {'#E61B23' if val < 0 else '#00A650'}; font-weight: bold;"
                 return ""
                 
             st.dataframe(df_mov.style.map(color_mov, subset=['Monto']).format({"Monto": lambda x: f"${format_currency_co(abs(x))}"}), use_container_width=True)
@@ -1330,16 +992,12 @@ elif modulo == "📊 Resumen de Caja":
     with tab_gastos:
         st.markdown("### 💸 Registrar Salida de Dinero (Gasto)")
         col_g1, col_g2, col_g3 = st.columns([2, 1, 1])
-        with col_g1:
-            desc_gasto = st.text_input("Concepto / Descripción del Gasto", placeholder="Ej: Pago mensajería laboratorio").upper()
-        with col_g2:
-            monto_gasto = int(clean_numeric_string(st.text_input("Valor ($)", key="monto_gasto_input", on_change=on_monto_gasto_change)) or 0)
-        with col_g3:
-            metodo_gasto = st.selectbox("Forma de Salida", ["EFECTIVO", "BOLD", "NEQUI", "DAVIPLATA"])
+        with col_g1: desc_gasto = st.text_input("Concepto / Descripción del Gasto", placeholder="Ej: Pago mensajería laboratorio").upper()
+        with col_g2: monto_gasto = int(clean_numeric_string(st.text_input("Valor ($)", key="monto_gasto_input", on_change=on_monto_gasto_change)) or 0)
+        with col_g3: metodo_gasto = st.selectbox("Forma de Salida", ["EFECTIVO", "BOLD", "NEQUI", "DAVIPLATA"])
         
         if st.button("💾 Guardar Gasto de Caja", type="primary"):
-            if not desc_gasto or monto_gasto <= 0:
-                st.warning("⚠️ Ingresa una descripción y valor válidos.")
+            if not desc_gasto or monto_gasto <= 0: st.warning("⚠️ Ingresa una descripción y valor válidos.")
             else:
                 supabase.table("gastos_caja").insert({"descripcion": desc_gasto, "monto": monto_gasto, "metodo_pago": metodo_gasto, "fecha_gasto": datetime.now().isoformat()}).execute()
                 st.session_state.global_toast = "Gasto registrado correctamente."
@@ -1365,11 +1023,7 @@ elif modulo == "📦 Inventario":
                 venta = int(p.get("precio_venta", 0))
                 inv_total += (cant * compra)
                 potencial += (cant * venta)
-                tabla_inv.append({
-                    "Código": str(p.get("codigo", "")), "Categoría": str(p.get("categoria", "")), 
-                    "Marca": str(p.get("marca", "")).upper(), "Descripción": str(p.get("descripcion", "")).upper(), 
-                    "Cant.": cant, "Costo": compra, "P. Venta": venta
-                })
+                tabla_inv.append({"Código": str(p.get("codigo", "")), "Categoría": str(p.get("categoria", "")), "Marca": str(p.get("marca", "")).upper(), "Descripción": str(p.get("descripcion", "")).upper(), "Cant.": cant, "Costo": compra, "P. Venta": venta})
             
             df_inv = pd.DataFrame(tabla_inv)
             
@@ -1479,17 +1133,13 @@ elif modulo == "📦 Inventario":
                 stock = int(prod["cantidad"])
                 st.info(f"**{prod['marca']}** - {prod['descripcion']} | Stock: **{stock}**")
                 c1, c2, c3 = st.columns([1, 1, 2])
-                with c1:
-                    accion = st.radio("Acción:", ["Sumar (+)", "Restar (-)"])
-                with c2:
-                    cant_ajustar = st.number_input("Cantidad", min_value=1, step=1, value=1)
+                with c1: accion = st.radio("Acción:", ["Sumar (+)", "Restar (-)"])
+                with c2: cant_ajustar = st.number_input("Cantidad", min_value=1, step=1, value=1)
                 with c3:
-                    st.write("")
-                    st.write("")
+                    st.write(""); st.write("")
                     if st.button("Actualizar Stock", type="primary", use_container_width=True):
                         nuevo_stock = stock + cant_ajustar if accion == "Sumar (+)" else stock - cant_ajustar
-                        if nuevo_stock < 0:
-                            st.error("⚠️ Stock negativo.")
+                        if nuevo_stock < 0: st.error("⚠️ Stock negativo.")
                         else:
                             supabase.table("inventario").update({"cantidad": nuevo_stock}).eq("codigo", codigo_ajuste).execute()
                             st.session_state.global_toast = f"Stock actualizado a {nuevo_stock}."
@@ -1530,10 +1180,8 @@ elif modulo == "🔬 Control de Laboratorios":
         filtro_estado = col_b2.selectbox("Filtrar trabajos por estado:", ["Todos los Activos", "Pendiente de enviar", "En Laboratorio", "Recibido en Óptica", "Entregado"])
         
         query_lab = supabase.table("ventas_facturacion").select("*").neq("estado", "ANULADA")
-        if filtro_estado != "Todos los Activos":
-            query_lab = query_lab.eq("estado_lab", filtro_estado)
-        if search_fac_lab:
-            query_lab = query_lab.eq("numero_factura", search_fac_lab)
+        if filtro_estado != "Todos los Activos": query_lab = query_lab.eq("estado_lab", filtro_estado)
+        if search_fac_lab: query_lab = query_lab.eq("numero_factura", search_fac_lab)
             
         trabajos = query_lab.order("fecha_venta", desc=True).execute().data or []
         opciones_labs = ["NO ASIGNADO"] + [l['nombre'] for l in (supabase.table("laboratorios").select("nombre").execute().data or [])]
@@ -1543,21 +1191,13 @@ elif modulo == "🔬 Control de Laboratorios":
                 est_act = t.get("estado_lab", "Pendiente de enviar")
                 
                 if est_act == "Pendiente de enviar": 
-                    border_color = "#E61B23"
-                    badge_bg = "#ffebee"
-                    badge_fg = "#c62828"
+                    border_color = "#E61B23"; badge_bg = "#ffebee"; badge_fg = "#c62828"
                 elif est_act == "En Laboratorio": 
-                    border_color = "#ff9800"
-                    badge_bg = "#fff3e0"
-                    badge_fg = "#ef6c00"
+                    border_color = "#ff9800"; badge_bg = "#fff3e0"; badge_fg = "#ef6c00"
                 elif est_act == "Recibido en Óptica": 
-                    border_color = "#2196F3"
-                    badge_bg = "#e3f2fd"
-                    badge_fg = "#1565c0"
+                    border_color = "#2196F3"; badge_bg = "#e3f2fd"; badge_fg = "#1565c0"
                 else: 
-                    border_color = "#4CAF50"
-                    badge_bg = "#e8f5e9"
-                    badge_fg = "#2e7d32"
+                    border_color = "#4CAF50"; badge_bg = "#e8f5e9"; badge_fg = "#2e7d32"
                 
                 with st.container(border=True):
                     st.markdown(f"""
@@ -1573,10 +1213,8 @@ elif modulo == "🔬 Control de Laboratorios":
                         st.markdown(f"**Detalle:** {t['descripcion']}")
                     with c2:
                         st.markdown(f"**Entrega:** `{t['fecha_entrega']}`")
-                        if int(t.get('saldo', 0)) > 0:
-                            st.markdown(f"**Saldo:** ${format_currency_co(int(t['saldo']))}")
-                        else:
-                            st.markdown("**Pagado 100%** ✅")
+                        if int(t.get('saldo', 0)) > 0: st.markdown(f"**Saldo:** ${format_currency_co(int(t['saldo']))}")
+                        else: st.markdown("**Pagado 100%** ✅")
                     with c3:
                         posibles = ["Pendiente de enviar", "En Laboratorio", "Recibido en Óptica", "Entregado"]
                         idx_est = posibles.index(est_act) if est_act in posibles else 0
@@ -1588,10 +1226,7 @@ elif modulo == "🔬 Control de Laboratorios":
                         
                         if nuevo_est != est_act or nuevo_lab_sel != lab_act:
                             if st.button(f"💾 Guardar #{t['numero_factura']}", key=f"btn_est_{t['numero_factura']}", type="primary"):
-                                supabase.table("ventas_facturacion").update({
-                                    "estado_lab": nuevo_est, 
-                                    "laboratorio": nuevo_lab_sel if nuevo_lab_sel != "NO ASIGNADO" else None
-                                }).eq("numero_factura", t['numero_factura']).execute()
+                                supabase.table("ventas_facturacion").update({"estado_lab": nuevo_est, "laboratorio": nuevo_lab_sel if nuevo_lab_sel != "NO ASIGNADO" else None}).eq("numero_factura", t['numero_factura']).execute()
                                 st.session_state.global_toast = f"Trabajo actualizado a: {nuevo_est}"
                                 st.rerun()
         else:
@@ -1625,14 +1260,8 @@ elif modulo == "📅 CRM y Fidelización":
                     if 330 <= (hoy.date() - f_dt).days <= 400:
                         p_info = supabase.table("pacientes").select("*").eq("documento", h.get("paciente_documento")).execute().data
                         if p_info:
-                            pacientes_para_llamar.append({
-                                "Documento": p_info[0].get("documento"), 
-                                "Nombre": p_info[0].get("nombre_completo"), 
-                                "Celular": p_info[0].get("celular"), 
-                                "Ultima_Consulta": f_dt.strftime("%d/%m/%Y")
-                            })
-                except:
-                    pass
+                            pacientes_para_llamar.append({"Documento": p_info[0].get("documento"), "Nombre": p_info[0].get("nombre_completo"), "Celular": p_info[0].get("celular"), "Ultima_Consulta": f_dt.strftime("%d/%m/%Y")})
+                except: pass
         if pacientes_para_llamar:
             st.info(f"Se encontraron **{len(pacientes_para_llamar)}** pacientes para control anual.")
             for item in pacientes_para_llamar:
@@ -1643,8 +1272,7 @@ elif modulo == "📅 CRM y Fidelización":
                     c1.markdown(f"**👤 {str(item['Nombre']).upper()}**\n\nCédula: {item['Documento']} | Última visita: {item['Ultima_Consulta']}")
                     c2.markdown(f"📱 Cel: `{item['Celular']}`")
                     c3.link_button("💬 Enviar WhatsApp", get_whatsapp_link(item['Celular'], msg_final), use_container_width=True)
-        else:
-            st.info("No hay pacientes cumpliendo un año de su última consulta.")
+        else: st.info("No hay pacientes cumpliendo un año de su última consulta.")
 
     with tab_cumple:
         todos_pacientes = supabase.table("pacientes").select("*").execute().data or []
@@ -1656,15 +1284,8 @@ elif modulo == "📅 CRM y Fidelización":
                     fnac_dt = datetime.fromisoformat(fnac.replace("Z", "+00:00")).date() if isinstance(fnac, str) else fnac
                     if fnac_dt.month == hoy.month:
                         edad = hoy.year - fnac_dt.year - ((hoy.month, hoy.day) < (fnac_dt.month, fnac_dt.day))
-                        cumpleañeros.append({
-                            "Documento": p.get("documento"), 
-                            "Nombre": str(p.get("nombre_completo", "")).upper(), 
-                            "Celular": p.get("celular", "N/A"), 
-                            "Nacimiento": fnac_dt.strftime("%d/%m/%Y"), 
-                            "Edad": edad
-                        })
-                except:
-                    pass
+                        cumpleañeros.append({"Documento": p.get("documento"), "Nombre": str(p.get("nombre_completo", "")).upper(), "Celular": p.get("celular", "N/A"), "Nacimiento": fnac_dt.strftime("%d/%m/%Y"), "Edad": edad})
+                except: pass
         if cumpleañeros:
             st.info(f"¡Hay **{len(cumpleañeros)}** pacientes de cumpleaños este mes!")
             for c in cumpleañeros:
@@ -1675,8 +1296,7 @@ elif modulo == "📅 CRM y Fidelización":
                     c1.markdown(f"🎂 **{c['Nombre']}** (Cumple {c['Edad']} años)\n\nCédula: {c['Documento']}")
                     c2.markdown(f"📱 Cel: `{c['Celular']}`")
                     c3.link_button("🎁 Enviar Felicitación", get_whatsapp_link(c['Celular'], msg_cumple), use_container_width=True)
-        else:
-            st.info("No hay pacientes registrados con fecha de nacimiento en el mes actual.")
+        else: st.info("No hay pacientes registrados con fecha de nacimiento en el mes actual.")
 
     with tab_directorio:
         busqueda_dir = st.text_input("🔍 Filtrar por nombre o cédula:").upper()
@@ -1687,28 +1307,15 @@ elif modulo == "📅 CRM y Fidelización":
             if fnac_raw and fnac_raw != "N/A":
                 try:
                     fnac_fmt = datetime.strptime(str(fnac_raw)[:10], "%Y-%m-%d").strftime("%d/%m/%Y")
-                except:
-                    pass
+                except: pass
             if not busqueda_dir or busqueda_dir in str(p.get("nombre_completo", "")).upper() or busqueda_dir in str(p.get("documento", "")):
-                tabla_dir.append({
-                    "Documento": str(p.get("documento", "")), 
-                    "Nombre": str(p.get("nombre_completo", "")).upper(), 
-                    "Celular": p.get("celular", "N/A"), 
-                    "F. Nacimiento": fnac_fmt, 
-                    "Habeas Data": "Sí" if p.get("habeas_data") else "No"
-                })
+                tabla_dir.append({"Documento": str(p.get("documento", "")), "Nombre": str(p.get("nombre_completo", "")).upper(), "Celular": p.get("celular", "N/A"), "F. Nacimiento": fnac_fmt, "Habeas Data": "Sí" if p.get("habeas_data") else "No"})
         
         if tabla_dir:
             df_dir = pd.DataFrame(tabla_dir)
             st.dataframe(df_dir, use_container_width=True)
-            st.download_button(
-                "📊 Descargar Directorio (.xlsx)", 
-                convert_df_to_excel(df_dir, "Pacientes"), 
-                "Directorio.xlsx", 
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-        else:
-            st.info("No hay registros que coincidan.")
+            st.download_button("📊 Descargar Directorio (.xlsx)", convert_df_to_excel(df_dir, "Pacientes"), "Directorio.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        else: st.info("No hay registros que coincidan.")
 
     with tab_plantillas:
         st.markdown("### Personaliza tus Mensajes de WhatsApp")
@@ -1842,24 +1449,19 @@ elif modulo == "📈 Analítica y Estadísticas":
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 p_data = supabase.table("pacientes").select("*").execute().data
-                if p_data: 
-                    pd.DataFrame(p_data).to_excel(writer, index=False, sheet_name="Pacientes")
+                if p_data: pd.DataFrame(p_data).to_excel(writer, index=False, sheet_name="Pacientes")
                 
                 h_data = supabase.table("historias_clinicas").select("*").execute().data
-                if h_data: 
-                    pd.DataFrame(h_data).to_excel(writer, index=False, sheet_name="HistoriasClinicas")
+                if h_data: pd.DataFrame(h_data).to_excel(writer, index=False, sheet_name="HistoriasClinicas")
                 
                 v_data = supabase.table("ventas_facturacion").select("*").execute().data
-                if v_data: 
-                    pd.DataFrame(v_data).to_excel(writer, index=False, sheet_name="VentasFacturacion")
+                if v_data: pd.DataFrame(v_data).to_excel(writer, index=False, sheet_name="VentasFacturacion")
                 
                 i_data = supabase.table("inventario").select("*").execute().data
-                if i_data: 
-                    pd.DataFrame(i_data).to_excel(writer, index=False, sheet_name="Inventario")
+                if i_data: pd.DataFrame(i_data).to_excel(writer, index=False, sheet_name="Inventario")
                 
                 g_data = supabase.table("gastos_caja").select("*").execute().data
-                if g_data: 
-                    pd.DataFrame(g_data).to_excel(writer, index=False, sheet_name="GastosCaja")
+                if g_data: pd.DataFrame(g_data).to_excel(writer, index=False, sheet_name="GastosCaja")
             
             excel_bytes = output.getvalue()
             st.download_button(
