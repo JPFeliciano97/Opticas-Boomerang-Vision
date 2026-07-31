@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 from supabase import create_client
 import os
 import base64
@@ -11,11 +12,10 @@ from fpdf import FPDF
 from datetime import datetime
 
 # =====================================================================
-# 1. CONFIGURACIÓN INICIAL DE PÁGINA Y BD
+# 1. CONFIGURACIÓN INICIAL DE PÁGINA Y ESTILOS CSS
 # =====================================================================
 st.set_page_config(page_title="Boomerang Visión ERP", layout="wide", page_icon="👓", initial_sidebar_state="expanded")
 
-# Inyección de CSS para restaurar el contraste de los inputs y ocultar menú
 st.markdown("""
     <style>
         #MainMenu {visibility: hidden;}
@@ -596,7 +596,7 @@ with st.sidebar:
                 st.rerun()
                 
     st.markdown("---")
-    st.caption("🚀 Boomerang Visión ERP - V1.1.7 UI")
+    st.caption("🚀 Boomerang Visión ERP - V1.1.8 UI")
 
 modulo = st.session_state.current_module
 
@@ -899,12 +899,8 @@ elif modulo == "🛍️ Óptica y Facturación":
                         st.session_state.global_toast = f"Venta registrada. Factura #{num_factura}"
                         st.download_button(label="📥 Descargar Facturación", data=pdf_bytes, file_name=f"Facturacion_{num_factura}.pdf", mime="application/pdf")
                         
-                        # PREVISUALIZACIÓN ROBUSTA CON <object> Y <embed>
-                        st.markdown(f'''
-                            <object data="data:application/pdf;base64,{b64_pdf}" type="application/pdf" width="100%" height="600px">
-                                <embed src="data:application/pdf;base64,{b64_pdf}" type="application/pdf" width="100%" height="600px" />
-                            </object>
-                        ''', unsafe_allow_html=True)
+                        # PREVISUALIZACIÓN ROBUSTA CON COMPONENTS.HTML
+                        components.html(f'<iframe src="data:application/pdf;base64,{b64_pdf}" width="100%" height="600" style="border:none;"></iframe>', height=600)
                         st.session_state.trigger_clear_factura = True
 
                 if btn_generar_rx:
@@ -916,12 +912,8 @@ elif modulo == "🛍️ Óptica y Facturación":
                     st.toast("🎉 ¡Receta Clínica Generada!")
                     st.download_button(label="📥 Descargar Receta Clínica", data=pdf_bytes_rx, file_name=f"Receta_{paciente['documento']}.pdf", mime="application/pdf")
                     
-                    # PREVISUALIZACIÓN ROBUSTA CON <object> Y <embed>
-                    st.markdown(f'''
-                        <object data="data:application/pdf;base64,{b64_rx}" type="application/pdf" width="100%" height="600px">
-                            <embed src="data:application/pdf;base64,{b64_rx}" type="application/pdf" width="100%" height="600px" />
-                        </object>
-                    ''', unsafe_allow_html=True)
+                    # PREVISUALIZACIÓN ROBUSTA CON COMPONENTS.HTML
+                    components.html(f'<iframe src="data:application/pdf;base64,{b64_rx}" width="100%" height="600" style="border:none;"></iframe>', height=600)
 
     with tab_recaudo:
         st.markdown("<h4 style='color: #4CAF50;'>💵 Recaudar Saldo y Cambiar Estado a Entregado</h4>", unsafe_allow_html=True)
