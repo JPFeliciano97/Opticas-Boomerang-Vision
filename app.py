@@ -893,20 +893,20 @@ elif modulo == "🛍️ Óptica y Facturación":
                         else:
                             pdf.add_page(); dibujar_orden_laboratorio(pdf, paciente, hist_factura, venta_data, tipo_gafas.upper())
                         
-                        pdf_bytes = bytes(pdf.output())
+                        pdf_bytes = pdf.output(dest='S')
                         b64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
                         st.session_state.global_toast = f"Venta registrada. Factura #{num_factura}"
                         st.download_button(label="📥 Descargar Facturación", data=pdf_bytes, file_name=f"Facturacion_{num_factura}.pdf", mime="application/pdf")
                         
                         # VISUALIZADOR CORREGIDO MEDIANTE <iframe>
-                        st.markdown(f'<iframe src="data:application/pdf;base64,{b64_pdf}" width="100%" height="600px" style="border: none;"></iframe>', unsafe_allow_html=True)
+                        st.markdown(f'<iframe src="data:application/pdf;base64,{base64.b64encode(pdf_bytes_rx).decode("utf-8")}" width="100%" height="600" type="application/pdf"></iframe>', unsafe_allow_html=True)
                         st.session_state.trigger_clear_factura = True
 
                 if btn_generar_rx:
                     pdf_rx = FPDF(orientation="P", unit="mm", format="Letter")
                     pdf_rx.set_compression(True); pdf_rx.add_page()
                     dibujar_prescripcion_clinica(pdf_rx, paciente, historia, detalles_rx)
-                    pdf_bytes_rx = bytes(pdf_rx.output())
+                    pdf_bytes_rx = pdf_rx.output(dest='S')
                     b64_rx = base64.b64encode(pdf_bytes_rx).decode("utf-8")
                     st.toast("🎉 ¡Receta Clínica Generada!")
                     st.download_button(label="📥 Descargar Receta Clínica", data=pdf_bytes_rx, file_name=f"Receta_{paciente['documento']}.pdf", mime="application/pdf")
