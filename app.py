@@ -20,30 +20,48 @@ st.markdown("""
         #MainMenu {visibility: hidden;}
         .block-container {padding-top: 2rem; padding-bottom: 2rem;}
         
-        /* CAMPOS DE ENTRADA: Borde gris oscuro, fondo gris claro */
-        .stTextInput input, .stNumberInput input, .stSelectbox select, .stTextArea textarea {
-            border: 1px solid #6c757d !important;
+        /* CAMPOS DE ENTRADA: Borde gris claro (60% más claro), fondo gris suave */
+        div[data-baseweb="input"], div[data-baseweb="select"] > div, textarea {
+            border: 1px solid #ced4da !important;
             background-color: #f1f3f5 !important;
-            color: #111111 !important;
             border-radius: 6px !important;
+            box-shadow: none !important;
         }
         
-        /* ESTADO SELECCIONADO / ENFOCADO: Fondo rojo claro y borde rojo */
-        .stTextInput input:focus, .stNumberInput input:focus, .stSelectbox select:focus, .stTextArea textarea:focus {
+        .stTextInput input, .stNumberInput input, .stTextArea textarea {
+            background-color: transparent !important;
+            border: none !important;
+            box-shadow: none !important;
+            color: #111111 !important;
+        }
+        
+        /* ESTADO SELECCIONADO / ENFOCADO: Un solo borde rojo y fondo rojo claro (sin doble borde) */
+        div[data-baseweb="input"]:focus-within, div[data-baseweb="select"] > div:focus-within, textarea:focus {
+            border-color: #E61B23 !important;
+            background-color: #ffebee !important;
+            box-shadow: none !important;
+            outline: none !important;
+        }
+        
+        /* CONTENEDOR Y BOTONES DE NÚMERO (+ / -) CORREGIDOS Y SIN REORTES */
+        div[data-baseweb="spinbutton"] {
+            background-color: #f1f3f5 !important;
+            border: 1px solid #ced4da !important;
+            border-radius: 6px !important;
+            box-shadow: none !important;
+        }
+        div[data-baseweb="spinbutton"]:focus-within {
             border-color: #E61B23 !important;
             background-color: #ffebee !important;
             box-shadow: none !important;
         }
-        
-        /* BOTONES DE INCREMENTO Y DECREMENTO (+ / -) EN NUMBER INPUT */
         .stNumberInput button {
-            background-color: #e9ecef !important;
-            border: 1px solid #6c757d !important;
+            background-color: transparent !important;
+            border: none !important;
             color: #333333 !important;
         }
         .stNumberInput button:hover {
-            background-color: #dee2e6 !important;
-            border-color: #495057 !important;
+            background-color: rgba(0,0,0,0.05) !important;
         }
 
         /* ESTILO PARA ST.PILLS (Fondo gris suave, sin bordes; rojo al seleccionar) */
