@@ -29,10 +29,10 @@ st.markdown("""
         #MainMenu {visibility: hidden;}
         .block-container {padding-top: 2rem; padding-bottom: 2rem;}
         
-        /* CAMPOS DE ENTRADA: Fondo blanco y borde gris oscuro bien definido para alto contraste */
+        /* CAMPOS DE ENTRADA: Fondo gris claro y borde gris oscuro para excelente contraste */
         div[data-baseweb="input"], div[data-baseweb="select"] > div, textarea {
             border: 1.5px solid #6c757d !important;
-            background-color: #ffffff !important;
+            background-color: #e9ecef !important;
             border-radius: 6px !important;
             box-shadow: none !important;
         }
@@ -54,7 +54,7 @@ st.markdown("""
         
         /* CONTENEDOR Y BOTONES DE NÚMERO (+ / -) CORREGIDOS Y SIN RECORTES */
         div[data-baseweb="spinbutton"] {
-            background-color: #ffffff !important;
+            background-color: #e9ecef !important;
             border: 1.5px solid #6c757d !important;
             border-radius: 6px !important;
             box-shadow: none !important;
