@@ -40,8 +40,8 @@ st.markdown("""
             color: #000000 !important;
         }
         
-        /* ----- Cuadros de texto (inputs) ----- */
-        /* Contenedor del input: sin bordes extra */
+        /* ----- CUADROS DE TEXTO (inputs) y SELECTBOX ----- */
+        /* Contenedor del input/select: sin bordes extra, sin padding extra que rompa el borde */
         .stTextInput > div, 
         .stNumberInput > div, 
         .stTextArea > div, 
@@ -50,9 +50,11 @@ st.markdown("""
             background-color: transparent !important;
             border: none !important;
             box-shadow: none !important;
+            padding: 0 !important;
+            margin: 0 !important;
         }
         
-        /* El input en sí */
+        /* Estilo base para todos los inputs y selectboxes */
         .stTextInput input,
         .stNumberInput input,
         .stTextArea textarea,
@@ -67,6 +69,15 @@ st.markdown("""
             transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
             box-shadow: none !important;
             outline: none !important;
+            width: 100% !important;
+            box-sizing: border-box !important;     /* importante para que el padding no afecte el ancho */
+            height: auto !important;
+        }
+        
+        /* Para selectbox, también el contenedor interno debe tener el mismo fondo y borde */
+        .stSelectbox div[data-baseweb="select"] > div {
+            background-color: #f2f2f2 !important;
+            border-radius: 6px !important;
         }
         
         /* Efecto al enfocar (foco) - borde rojo suave */
@@ -75,24 +86,41 @@ st.markdown("""
         .stTextArea textarea:focus,
         .stDateInput input:focus,
         .stSelectbox div[data-baseweb="select"]:focus {
-            border-color: #e57373 !important;     /* rojo más claro */
+            border-color: #e57373 !important;
             box-shadow: 0 0 0 2px rgba(229, 115, 115, 0.3) !important;
             outline: none !important;
         }
         
-        /* Selectbox: texto interno */
+        /* Selectbox: texto interno y el contenedor del valor seleccionado */
         .stSelectbox div[data-baseweb="select"] * {
             color: #000000 !important;
+            background-color: #f2f2f2 !important;
         }
         
-        /* Número: fondo del contenedor extra (transparente) */
-        .stNumberInput > div > div {
-            background-color: transparent !important;
+        /* Para que el selectbox ocupe todo el ancho */
+        .stSelectbox div[data-baseweb="select"] {
+            width: 100% !important;
         }
         
-        /* Date input: fondo */
-        .stDateInput > div > div {
-            background-color: transparent !important;
+        /* Número: asegurar que el input interno herede el estilo */
+        .stNumberInput input {
+            background-color: #f2f2f2 !important;
+            border: 1.5px solid #b0b0b0 !important;
+            border-radius: 6px !important;
+        }
+        
+        /* Date input */
+        .stDateInput input {
+            background-color: #f2f2f2 !important;
+            border: 1.5px solid #b0b0b0 !important;
+            border-radius: 6px !important;
+        }
+        
+        /* TextArea */
+        .stTextArea textarea {
+            background-color: #f2f2f2 !important;
+            border: 1.5px solid #b0b0b0 !important;
+            border-radius: 6px !important;
         }
         
         /* Labels y textos generales en negro */
@@ -103,10 +131,9 @@ st.markdown("""
             color: #000000 !important;
         }
         
-        /* ----- Botones ----- */
-        /* Botón primario (rojo claro) */
+        /* ----- BOTONES ----- */
         .stButton > button {
-            background-color: #f5c2c2 !important;   /* rojo muy claro (80% más claro) */
+            background-color: #f5c2c2 !important;   /* rojo muy claro */
             color: #000000 !important;
             border: 1px solid #d0a0a0 !important;
             border-radius: 4px !important;
@@ -114,13 +141,13 @@ st.markdown("""
             transition: background-color 0.2s ease !important;
         }
         .stButton > button:hover {
-            background-color: #e8a8a8 !important;   /* un poco más oscuro al pasar el mouse */
+            background-color: #e8a8a8 !important;
             color: #000000 !important;
         }
         .stButton > button:active {
             background-color: #d48c8c !important;
         }
-        /* Botones secundarios (por ejemplo en sidebar) - estilo por defecto de Streamlit */
+        /* Botones secundarios (sidebar) */
         .stButton > button[data-baseweb="button"] {
             background-color: #f0f0f0 !important;
             color: #000000 !important;
@@ -195,12 +222,13 @@ st.markdown("""
             background-color: #f9f9f9 !important;
         }
         
-        /* Ajustes adicionales para eliminar bordes no deseados */
+        /* Ajustes adicionales para eliminar bordes no deseados en contenedores internos */
         .stTextInput > div > div, 
         .stNumberInput > div > div,
         .stDateInput > div > div {
             border: none !important;
             box-shadow: none !important;
+            background-color: transparent !important;
         }
     </style>
 """, unsafe_allow_html=True)
