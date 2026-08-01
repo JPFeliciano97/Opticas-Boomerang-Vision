@@ -332,13 +332,33 @@ st.markdown("""
         }
 
         /* --- 12. Contenedores con borde (st.container(border=True)) --- */
-        /* Estilo base: borde gris y bordes redondeados.
-           Las tarjetas de lab sobreescriben border-left con su color de estado
-           usando CSS inyectado inline de mayor especificidad. */
+        /* Base: borde gris estándar para todos los containers */
         [data-testid="stVerticalBlockBorderWrapper"] {
-            border-radius: 10px !important;
             border: 1px solid #d0d0d0 !important;
+            border-radius: 10px !important;
             overflow: hidden !important;
+        }
+
+        /* --- 12b. Tarjetas de laboratorio coloreadas por estado ---
+           El JS dentro de cada tarjeta escribe el atributo data-estado
+           en su propio stVerticalBlockBorderWrapper. Estos selectores de
+           atributo tienen mayor especificidad que la regla base de arriba
+           y sobreescriben el border-left con el color del estado. */
+        [data-testid="stVerticalBlockBorderWrapper"][data-estado="Pendiente de enviar"] {
+            border-left: 6px solid #E61B23 !important;
+            background-color: #fff8f8 !important;
+        }
+        [data-testid="stVerticalBlockBorderWrapper"][data-estado="En Laboratorio"] {
+            border-left: 6px solid #ff9800 !important;
+            background-color: #fffbf4 !important;
+        }
+        [data-testid="stVerticalBlockBorderWrapper"][data-estado="Recibido en Óptica"] {
+            border-left: 6px solid #2196F3 !important;
+            background-color: #f5f9ff !important;
+        }
+        [data-testid="stVerticalBlockBorderWrapper"][data-estado="Entregado"] {
+            border-left: 6px solid #4CAF50 !important;
+            background-color: #f6fdf6 !important;
         }
 
         /* --- 13. Spinner / Progress --- */
@@ -1569,29 +1589,40 @@ elif modulo == "🔬 Control de Laboratorios":
                 else:
                     border_color = "#4CAF50"; card_bg = "#f6fdf6"; badge_bg = "#e8f5e9"; badge_fg = "#2e7d32"
 
-                # Técnica: inyectamos un <div> con clase única ANTES del container.
-                # Luego el CSS usa el selector de hermano adyacente (+) para llegar
-                # al stVerticalBlockBorderWrapper que Streamlit genera justo después.
-                cls = f"card-marker-{fac_id}"
-                st.markdown(f"""
-                    <style>
-                        .{cls} + div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlockBorderWrapper"],
-                        .{cls} ~ div[data-testid="stVerticalBlockBorderWrapper"] {{
-                            background-color: {card_bg} !important;
-                            border-color: {border_color} !important;
-                            border-left-width: 6px !important;
-                            border-left-style: solid !important;
-                            border-left-color: {border_color} !important;
-                            border-radius: 10px !important;
-                            overflow: hidden !important;
-                        }}
-                    </style>
-                    <div class="{cls}" style="display:none;"></div>
-                """, unsafe_allow_html=True)
-
                 with st.container(border=True):
+                    # Estrategia definitiva: el script se ejecuta DESDE DENTRO del container.
+                    # Sube por el DOM buscando su propio stVerticalBlockBorderWrapper y le
+                    # añade un atributo data-estado. El CSS global (abajo, sección 12b) usa
+                    # ese atributo con alta especificidad para pintar el borde lateral.
+                    # Usar setAttribute en lugar de style.setProperty evita la guerra !important.
                     st.markdown(f"""
-                        <div style="margin-bottom:10px;">
+                        <script>
+                        (function() {{
+                            function tag(el) {{
+                                var node = el ? el.parentElement : null;
+                                var attempts = 0;
+                                var interval = setInterval(function() {{
+                                    var cur = node;
+                                    while (cur && cur !== document.body) {{
+                                        if (cur.getAttribute && cur.getAttribute('data-testid') === 'stVerticalBlockBorderWrapper') {{
+                                            cur.setAttribute('data-estado', '{est_act}');
+                                            clearInterval(interval);
+                                            return;
+                                        }}
+                                        cur = cur.parentElement;
+                                    }}
+                                    if (++attempts > 20) clearInterval(interval);
+                                }}, 50);
+                            }}
+                            var sc = document.currentScript;
+                            if (document.readyState === 'loading') {{
+                                document.addEventListener('DOMContentLoaded', function() {{ tag(sc); }});
+                            }} else {{
+                                tag(sc);
+                            }}
+                        }})();
+                        </script>
+                        <div style="margin-bottom:10px; padding-top:2px;">
                             <span style="background-color:{badge_bg}; color:{badge_fg}; padding:4px 12px;
                                 border-radius:20px; font-weight:700; font-size:0.8em; letter-spacing:0.6px;">
                                 {est_act.upper()}
