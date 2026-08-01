@@ -11,23 +11,23 @@ from fpdf import FPDF
 from datetime import datetime
 
 # =====================================================================
-# 1. CONFIGURACIÓN INICIAL DE PÁGINA Y ESTILOS (MODO CLARO FORZADO)
+# 1. CONFIGURACIÓN INICIAL DE PÁGINA Y ESTILOS (MODO CLARO CON ACENTOS)
 # =====================================================================
 st.set_page_config(page_title="Boomerang Visión ERP", layout="wide", page_icon="👓", initial_sidebar_state="expanded")
 
-# ============ CSS PARA MODO CLARO FORZADO ============
+# ============ CSS MEJORADO ============
 st.markdown("""
     <style>
         /* Ocultar menú */
         #MainMenu {visibility: hidden;}
         .block-container {padding-top: 2rem; padding-bottom: 2rem;}
         
-        /* Fondo general de la aplicación: blanco */
+        /* Fondo general: blanco */
         .stApp {
             background-color: #ffffff !important;
         }
         
-        /* Fondo de la barra lateral: gris muy claro */
+        /* Barra lateral: fondo gris claro */
         [data-testid="stSidebar"] {
             background-color: #f0f0f0 !important;
         }
@@ -35,24 +35,49 @@ st.markdown("""
             color: #000000 !important;
         }
         
-        /* Todos los inputs (texto, número, área, fecha, select) */
+        /* Títulos y encabezados con un toque de rojo */
+        h1, h2, h3, h4, h5, h6 {
+            color: #000000 !important;
+        }
+        h3 strong, .css-1v3fvcr {
+            color: #CC0000 !important;
+        }
+        
+        /* ----- Cuadros de texto (inputs) ----- */
+        /* Contenedor del input */
+        .stTextInput > div, 
+        .stNumberInput > div, 
+        .stTextArea > div, 
+        .stDateInput > div,
+        .stSelectbox > div {
+            background-color: transparent !important;
+            border: none !important;
+        }
+        
+        /* El input en sí */
         .stTextInput input,
         .stNumberInput input,
         .stTextArea textarea,
         .stDateInput input,
         .stSelectbox div[data-baseweb="select"] {
-            background-color: #DCDCDC !important;
-            border: 1.5px solid #A9A9A9 !important;
+            background-color: #f5f5f5 !important;
+            border: 1.5px solid #b0b0b0 !important;
             border-radius: 4px !important;
             color: #000000 !important;
+            padding: 8px 10px !important;
+            font-size: 16px !important;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
         }
         
-        /* Forzar color de texto negro en inputs */
-        .stTextInput input,
-        .stNumberInput input,
-        .stTextArea textarea,
-        .stDateInput input {
-            color: #000000 !important;
+        /* Efecto al enfocar (foco) - borde rojo */
+        .stTextInput input:focus,
+        .stNumberInput input:focus,
+        .stTextArea textarea:focus,
+        .stDateInput input:focus,
+        .stSelectbox div[data-baseweb="select"]:focus {
+            border-color: #CC0000 !important;
+            box-shadow: 0 0 0 2px rgba(204, 0, 0, 0.2) !important;
+            outline: none !important;
         }
         
         /* Selectbox: texto interno */
@@ -60,34 +85,60 @@ st.markdown("""
             color: #000000 !important;
         }
         
-        /* Número: fondo del contenedor */
+        /* Número: fondo del contenedor extra */
         .stNumberInput > div > div {
-            background-color: #DCDCDC !important;
+            background-color: transparent !important;
         }
         
         /* Date input: fondo */
         .stDateInput > div > div {
-            background-color: #DCDCDC !important;
+            background-color: transparent !important;
         }
         
-        /* Labels, textos, títulos: negro */
-        label, .stMarkdown, h1, h2, h3, h4, h5, h6, p, div, span {
+        /* Eliminar bordes de contenedores que puedan duplicar */
+        .stTextInput > div, 
+        .stNumberInput > div, 
+        .stTextArea > div, 
+        .stDateInput > div,
+        .stSelectbox > div {
+            border: none !important;
+            box-shadow: none !important;
+        }
+        
+        /* Labels y textos generales en negro */
+        label, .stMarkdown, p, div, span, .stAlert {
+            color: #000000 !important;
+        }
+        .stAlert * {
             color: #000000 !important;
         }
         
-        /* Botones */
+        /* Botones del menú lateral: estilo original de Streamlit */
+        /* No forzamos colores, dejamos el estilo por defecto */
+        
+        /* Botones primarios (rojo) */
         .stButton > button {
-            background-color: #e0e0e0 !important;
-            color: #000000 !important;
-            border: 1px solid #A9A9A9 !important;
+            background-color: #CC0000 !important;
+            color: white !important;
+            border: none !important;
+            border-radius: 4px !important;
+            font-weight: 600 !important;
         }
         .stButton > button:hover {
-            background-color: #d0d0d0 !important;
+            background-color: #B30000 !important;
+            color: white !important;
         }
-        
-        /* Contenedores con borde */
-        [data-testid="stContainer"] {
-            border-color: #A9A9A9 !important;
+        .stButton > button:active {
+            background-color: #990000 !important;
+        }
+        /* Botón secundario (en sidebar) - azul por defecto */
+        .stButton > button[data-baseweb="button"] {
+            background-color: #f0f0f0 !important;
+            color: #000000 !important;
+            border: 1px solid #b0b0b0 !important;
+        }
+        .stButton > button[data-baseweb="button"]:hover {
+            background-color: #e0e0e0 !important;
         }
         
         /* Tablas (dataframes) */
@@ -97,14 +148,16 @@ st.markdown("""
         .stDataFrame * {
             color: #000000 !important;
         }
-        
-        /* Mensajes de éxito, info, warning, error */
-        .stAlert {
-            background-color: #f5f5f5 !important;
-            color: #000000 !important;
+        .stDataFrame table {
+            border-collapse: collapse !important;
         }
-        .stAlert * {
+        .stDataFrame th {
+            background-color: #f0f0f0 !important;
             color: #000000 !important;
+            border: 1px solid #d0d0d0 !important;
+        }
+        .stDataFrame td {
+            border: 1px solid #e0e0e0 !important;
         }
         
         /* Tabs */
@@ -116,7 +169,8 @@ st.markdown("""
         }
         .stTabs [aria-selected="true"] {
             background-color: #ffffff !important;
-            color: #000000 !important;
+            color: #CC0000 !important;
+            border-bottom: 2px solid #CC0000 !important;
         }
         
         /* Checkbox y toggle */
@@ -124,7 +178,7 @@ st.markdown("""
             color: #000000 !important;
         }
         
-        /* Radio buttons */
+        /* Radio */
         .stRadio label {
             color: #000000 !important;
         }
@@ -137,6 +191,19 @@ st.markdown("""
         .streamlit-expanderContent {
             background-color: #ffffff !important;
             color: #000000 !important;
+        }
+        
+        /* Contenedores con borde */
+        [data-testid="stContainer"] {
+            border-color: #b0b0b0 !important;
+        }
+        
+        /* Mensajes de éxito, info, warning, error */
+        .stAlert {
+            background-color: #f9f9f9 !important;
+        }
+        .stAlert[data-baseweb="notification"] {
+            background-color: #f9f9f9 !important;
         }
     </style>
 """, unsafe_allow_html=True)
@@ -188,7 +255,8 @@ if not st.session_state.user_info:
     col_l1, col_l2, col_l3 = st.columns([1, 1.2, 1])
     with col_l2:
         with st.container(border=True):
-            b64_logo = get_image_base64("logo2.png") if os.path.exists("logo2.png") else get_image_base64("logo.png")
+            # Solo usamos logo.png (modo claro)
+            b64_logo = get_image_base64("logo.png")
             if b64_logo:
                 st.markdown(f'<div style="text-align: center;"><img src="data:image/png;base64,{b64_logo}" width="80%"></div><br>', unsafe_allow_html=True)
             else:
@@ -312,7 +380,7 @@ def parse_for_grid(rx_str):
     return esf, cil, eje
 
 # =====================================================================
-# 5. FUNCIONES DE DIBUJO DE PDF (se mantienen igual)
+# 5. FUNCIONES DE DIBUJO DE PDF (se mantienen igual, solo usan logo.png)
 # =====================================================================
 def dibujar_media_carta(pdf, paciente, historia, venta, tipo_documento, logo_path="logo.png"):
     pdf.set_font("helvetica", "B", 10)
@@ -546,22 +614,12 @@ def dibujar_prescripcion_clinica(pdf, paciente, historia, detalles_rx, logo_path
     pdf.set_font("helvetica", "B", 8); pdf.cell(195, 6, "Nota: NO SE DA GARANTIA POR TRABAJOS EN OTRA OPTICA", ln=1)
 
 def get_sidebar_logo_html():
-    b64_logo1 = get_image_base64("logo.png")
-    b64_logo2 = get_image_base64("logo2.png")
-    img_light = f'<img src="data:image/png;base64,{b64_logo1}" class="logo-light">' if b64_logo1 else ""
-    img_dark = f'<img src="data:image/png;base64,{b64_logo2}" class="logo-dark">' if b64_logo2 else img_light.replace('logo-light', 'logo-dark')
-    
-    return f"""
-    <style>
-        .logo-light {{ display: block; max-width: 85%; margin: auto; margin-bottom: 20px; }}
-        .logo-dark {{ display: none; max-width: 85%; margin: auto; margin-bottom: 20px; }}
-        @media (prefers-color-scheme: dark) {{
-            .logo-light {{ display: none; }}
-            .logo-dark {{ display: block; }}
-        }}
-    </style>
-    <div style="text-align: center;">{img_light}{img_dark}</div>
-    """
+    # Solo usamos logo.png
+    b64_logo = get_image_base64("logo.png")
+    if b64_logo:
+        return f'<div style="text-align: center;"><img src="data:image/png;base64,{b64_logo}" width="85%" style="margin-bottom: 20px;"></div>'
+    else:
+        return "<h3 style='text-align: center;'>Boomerang Visión</h3>"
 
 # =====================================================================
 # 6. CALLBACKS DE INTERFAZ
@@ -913,9 +971,9 @@ elif modulo == "🛍️ Óptica y Facturación":
                 
                 with c6:
                     st.markdown(f"""
-                        <div style="background-color: #f0f0f0; border: 1px solid #A9A9A9; padding: 9px; border-radius: 6px; text-align: center; margin-top: 24px;">
+                        <div style="background-color: #f0f0f0; border: 1px solid #b0b0b0; padding: 9px; border-radius: 6px; text-align: center; margin-top: 24px;">
                             <span style="font-size: 0.8em; color: #000000; font-weight: 600;">SALDO PENDIENTE</span><br>
-                            <span style="font-size: 1.3em; font-weight: bold; color: #000000;">${format_currency_co(sal_pend)}</span>
+                            <span style="font-size: 1.3em; font-weight: bold; color: #CC0000;">${format_currency_co(sal_pend)}</span>
                         </div>
                     """, unsafe_allow_html=True)
 
