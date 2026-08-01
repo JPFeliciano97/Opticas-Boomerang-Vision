@@ -18,218 +18,277 @@ st.set_page_config(page_title="Boomerang Visión ERP", layout="wide", page_icon=
 # ============ CSS MEJORADO ============
 st.markdown("""
     <style>
-        /* Ocultar menú */
+        /* ==========================================================
+           BOOMERANG VISIÓN ERP – ESTILOS GLOBALES (MODO CLARO)
+           Paleta: negro #000, blanco #fff, rojo suave #e57373
+           ========================================================== */
+
+        /* --- 1. Estructura base --- */
         #MainMenu {visibility: hidden;}
-        .block-container {padding-top: 2rem; padding-bottom: 2rem;}
-        
-        /* Fondo general: blanco */
+        footer {visibility: hidden;}
+        .block-container {
+            padding-top: 2rem;
+            padding-bottom: 2rem;
+        }
         .stApp {
             background-color: #ffffff !important;
         }
-        
-        /* Barra lateral: fondo gris claro */
+
+        /* --- 2. Barra lateral --- */
         [data-testid="stSidebar"] {
             background-color: #f0f0f0 !important;
         }
         [data-testid="stSidebar"] * {
             color: #000000 !important;
         }
-        
-        /* Títulos y encabezados en negro */
+
+        /* --- 3. Tipografía general --- */
         h1, h2, h3, h4, h5, h6 {
             color: #000000 !important;
         }
-        
-        /* ----- CUADROS DE TEXTO (inputs) y SELECTBOX ----- */
-        /* Contenedor del input/select: sin bordes extra, sin padding extra que rompa el borde */
-        .stTextInput > div, 
-        .stNumberInput > div, 
-        .stTextArea > div, 
+        /* Etiqueta de riesgo: la regla "div, span" es demasiado amplia
+           y puede pintarse encima de colores de alerta; limitamos al texto
+           principal evitando sobreescribir componentes específicos. */
+        p, label {
+            color: #000000 !important;
+        }
+
+        /* --- 4. VARIABLES COMPARTIDAS DE CAMPO DE ENTRADA ---
+           Todos los inputs (text, number, date, textarea, select)
+           comparten un único bloque de reglas para garantizar
+           uniformidad y evitar declaraciones duplicadas que
+           creen bordes dobles o cortados.
+        */
+
+        /* 4a. Limpiar contenedores intermedios de Streamlit.
+               Streamlit envuelve cada widget en 1-3 divs antes
+               de llegar al elemento nativo; esos divs no deben
+               tener borde propio ni fondo de color para no
+               interferir con el borde del elemento interior. */
+        .stTextInput > div,
+        .stTextInput > div > div,
+        .stNumberInput > div,
+        .stNumberInput > div > div,
+        .stTextArea > div,
+        .stTextArea > div > div,
         .stDateInput > div,
-        .stSelectbox > div {
+        .stDateInput > div > div,
+        .stSelectbox > div,
+        .stSelectbox > div > div {
             background-color: transparent !important;
             border: none !important;
             box-shadow: none !important;
-            padding: 0 !important;
-            margin: 0 !important;
+            outline: none !important;
         }
-        
-        /* Estilo base para todos los inputs y selectboxes */
+
+        /* 4b. Elemento nativo: input, textarea y el control
+               interno de BaseWeb para selectbox.
+               Usamos box-sizing: border-box para que el
+               border-radius y el padding no rompan el ancho. */
         .stTextInput input,
         .stNumberInput input,
         .stTextArea textarea,
-        .stDateInput input,
-        .stSelectbox div[data-baseweb="select"] {
-            background-color: #f2f2f2 !important;  /* gris claro */
-            border: 1.5px solid #b0b0b0 !important;
-            border-radius: 6px !important;        /* esquinas redondeadas suaves */
-            color: #000000 !important;
-            padding: 8px 10px !important;
-            font-size: 16px !important;
-            transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
-            box-shadow: none !important;
-            outline: none !important;
-            width: 100% !important;
-            box-sizing: border-box !important;     /* importante para que el padding no afecte el ancho */
-            height: auto !important;
-        }
-        
-        /* Para selectbox, también el contenedor interno debe tener el mismo fondo y borde */
-        .stSelectbox div[data-baseweb="select"] > div {
-            background-color: #f2f2f2 !important;
-            border-radius: 6px !important;
-        }
-        
-        /* Efecto al enfocar (foco) - borde rojo suave */
-        .stTextInput input:focus,
-        .stNumberInput input:focus,
-        .stTextArea textarea:focus,
-        .stDateInput input:focus,
-        .stSelectbox div[data-baseweb="select"]:focus {
-            border-color: #e57373 !important;
-            box-shadow: 0 0 0 2px rgba(229, 115, 115, 0.3) !important;
-            outline: none !important;
-        }
-        
-        /* Selectbox: texto interno y el contenedor del valor seleccionado */
-        .stSelectbox div[data-baseweb="select"] * {
-            color: #000000 !important;
-            background-color: #f2f2f2 !important;
-        }
-        
-        /* Para que el selectbox ocupe todo el ancho */
-        .stSelectbox div[data-baseweb="select"] {
-            width: 100% !important;
-        }
-        
-        /* Número: asegurar que el input interno herede el estilo */
-        .stNumberInput input {
-            background-color: #f2f2f2 !important;
-            border: 1.5px solid #b0b0b0 !important;
-            border-radius: 6px !important;
-        }
-        
-        /* Date input */
         .stDateInput input {
             background-color: #f2f2f2 !important;
             border: 1.5px solid #b0b0b0 !important;
             border-radius: 6px !important;
+            color: #000000 !important;
+            padding: 8px 12px !important;
+            font-size: 15px !important;
+            box-sizing: border-box !important;
+            box-shadow: none !important;
+            outline: none !important;
+            width: 100% !important;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
         }
-        
-        /* TextArea */
-        .stTextArea textarea {
+
+        /* 4c. Selectbox: el borde y fondo se aplican al
+               contenedor de BaseWeb, NO al <input> interno
+               (que es solo un proxy de accesibilidad). */
+        .stSelectbox [data-baseweb="select"] > div:first-child {
             background-color: #f2f2f2 !important;
             border: 1.5px solid #b0b0b0 !important;
             border-radius: 6px !important;
+            box-shadow: none !important;
+            box-sizing: border-box !important;
+            padding: 2px 8px !important;
+            min-height: 38px !important;
         }
-        
-        /* Labels y textos generales en negro */
-        label, .stMarkdown, p, div, span, .stAlert {
+        /* Texto del valor seleccionado en el selectbox */
+        .stSelectbox [data-baseweb="select"] span,
+        .stSelectbox [data-baseweb="select"] div {
+            color: #000000 !important;
+            background-color: transparent !important;
+        }
+        /* Menú desplegable del selectbox */
+        [data-baseweb="popover"] [data-baseweb="menu"] {
+            background-color: #f2f2f2 !important;
+            border: 1px solid #b0b0b0 !important;
+            border-radius: 6px !important;
+        }
+        [data-baseweb="popover"] [role="option"] {
+            background-color: #f2f2f2 !important;
             color: #000000 !important;
         }
-        .stAlert * {
+        [data-baseweb="popover"] [role="option"]:hover,
+        [data-baseweb="popover"] [aria-selected="true"] {
+            background-color: #f5c2c2 !important;
             color: #000000 !important;
         }
-        
-        /* ----- BOTONES ----- */
+
+        /* 4d. Multiselect – mismo tratamiento que selectbox */
+        .stMultiSelect [data-baseweb="select"] > div:first-child {
+            background-color: #f2f2f2 !important;
+            border: 1.5px solid #b0b0b0 !important;
+            border-radius: 6px !important;
+            box-shadow: none !important;
+            box-sizing: border-box !important;
+        }
+        /* Tags dentro del multiselect */
+        .stMultiSelect [data-baseweb="tag"] {
+            background-color: #f5c2c2 !important;
+            border-radius: 4px !important;
+            color: #000000 !important;
+        }
+
+        /* 4e. Foco: borde rojo suave + glow discreto.
+               Para el selectbox se usa :focus-within porque
+               el foco real cae en el <input> hijo oculto. */
+        .stTextInput input:focus,
+        .stNumberInput input:focus,
+        .stTextArea textarea:focus,
+        .stDateInput input:focus {
+            border-color: #e57373 !important;
+            box-shadow: 0 0 0 3px rgba(229, 115, 115, 0.25) !important;
+            outline: none !important;
+        }
+        .stSelectbox [data-baseweb="select"] > div:first-child:focus-within,
+        .stMultiSelect [data-baseweb="select"] > div:first-child:focus-within {
+            border-color: #e57373 !important;
+            box-shadow: 0 0 0 3px rgba(229, 115, 115, 0.25) !important;
+        }
+
+        /* --- 5. Botones --- */
         .stButton > button {
-            background-color: #f5c2c2 !important;   /* rojo muy claro */
+            background-color: #f5c2c2 !important;
             color: #000000 !important;
             border: 1px solid #d0a0a0 !important;
-            border-radius: 4px !important;
+            border-radius: 6px !important;
             font-weight: 600 !important;
-            transition: background-color 0.2s ease !important;
+            padding: 6px 16px !important;
+            transition: background-color 0.2s ease, box-shadow 0.2s ease !important;
         }
         .stButton > button:hover {
             background-color: #e8a8a8 !important;
             color: #000000 !important;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.12) !important;
         }
         .stButton > button:active {
             background-color: #d48c8c !important;
         }
-        /* Botones secundarios (sidebar) */
-        .stButton > button[data-baseweb="button"] {
-            background-color: #f0f0f0 !important;
-            color: #000000 !important;
-            border: 1px solid #b0b0b0 !important;
+        /* Botón primario explícito (type="primary") */
+        .stButton > button[kind="primary"] {
+            background-color: #e57373 !important;
+            color: #ffffff !important;
+            border-color: #c62828 !important;
         }
-        .stButton > button[data-baseweb="button"]:hover {
-            background-color: #e0e0e0 !important;
-        }
-        
-        /* Tablas (dataframes) */
-        .stDataFrame {
-            background-color: #ffffff !important;
-        }
-        .stDataFrame * {
+        .stButton > button[kind="primary"]:hover {
+            background-color: #ef9a9a !important;
             color: #000000 !important;
         }
-        .stDataFrame table {
-            border-collapse: collapse !important;
-        }
-        .stDataFrame th {
-            background-color: #f0f0f0 !important;
-            color: #000000 !important;
-            border: 1px solid #d0d0d0 !important;
-        }
-        .stDataFrame td {
-            border: 1px solid #e0e0e0 !important;
-        }
-        
-        /* Tabs */
+
+        /* --- 6. Tabs --- */
         .stTabs [data-baseweb="tab-list"] {
             background-color: #f0f0f0 !important;
+            border-radius: 6px 6px 0 0 !important;
+            gap: 2px !important;
         }
         .stTabs [data-baseweb="tab"] {
-            color: #000000 !important;
+            color: #555555 !important;
+            border-radius: 6px 6px 0 0 !important;
+            font-weight: 500 !important;
         }
         .stTabs [aria-selected="true"] {
             background-color: #ffffff !important;
-            color: #e57373 !important;
+            color: #c62828 !important;
             border-bottom: 2px solid #e57373 !important;
+            font-weight: 700 !important;
         }
-        
-        /* Checkbox y toggle */
-        .stCheckbox label {
+        .stTabs [data-baseweb="tab"]:hover {
+            background-color: #e8e8e8 !important;
             color: #000000 !important;
         }
-        
-        /* Radio */
-        .stRadio label {
-            color: #000000 !important;
+
+        /* --- 7. Dataframes / tablas --- */
+        .stDataFrame {
+            background-color: #ffffff !important;
         }
-        
-        /* Expander */
-        .streamlit-expanderHeader {
+        .stDataFrame thead th {
             background-color: #f0f0f0 !important;
             color: #000000 !important;
+            border: 1px solid #d0d0d0 !important;
+            font-weight: 700 !important;
         }
-        .streamlit-expanderContent {
-            background-color: #ffffff !important;
+        .stDataFrame tbody td {
             color: #000000 !important;
+            border: 1px solid #e0e0e0 !important;
         }
-        
-        /* Contenedores con borde */
-        [data-testid="stContainer"] {
-            border-color: #b0b0b0 !important;
-        }
-        
-        /* Mensajes de éxito, info, warning, error */
+
+        /* --- 8. Alertas (success, info, warning, error) ---
+               NO forzamos color negro en * porque los iconos SVG
+               de Streamlit usan fill que se rompería. Solo
+               actuamos sobre el texto. */
         .stAlert {
             background-color: #f9f9f9 !important;
+            border-radius: 6px !important;
         }
-        .stAlert[data-baseweb="notification"] {
-            background-color: #f9f9f9 !important;
+        .stAlert p, .stAlert span {
+            color: #000000 !important;
         }
-        
-        /* Ajustes adicionales para eliminar bordes no deseados en contenedores internos */
-        .stTextInput > div > div, 
-        .stNumberInput > div > div,
-        .stDateInput > div > div {
-            border: none !important;
-            box-shadow: none !important;
-            background-color: transparent !important;
+
+        /* --- 9. Expander --- */
+        details > summary {
+            background-color: #f0f0f0 !important;
+            color: #000000 !important;
+            border-radius: 6px !important;
+            padding: 8px 12px !important;
         }
+        details[open] > summary {
+            border-radius: 6px 6px 0 0 !important;
+        }
+        details > div {
+            background-color: #ffffff !important;
+            border: 1px solid #e0e0e0 !important;
+            border-top: none !important;
+            border-radius: 0 0 6px 6px !important;
+            padding: 12px !important;
+        }
+
+        /* --- 10. Checkbox, radio, toggle --- */
+        .stCheckbox label span,
+        .stRadio label span {
+            color: #000000 !important;
+        }
+
+        /* --- 11. Métricas (st.metric) --- */
+        [data-testid="stMetricValue"] {
+            color: #000000 !important;
+        }
+        [data-testid="stMetricLabel"] {
+            color: #555555 !important;
+        }
+
+        /* --- 12. Contenedores con borde (st.container(border=True)) --- */
+        [data-testid="stVerticalBlockBorderWrapper"] > div {
+            border-color: #d0d0d0 !important;
+            border-radius: 8px !important;
+        }
+
+        /* --- 13. Spinner / Progress --- */
+        .stProgress > div > div {
+            background-color: #e57373 !important;
+        }
+
     </style>
 """, unsafe_allow_html=True)
 
