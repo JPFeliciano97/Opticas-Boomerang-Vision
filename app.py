@@ -332,9 +332,13 @@ st.markdown("""
         }
 
         /* --- 12. Contenedores con borde (st.container(border=True)) --- */
-        [data-testid="stVerticalBlockBorderWrapper"] > div {
-            border-color: #d0d0d0 !important;
-            border-radius: 8px !important;
+        /* Estilo base: borde gris y bordes redondeados.
+           Las tarjetas de lab sobreescriben border-left con su color de estado
+           usando CSS inyectado inline de mayor especificidad. */
+        [data-testid="stVerticalBlockBorderWrapper"] {
+            border-radius: 10px !important;
+            border: 1px solid #d0d0d0 !important;
+            overflow: hidden !important;
         }
 
         /* --- 13. Spinner / Progress --- */
@@ -1554,34 +1558,40 @@ elif modulo == "🔬 Control de Laboratorios":
         if trabajos:
             for t in trabajos:
                 est_act = t.get("estado_lab", "Pendiente de enviar")
-                
-                if est_act == "Pendiente de enviar": 
+                fac_id = t['numero_factura']
+
+                if est_act == "Pendiente de enviar":
                     border_color = "#E61B23"; card_bg = "#fff8f8"; badge_bg = "#ffebee"; badge_fg = "#c62828"
-                elif est_act == "En Laboratorio": 
+                elif est_act == "En Laboratorio":
                     border_color = "#ff9800"; card_bg = "#fffbf4"; badge_bg = "#fff3e0"; badge_fg = "#ef6c00"
-                elif est_act == "Recibido en Óptica": 
+                elif est_act == "Recibido en Óptica":
                     border_color = "#2196F3"; card_bg = "#f5f9ff"; badge_bg = "#e3f2fd"; badge_fg = "#1565c0"
-                else: 
+                else:
                     border_color = "#4CAF50"; card_bg = "#f6fdf6"; badge_bg = "#e8f5e9"; badge_fg = "#2e7d32"
 
-                # Inyectamos el CSS de la tarjeta con un id único para el borde lateral coloreado.
-                # st.container(border=True) coloca los widgets DENTRO del recuadro nativo de Streamlit;
-                # el CSS de abajo sobreescribe su borde para usar el color del estado.
-                fac_id = t['numero_factura']
+                # Técnica: inyectamos un <div> con clase única ANTES del container.
+                # Luego el CSS usa el selector de hermano adyacente (+) para llegar
+                # al stVerticalBlockBorderWrapper que Streamlit genera justo después.
+                cls = f"card-marker-{fac_id}"
                 st.markdown(f"""
                     <style>
-                        div[data-testid="stVerticalBlockBorderWrapper"]:has(div[data-testid="column"] p:first-child span[data-fac="{fac_id}"]) {{
+                        .{cls} + div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlockBorderWrapper"],
+                        .{cls} ~ div[data-testid="stVerticalBlockBorderWrapper"] {{
                             background-color: {card_bg} !important;
-                            border-left: 6px solid {border_color} !important;
+                            border-color: {border_color} !important;
+                            border-left-width: 6px !important;
+                            border-left-style: solid !important;
+                            border-left-color: {border_color} !important;
                             border-radius: 10px !important;
+                            overflow: hidden !important;
                         }}
                     </style>
+                    <div class="{cls}" style="display:none;"></div>
                 """, unsafe_allow_html=True)
 
                 with st.container(border=True):
-                    # Badge de estado en la parte superior, dentro del container
                     st.markdown(f"""
-                        <div style="margin-bottom: 8px;">
+                        <div style="margin-bottom:10px;">
                             <span style="background-color:{badge_bg}; color:{badge_fg}; padding:4px 12px;
                                 border-radius:20px; font-weight:700; font-size:0.8em; letter-spacing:0.6px;">
                                 {est_act.upper()}
@@ -1591,23 +1601,24 @@ elif modulo == "🔬 Control de Laboratorios":
 
                     c1, c2, c3 = st.columns([2, 2, 2])
                     with c1:
-                        # Marcador oculto para el selector CSS del container
-                        st.markdown(f"<span data-fac='{fac_id}' style='display:none'></span><span style='font-size:1.3em; font-weight:900; color:#000;'>Fac N° {fac_id}</span>", unsafe_allow_html=True)
+                        st.markdown(f"<span style='font-size:1.3em; font-weight:900; color:#000;'>Fac N° {fac_id}</span>", unsafe_allow_html=True)
                         st.markdown(f"**Titular:** {t['titular_nombre']}")
                         st.markdown(f"**Detalle:** {t['descripcion']}")
                     with c2:
                         st.markdown(f"**Entrega:** `{t['fecha_entrega']}`")
-                        if int(t.get('saldo', 0)) > 0: st.markdown(f"**Saldo:** ${format_currency_co(int(t['saldo']))}")
-                        else: st.markdown("**Pagado 100%** ✅")
+                        if int(t.get('saldo', 0)) > 0:
+                            st.markdown(f"**Saldo:** ${format_currency_co(int(t['saldo']))}")
+                        else:
+                            st.markdown("**Pagado 100%** ✅")
                     with c3:
                         posibles = ["Pendiente de enviar", "En Laboratorio", "Recibido en Óptica", "Entregado"]
                         idx_est = posibles.index(est_act) if est_act in posibles else 0
                         nuevo_est = st.selectbox("Estado de la Factura", posibles, index=idx_est, key=f"est_{fac_id}")
-                        
+
                         lab_act = t.get("laboratorio") or "NO ASIGNADO"
                         idx_lab = opciones_labs.index(lab_act) if lab_act in opciones_labs else 0
                         nuevo_lab_sel = st.selectbox("Laboratorio Externo:", opciones_labs, index=idx_lab, key=f"lab_{fac_id}")
-                        
+
                         if nuevo_est != est_act or nuevo_lab_sel != lab_act:
                             if st.button(f"💾 Guardar #{fac_id}", key=f"btn_est_{fac_id}", type="primary"):
                                 supabase.table("ventas_facturacion").update({"estado_lab": nuevo_est, "laboratorio": nuevo_lab_sel if nuevo_lab_sel != "NO ASIGNADO" else None}).eq("numero_factura", fac_id).execute()
