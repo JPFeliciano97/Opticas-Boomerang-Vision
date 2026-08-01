@@ -15,10 +15,42 @@ from datetime import datetime
 # =====================================================================
 st.set_page_config(page_title="Boomerang Visión ERP", layout="wide", page_icon="👓", initial_sidebar_state="expanded")
 
+# ============ CSS MEJORADO PARA MODO CLARO ============
 st.markdown("""
     <style>
         #MainMenu {visibility: hidden;}
         .block-container {padding-top: 2rem; padding-bottom: 2rem;}
+        
+        /* Fondo gris claro y borde gris oscuro para todos los inputs */
+        .stTextInput input, .stNumberInput input, .stTextArea textarea, .stDateInput input {
+            background-color: #f5f5f5 !important;
+            border: 1.5px solid #888 !important;
+            border-radius: 4px !important;
+        }
+        .stSelectbox div[data-baseweb="select"] {
+            background-color: #f5f5f5 !important;
+            border: 1.5px solid #888 !important;
+            border-radius: 4px !important;
+        }
+        /* Para los campos de número, también el fondo del contenedor */
+        .stNumberInput > div > div {
+            background-color: #f5f5f5 !important;
+        }
+        /* Para date_input */
+        .stDateInput > div > div {
+            background-color: #f5f5f5 !important;
+        }
+        /* Mejorar contraste en modo oscuro (opcional) */
+        @media (prefers-color-scheme: dark) {
+            .stTextInput input, .stNumberInput input, .stTextArea textarea, .stDateInput input {
+                background-color: #2d2d2d !important;
+                border: 1.5px solid #666 !important;
+            }
+            .stSelectbox div[data-baseweb="select"] {
+                background-color: #2d2d2d !important;
+                border: 1.5px solid #666 !important;
+            }
+        }
     </style>
 """, unsafe_allow_html=True)
 
@@ -596,17 +628,24 @@ if modulo == "👨‍⚕️ Consultorio":
             c1, c2, c3, sp, c4 = st.columns([2, 2, 2, 0.5, 2])
             esfera_od = c1.number_input("Esfera OD", step=0.25, format="%.2f", key="esf_od")
             cilindro_od = c2.number_input("Cilindro OD", step=0.25, format="%.2f", key="cil_od", on_change=force_negative_cyl_od)
-            eje_od = c3.number_input("Eje OD", min_value=0, max_value=180, step=1, key="eje_od")
+            # ============ CAMBIO: Eje OD paso 5, rango 0-175 ============
+            eje_od = c3.number_input("Eje OD", min_value=0, max_value=175, step=5, key="eje_od")  # <--- CAMBIO
             dp_od = c4.text_input("D.P. OD (mm)", key="dp_od_input")
 
             st.markdown("**Ojo Izquierdo (OI)**")
             c5, c6, c7, sp2, c8 = st.columns([2, 2, 2, 0.5, 2])
             esfera_oi = c5.number_input("Esfera OI", step=0.25, format="%.2f", key="esf_oi")
             cilindro_oi = c6.number_input("Cilindro OI", step=0.25, format="%.2f", key="cil_oi", on_change=force_negative_cyl_oi)
-            eje_oi = c7.number_input("Eje OI", min_value=0, max_value=180, step=1, key="eje_oi")
+            # ============ CAMBIO: Eje OI paso 5, rango 0-175 ============
+            eje_oi = c7.number_input("Eje OI", min_value=0, max_value=175, step=5, key="eje_oi")  # <--- CAMBIO
             dp_oi = c8.text_input("D.P. OI (mm)", key="dp_oi_input")
             
-            adicion = st.number_input("Adición (Bifocal/Progresivo)", min_value=0.00, step=0.25, format="%.2f", key="add_input")
+            # ============ CAMBIO: Adición en columna más estrecha ============
+            col_add1, col_add2 = st.columns([1, 3])  # <--- CAMBIO
+            with col_add1:
+                adicion = st.number_input("Adición", min_value=0.00, step=0.25, format="%.2f", key="add_input")  # <--- CAMBIO (etiqueta más corta y en columna)
+            with col_add2:
+                st.write("")  # espacio vacío
 
     with tab_cierre:
         obs = st.text_area("Observaciones Clínicas", height=100, key="obs_input")
@@ -844,20 +883,16 @@ elif modulo == "🛍️ Óptica y Facturación":
                         else:
                             pdf.add_page(); dibujar_orden_laboratorio(pdf, paciente, hist_factura, venta_data, tipo_gafas.upper())
                         
-                        # ============ CORRECCIÓN AQUÍ ============
-                        pdf_bytes = bytes(pdf.output())  # <--- Vuelve a la forma original que funcionaba
-                        b64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
+                        pdf_bytes = bytes(pdf.output())
                         st.session_state.global_toast = f"Venta registrada. Factura #{num_factura}"
-                        
-                        # Botón de descarga
                         st.download_button(
                             label="📥 Descargar Facturación",
                             data=pdf_bytes,
                             file_name=f"Facturacion_{num_factura}.pdf",
                             mime="application/pdf"
                         )
-                        
-                        # Visor con iframe y fallback
+                        # Usamos iframe con sandbox para mayor compatibilidad
+                        b64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
                         st.markdown(
                             f"""
                             <iframe src="data:application/pdf;base64,{b64_pdf}" 
@@ -876,19 +911,15 @@ elif modulo == "🛍️ Óptica y Facturación":
                     pdf_rx = FPDF(orientation="P", unit="mm", format="Letter")
                     pdf_rx.set_compression(True); pdf_rx.add_page()
                     dibujar_prescripcion_clinica(pdf_rx, paciente, historia, detalles_rx)
-                    
-                    # ============ CORRECCIÓN AQUÍ ============
-                    pdf_bytes_rx = bytes(pdf_rx.output())  # <--- Vuelve a la forma original que funcionaba
-                    b64_rx = base64.b64encode(pdf_bytes_rx).decode("utf-8")
+                    pdf_bytes_rx = bytes(pdf_rx.output())
                     st.toast("🎉 ¡Receta Clínica Generada!")
-                    
                     st.download_button(
                         label="📥 Descargar Receta Clínica",
                         data=pdf_bytes_rx,
                         file_name=f"Receta_{paciente['documento']}.pdf",
                         mime="application/pdf"
                     )
-                    
+                    b64_rx = base64.b64encode(pdf_bytes_rx).decode("utf-8")
                     st.markdown(
                         f"""
                         <iframe src="data:application/pdf;base64,{b64_rx}" 
