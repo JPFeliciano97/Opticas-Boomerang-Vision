@@ -13,13 +13,13 @@ from datetime import datetime
 # =====================================================================
 # 1. CONFIGURACIÓN INICIAL DE PÁGINA Y ESTILOS (MODO CLARO CON ACENTOS SUAVES)
 # =====================================================================
-st.set_page_config(page_title="Boomerang Visión ERP", layout="wide", page_icon="👓", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Boomerang Visión", layout="wide", page_icon="👓", initial_sidebar_state="expanded")
 
 # ============ CSS MEJORADO ============
 st.markdown("""
     <style>
         /* ==========================================================
-           BOOMERANG VISIÓN ERP – ESTILOS GLOBALES (MODO CLARO)
+           BOOMERANG VISIÓN – ESTILOS GLOBALES (MODO CLARO)
            Paleta: negro #000, blanco #fff, rojo suave #e57373
            ========================================================== */
 
@@ -104,51 +104,71 @@ st.markdown("""
 
         /* 4c. Selectbox: el borde y fondo se aplican al
                contenedor de BaseWeb, NO al <input> interno
-               (que es solo un proxy de accesibilidad). */
+               (que es solo un proxy de accesibilidad).
+               Usamos #ebebeb (gris más visible) para distinguirlo
+               claramente del fondo blanco de la app. */
         .stSelectbox [data-baseweb="select"] > div:first-child {
-            background-color: #f2f2f2 !important;
+            background-color: #ebebeb !important;
             border: 1.5px solid #b0b0b0 !important;
             border-radius: 6px !important;
             box-shadow: none !important;
             box-sizing: border-box !important;
             padding: 2px 8px !important;
-            min-height: 38px !important;
+            min-height: 40px !important;
         }
         /* Texto del valor seleccionado en el selectbox */
-        .stSelectbox [data-baseweb="select"] span,
+        .stSelectbox [data-baseweb="select"] span {
+            color: #000000 !important;
+        }
         .stSelectbox [data-baseweb="select"] div {
             color: #000000 !important;
             background-color: transparent !important;
         }
-        /* Menú desplegable del selectbox */
+        /* Flecha del selectbox */
+        .stSelectbox [data-baseweb="select"] svg {
+            fill: #555555 !important;
+        }
+        /* Menú desplegable del selectbox (lista de opciones) */
+        [data-baseweb="popover"] {
+            border-radius: 8px !important;
+            overflow: hidden !important;
+        }
         [data-baseweb="popover"] [data-baseweb="menu"] {
-            background-color: #f2f2f2 !important;
-            border: 1px solid #b0b0b0 !important;
-            border-radius: 6px !important;
+            background-color: #f0f0f0 !important;
+            border: 1px solid #c0c0c0 !important;
+            border-radius: 8px !important;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.12) !important;
         }
         [data-baseweb="popover"] [role="option"] {
-            background-color: #f2f2f2 !important;
+            background-color: #f0f0f0 !important;
             color: #000000 !important;
+            padding: 10px 14px !important;
         }
-        [data-baseweb="popover"] [role="option"]:hover,
-        [data-baseweb="popover"] [aria-selected="true"] {
+        [data-baseweb="popover"] [role="option"]:hover {
             background-color: #f5c2c2 !important;
             color: #000000 !important;
+        }
+        [data-baseweb="popover"] [aria-selected="true"] {
+            background-color: #e8a8a8 !important;
+            color: #000000 !important;
+            font-weight: 600 !important;
         }
 
         /* 4d. Multiselect – mismo tratamiento que selectbox */
         .stMultiSelect [data-baseweb="select"] > div:first-child {
-            background-color: #f2f2f2 !important;
+            background-color: #ebebeb !important;
             border: 1.5px solid #b0b0b0 !important;
             border-radius: 6px !important;
             box-shadow: none !important;
             box-sizing: border-box !important;
+            min-height: 40px !important;
         }
         /* Tags dentro del multiselect */
         .stMultiSelect [data-baseweb="tag"] {
             background-color: #f5c2c2 !important;
             border-radius: 4px !important;
             color: #000000 !important;
+            border: 1px solid #d0a0a0 !important;
         }
 
         /* 4e. Foco: borde rojo suave + glow discreto.
@@ -816,7 +836,7 @@ with st.sidebar:
                 st.rerun()
                 
     st.markdown("---")
-    st.caption("🚀 Boomerang Visión ERP - V1.1.6 UI")
+    st.caption("🚀 Boomerang Visión - V1.0")
 
 modulo = st.session_state.current_module
 
@@ -1272,7 +1292,7 @@ elif modulo == "📊 Cuadre de Caja Físico":
         efectivo_caja = base_caja_inicial + (abono_efectivo + recaudo_efectivo) - gastos_efectivo
         total_bancos = abono_bancos + recaudo_bancos
 
-        st.markdown("### 💵 Arqueo de Caja")
+        st.markdown("### 💵 Resumen de Caja")
         col_m1, col_m2, col_m3 = st.columns(3)
         col_m1.metric("💵 Efectivo Físico (En Gaveta)", f"${format_currency_co(efectivo_caja)}")
         col_m2.metric("🏦 Total Bancos (Digital)", f"${format_currency_co(total_bancos)}")
@@ -1511,16 +1531,25 @@ elif modulo == "🔬 Control de Laboratorios":
                 else: 
                     border_color = "#4CAF50"; badge_bg = "#e8f5e9"; badge_fg = "#2e7d32"
                 
-                with st.container(border=True):
-                    st.markdown(f"""
-                        <div style="border-left: 5px solid {border_color}; padding-left: 10px; margin-bottom: 8px;">
-                            <span style="background-color: {badge_bg}; color: {badge_fg}; padding: 3px 8px; border-radius: 4px; font-weight: bold; font-size: 0.85em;">{est_act.upper()}</span>
+                st.markdown(f"""
+                    <div style="
+                        background-color: #f7f7f8;
+                        border: 1px solid #e0e0e0;
+                        border-left: 6px solid {border_color};
+                        border-radius: 10px;
+                        padding: 16px 18px 10px 18px;
+                        margin-bottom: 12px;
+                    ">
+                        <div style="margin-bottom: 10px;">
+                            <span style="background-color: {badge_bg}; color: {badge_fg}; padding: 4px 10px; border-radius: 20px; font-weight: 700; font-size: 0.8em; letter-spacing: 0.5px;">{est_act.upper()}</span>
                         </div>
-                    """, unsafe_allow_html=True)
-                    
+                    </div>
+                """, unsafe_allow_html=True)
+                
+                with st.container():
                     c1, c2, c3 = st.columns([2, 2, 2])
                     with c1:
-                        st.markdown(f"**Fac N°:** `{t['numero_factura']}`")
+                        st.markdown(f"<span style='font-size:1.25em; font-weight:900; color:#000;'>Fac N° {t['numero_factura']}</span>", unsafe_allow_html=True)
                         st.markdown(f"**Titular:** {t['titular_nombre']}")
                         st.markdown(f"**Detalle:** {t['descripcion']}")
                     with c2:
@@ -1541,6 +1570,7 @@ elif modulo == "🔬 Control de Laboratorios":
                                 supabase.table("ventas_facturacion").update({"estado_lab": nuevo_est, "laboratorio": nuevo_lab_sel if nuevo_lab_sel != "NO ASIGNADO" else None}).eq("numero_factura", t['numero_factura']).execute()
                                 st.session_state.global_toast = f"Trabajo actualizado a: {nuevo_est}"
                                 st.rerun()
+                st.markdown("<div style='margin-bottom:8px'></div>", unsafe_allow_html=True)
         else:
             st.info("No hay trabajos registrados con esos filtros.")
 
