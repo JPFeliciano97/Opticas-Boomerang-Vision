@@ -844,23 +844,29 @@ elif modulo == "🛍️ Óptica y Facturación":
                         else:
                             pdf.add_page(); dibujar_orden_laboratorio(pdf, paciente, hist_factura, venta_data, tipo_gafas.upper())
                         
-                        # ============ CORRECCIÓN COMPLETA AQUÍ ============
-                        pdf_bytes = bytes(pdf.output(dest='S'))
+                        # ============ CORRECCIÓN AQUÍ ============
+                        pdf_bytes = bytes(pdf.output())  # <--- Vuelve a la forma original que funcionaba
                         b64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
                         st.session_state.global_toast = f"Venta registrada. Factura #{num_factura}"
+                        
+                        # Botón de descarga
                         st.download_button(
                             label="📥 Descargar Facturación",
                             data=pdf_bytes,
                             file_name=f"Facturacion_{num_factura}.pdf",
                             mime="application/pdf"
                         )
-                        # Reemplazamos iframe por object con fallback
+                        
+                        # Visor con iframe y fallback
                         st.markdown(
                             f"""
-                            <object data="data:application/pdf;base64,{b64_pdf}" type="application/pdf" width="100%" height="600px">
+                            <iframe src="data:application/pdf;base64,{b64_pdf}" 
+                                    width="100%" height="600px" 
+                                    style="border: none;"
+                                    sandbox="allow-scripts allow-same-origin">
                                 <p>Tu navegador no puede mostrar el PDF. 
                                 <a href="data:application/pdf;base64,{b64_pdf}" download="Facturacion_{num_factura}.pdf">Descárgalo aquí</a>.</p>
-                            </object>
+                            </iframe>
                             """,
                             unsafe_allow_html=True
                         )
@@ -870,22 +876,28 @@ elif modulo == "🛍️ Óptica y Facturación":
                     pdf_rx = FPDF(orientation="P", unit="mm", format="Letter")
                     pdf_rx.set_compression(True); pdf_rx.add_page()
                     dibujar_prescripcion_clinica(pdf_rx, paciente, historia, detalles_rx)
-                    # ============ CORRECCIÓN COMPLETA AQUÍ ============
-                    pdf_bytes_rx = bytes(pdf_rx.output(dest='S'))
+                    
+                    # ============ CORRECCIÓN AQUÍ ============
+                    pdf_bytes_rx = bytes(pdf_rx.output())  # <--- Vuelve a la forma original que funcionaba
                     b64_rx = base64.b64encode(pdf_bytes_rx).decode("utf-8")
                     st.toast("🎉 ¡Receta Clínica Generada!")
+                    
                     st.download_button(
                         label="📥 Descargar Receta Clínica",
                         data=pdf_bytes_rx,
                         file_name=f"Receta_{paciente['documento']}.pdf",
                         mime="application/pdf"
                     )
+                    
                     st.markdown(
                         f"""
-                        <object data="data:application/pdf;base64,{b64_rx}" type="application/pdf" width="100%" height="600px">
+                        <iframe src="data:application/pdf;base64,{b64_rx}" 
+                                width="100%" height="600px" 
+                                style="border: none;"
+                                sandbox="allow-scripts allow-same-origin">
                             <p>Tu navegador no puede mostrar el PDF. 
                             <a href="data:application/pdf;base64,{b64_rx}" download="Receta_{paciente['documento']}.pdf">Descárgalo aquí</a>.</p>
-                        </object>
+                        </iframe>
                         """,
                         unsafe_allow_html=True
                     )
