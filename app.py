@@ -11,62 +11,139 @@ from fpdf import FPDF
 from datetime import datetime
 
 # =====================================================================
-# 1. CONFIGURACIÓN INICIAL DE PÁGINA Y BD
+# 1. CONFIGURACIÓN INICIAL DE PÁGINA Y ESTILOS (MODO CLARO FORZADO)
 # =====================================================================
 st.set_page_config(page_title="Boomerang Visión ERP", layout="wide", page_icon="👓", initial_sidebar_state="expanded")
 
-# ============ CSS MEJORADO PARA MODO CLARO (con buen contraste) ============
+# ============ CSS PARA MODO CLARO FORZADO ============
 st.markdown("""
     <style>
+        /* Ocultar menú */
         #MainMenu {visibility: hidden;}
         .block-container {padding-top: 2rem; padding-bottom: 2rem;}
         
-        /* Estilos para inputs en modo claro */
-        .stTextInput input, .stNumberInput input, .stTextArea textarea, .stDateInput input {
+        /* Fondo general de la aplicación: blanco */
+        .stApp {
             background-color: #ffffff !important;
-            border: 2px solid #555555 !important;
-            border-radius: 4px !important;
-            color: #000000 !important;
-            font-weight: 500 !important;
         }
+        
+        /* Fondo de la barra lateral: gris muy claro */
+        [data-testid="stSidebar"] {
+            background-color: #f0f0f0 !important;
+        }
+        [data-testid="stSidebar"] * {
+            color: #000000 !important;
+        }
+        
+        /* Todos los inputs (texto, número, área, fecha, select) */
+        .stTextInput input,
+        .stNumberInput input,
+        .stTextArea textarea,
+        .stDateInput input,
         .stSelectbox div[data-baseweb="select"] {
-            background-color: #ffffff !important;
-            border: 2px solid #555555 !important;
+            background-color: #DCDCDC !important;
+            border: 1.5px solid #A9A9A9 !important;
             border-radius: 4px !important;
-        }
-        .stNumberInput > div > div {
-            background-color: #ffffff !important;
-        }
-        .stDateInput > div > div {
-            background-color: #ffffff !important;
-        }
-        
-        /* Modo oscuro (si el usuario lo tiene activado) */
-        @media (prefers-color-scheme: dark) {
-            .stTextInput input, .stNumberInput input, .stTextArea textarea, .stDateInput input {
-                background-color: #2d2d2d !important;
-                border: 2px solid #888888 !important;
-                color: #f0f0f0 !important;
-            }
-            .stSelectbox div[data-baseweb="select"] {
-                background-color: #2d2d2d !important;
-                border: 2px solid #888888 !important;
-            }
-        }
-        
-        /* Hacer que las etiquetas de los campos sean legibles */
-        label {
             color: #000000 !important;
-            font-weight: 600 !important;
         }
-        @media (prefers-color-scheme: dark) {
-            label {
-                color: #f0f0f0 !important;
-            }
+        
+        /* Forzar color de texto negro en inputs */
+        .stTextInput input,
+        .stNumberInput input,
+        .stTextArea textarea,
+        .stDateInput input {
+            color: #000000 !important;
+        }
+        
+        /* Selectbox: texto interno */
+        .stSelectbox div[data-baseweb="select"] * {
+            color: #000000 !important;
+        }
+        
+        /* Número: fondo del contenedor */
+        .stNumberInput > div > div {
+            background-color: #DCDCDC !important;
+        }
+        
+        /* Date input: fondo */
+        .stDateInput > div > div {
+            background-color: #DCDCDC !important;
+        }
+        
+        /* Labels, textos, títulos: negro */
+        label, .stMarkdown, h1, h2, h3, h4, h5, h6, p, div, span {
+            color: #000000 !important;
+        }
+        
+        /* Botones */
+        .stButton > button {
+            background-color: #e0e0e0 !important;
+            color: #000000 !important;
+            border: 1px solid #A9A9A9 !important;
+        }
+        .stButton > button:hover {
+            background-color: #d0d0d0 !important;
+        }
+        
+        /* Contenedores con borde */
+        [data-testid="stContainer"] {
+            border-color: #A9A9A9 !important;
+        }
+        
+        /* Tablas (dataframes) */
+        .stDataFrame {
+            background-color: #ffffff !important;
+        }
+        .stDataFrame * {
+            color: #000000 !important;
+        }
+        
+        /* Mensajes de éxito, info, warning, error */
+        .stAlert {
+            background-color: #f5f5f5 !important;
+            color: #000000 !important;
+        }
+        .stAlert * {
+            color: #000000 !important;
+        }
+        
+        /* Tabs */
+        .stTabs [data-baseweb="tab-list"] {
+            background-color: #f0f0f0 !important;
+        }
+        .stTabs [data-baseweb="tab"] {
+            color: #000000 !important;
+        }
+        .stTabs [aria-selected="true"] {
+            background-color: #ffffff !important;
+            color: #000000 !important;
+        }
+        
+        /* Checkbox y toggle */
+        .stCheckbox label {
+            color: #000000 !important;
+        }
+        
+        /* Radio buttons */
+        .stRadio label {
+            color: #000000 !important;
+        }
+        
+        /* Expander */
+        .streamlit-expanderHeader {
+            background-color: #f0f0f0 !important;
+            color: #000000 !important;
+        }
+        .streamlit-expanderContent {
+            background-color: #ffffff !important;
+            color: #000000 !important;
         }
     </style>
 """, unsafe_allow_html=True)
 
+# =====================================================================
+# 2. CONEXIÓN A SUPABASE
+# =====================================================================
 load_dotenv()
 url = os.getenv("SUPABASE_URL")
 key = os.getenv("SUPABASE_KEY")
@@ -78,7 +155,7 @@ def init_connection():
 supabase = init_connection()
 
 # =====================================================================
-# 2. SISTEMA DE AUTENTICACIÓN Y ROLES LOCALES (PERSISTENCIA DIARIA)
+# 3. SISTEMA DE AUTENTICACIÓN Y ROLES LOCALES (PERSISTENCIA DIARIA)
 # =====================================================================
 USUARIOS_PERMITIDOS = {
     "1022396649": {"pass": "mateo", "nombre": "Dr. Mateo F.", "rol": "admin", "id": "1022396649"},
@@ -115,9 +192,9 @@ if not st.session_state.user_info:
             if b64_logo:
                 st.markdown(f'<div style="text-align: center;"><img src="data:image/png;base64,{b64_logo}" width="80%"></div><br>', unsafe_allow_html=True)
             else:
-                st.markdown("<h2 style='text-align: center;'>👓 Boomerang Visión</h2>", unsafe_allow_html=True)
+                st.markdown("<h2 style='text-align: center; color:#000000;'>👓 Boomerang Visión</h2>", unsafe_allow_html=True)
             
-            st.markdown("<p style='text-align: center; color: #888;'>Ingreso al Sistema Central</p>", unsafe_allow_html=True)
+            st.markdown("<p style='text-align: center; color: #555;'>Ingreso al Sistema Central</p>", unsafe_allow_html=True)
             user_input = st.text_input("Usuario (Documento)")
             pass_input = st.text_input("Contraseña", type="password")
             
@@ -133,7 +210,7 @@ if not st.session_state.user_info:
     st.stop()
 
 # =====================================================================
-# 3. FUNCIONES DE FORMATEO Y PDF
+# 4. FUNCIONES DE FORMATEO Y PDF (sin cambios)
 # =====================================================================
 def clean_numeric_string(val_str):
     val = str(val_str).strip()
@@ -173,7 +250,7 @@ def convert_df_to_excel(df, sheet_name="Reporte"):
     return output.getvalue()
 
 def styled_header(text, icon=""):
-    st.markdown(f"<h3 style='font-weight: 700; margin-bottom: 20px;'>{icon} {text}</h3>", unsafe_allow_html=True)
+    st.markdown(f"<h3 style='font-weight: 700; margin-bottom: 20px; color:#000000;'>{icon} {text}</h3>", unsafe_allow_html=True)
 
 def build_rx_string(sph, cyl, axis):
     sph_str = "NEUTRO" if sph == 0.0 else f"{sph:+.2f}"
@@ -234,6 +311,9 @@ def parse_for_grid(rx_str):
     cil = parts[1]; eje = parts[2].upper()
     return esf, cil, eje
 
+# =====================================================================
+# 5. FUNCIONES DE DIBUJO DE PDF (se mantienen igual)
+# =====================================================================
 def dibujar_media_carta(pdf, paciente, historia, venta, tipo_documento, logo_path="logo.png"):
     pdf.set_font("helvetica", "B", 10)
     pdf.text(10, 15, "Boomerang Vision MF")
@@ -483,9 +563,9 @@ def get_sidebar_logo_html():
     <div style="text-align: center;">{img_light}{img_dark}</div>
     """
 
-# ==========================================
-# 4. CALLBACKS DE INTERFAZ
-# ==========================================
+# =====================================================================
+# 6. CALLBACKS DE INTERFAZ
+# =====================================================================
 def force_negative_cyl_od():
     if st.session_state.cil_od > 0: st.session_state.cil_od = -abs(st.session_state.cil_od)
 def force_negative_cyl_oi():
@@ -540,9 +620,9 @@ if "global_toast" in st.session_state:
     del st.session_state.global_toast
     if "global_toast_icon" in st.session_state: del st.session_state.global_toast_icon
 
-# ==========================================
-# 5. BARRA LATERAL (SECCIONADA Y CONDICIONAL)
-# ==========================================
+# =====================================================================
+# 7. BARRA LATERAL (SECCIONADA Y CONDICIONAL)
+# =====================================================================
 user_rol = st.session_state.user_info["rol"]
 user_id = st.session_state.user_info["id"]
 
@@ -598,6 +678,10 @@ with st.sidebar:
 
 modulo = st.session_state.current_module
 
+# =====================================================================
+# 8. MÓDULOS DE LA APLICACIÓN (solo se modifica la parte de Refracción)
+# =====================================================================
+
 # ------------------------------------------
 # MÓDULO 1: CONSULTORIO (Pestañas Limpias)
 # ------------------------------------------
@@ -641,6 +725,7 @@ if modulo == "👨‍⚕️ Consultorio":
             c1, c2, c3, sp, c4 = st.columns([2, 2, 2, 0.5, 2])
             esfera_od = c1.number_input("Esfera OD", step=0.25, format="%.2f", key="esf_od")
             cilindro_od = c2.number_input("Cilindro OD", step=0.25, format="%.2f", key="cil_od", on_change=force_negative_cyl_od)
+            # Eje OD: paso 5, rango 0-175
             eje_od = c3.number_input("Eje OD", min_value=0, max_value=175, step=5, key="eje_od")
             dp_od = c4.text_input("D.P. OD (mm)", key="dp_od_input")
 
@@ -648,6 +733,7 @@ if modulo == "👨‍⚕️ Consultorio":
             c5, c6, c7, sp2, c8 = st.columns([2, 2, 2, 0.5, 2])
             esfera_oi = c5.number_input("Esfera OI", step=0.25, format="%.2f", key="esf_oi")
             cilindro_oi = c6.number_input("Cilindro OI", step=0.25, format="%.2f", key="cil_oi", on_change=force_negative_cyl_oi)
+            # Eje OI: paso 5, rango 0-175
             eje_oi = c7.number_input("Eje OI", min_value=0, max_value=175, step=5, key="eje_oi")
             dp_oi = c8.text_input("D.P. OI (mm)", key="dp_oi_input")
             
@@ -827,9 +913,9 @@ elif modulo == "🛍️ Óptica y Facturación":
                 
                 with c6:
                     st.markdown(f"""
-                        <div style="background-color: #1e1e2f; border: 1px solid #444; padding: 9px; border-radius: 6px; text-align: center; margin-top: 24px;">
-                            <span style="font-size: 0.8em; color: #bbb; font-weight: 600;">SALDO PENDIENTE</span><br>
-                            <span style="font-size: 1.3em; font-weight: bold; color: #4CAF50;">${format_currency_co(sal_pend)}</span>
+                        <div style="background-color: #f0f0f0; border: 1px solid #A9A9A9; padding: 9px; border-radius: 6px; text-align: center; margin-top: 24px;">
+                            <span style="font-size: 0.8em; color: #000000; font-weight: 600;">SALDO PENDIENTE</span><br>
+                            <span style="font-size: 1.3em; font-weight: bold; color: #000000;">${format_currency_co(sal_pend)}</span>
                         </div>
                     """, unsafe_allow_html=True)
 
@@ -909,7 +995,7 @@ elif modulo == "🛍️ Óptica y Facturación":
                                     width="100%" height="600px" 
                                     style="border: none;"
                                     sandbox="allow-scripts allow-same-origin">
-                                <p>Tu navegador no puede mostrar el PDF. 
+                                <p style="color:#000000;">Tu navegador no puede mostrar el PDF. 
                                 <a href="data:application/pdf;base64,{b64_pdf}" download="Facturacion_{num_factura}.pdf">Descárgalo aquí</a>.</p>
                             </iframe>
                             """,
@@ -936,7 +1022,7 @@ elif modulo == "🛍️ Óptica y Facturación":
                                 width="100%" height="600px" 
                                 style="border: none;"
                                 sandbox="allow-scripts allow-same-origin">
-                            <p>Tu navegador no puede mostrar el PDF. 
+                            <p style="color:#000000;">Tu navegador no puede mostrar el PDF. 
                             <a href="data:application/pdf;base64,{b64_rx}" download="Receta_{paciente['documento']}.pdf">Descárgalo aquí</a>.</p>
                         </iframe>
                         """,
@@ -944,7 +1030,7 @@ elif modulo == "🛍️ Óptica y Facturación":
                     )
 
     with tab_recaudo:
-        st.markdown("<h4 style='color: #4CAF50;'>💵 Recaudar Saldo y Cambiar Estado a Entregado</h4>", unsafe_allow_html=True)
+        st.markdown("<h4 style='color: #000000;'>💵 Recaudar Saldo y Cambiar Estado a Entregado</h4>", unsafe_allow_html=True)
         fac_search = st.text_input("Ingrese el N° de Factura o Cédula a buscar:").upper()
         if fac_search:
             res_saldo = supabase.table("ventas_facturacion").select("*").or_(f"numero_factura.eq.{fac_search},paciente_documento.eq.{fac_search}").gt("saldo", 0).neq("estado", "ANULADA").execute()
@@ -995,7 +1081,7 @@ elif modulo == "🛍️ Óptica y Facturación":
                 st.info("No se encontraron facturas activas con saldo pendiente para ese criterio.")
 
     with tab_anular:
-        st.markdown("<h4 style='color: #F44336;'>🚫 Anulación de Facturas</h4>", unsafe_allow_html=True)
+        st.markdown("<h4 style='color: #000000;'>🚫 Anulación de Facturas</h4>", unsafe_allow_html=True)
         num_anular = st.text_input("Ingrese el N° de Factura a Anular:", key="input_anular").upper()
         if num_anular:
             res_anular = supabase.table("ventas_facturacion").select("*").eq("numero_factura", num_anular).execute()
