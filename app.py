@@ -15,40 +15,53 @@ from datetime import datetime
 # =====================================================================
 st.set_page_config(page_title="Boomerang Visión ERP", layout="wide", page_icon="👓", initial_sidebar_state="expanded")
 
-# ============ CSS MEJORADO PARA MODO CLARO ============
+# ============ CSS MEJORADO PARA MODO CLARO (con buen contraste) ============
 st.markdown("""
     <style>
         #MainMenu {visibility: hidden;}
         .block-container {padding-top: 2rem; padding-bottom: 2rem;}
         
-        /* Fondo gris claro y borde gris oscuro para todos los inputs */
+        /* Estilos para inputs en modo claro */
         .stTextInput input, .stNumberInput input, .stTextArea textarea, .stDateInput input {
-            background-color: #f5f5f5 !important;
-            border: 1.5px solid #888 !important;
+            background-color: #ffffff !important;
+            border: 2px solid #555555 !important;
             border-radius: 4px !important;
+            color: #000000 !important;
+            font-weight: 500 !important;
         }
         .stSelectbox div[data-baseweb="select"] {
-            background-color: #f5f5f5 !important;
-            border: 1.5px solid #888 !important;
+            background-color: #ffffff !important;
+            border: 2px solid #555555 !important;
             border-radius: 4px !important;
         }
-        /* Para los campos de número, también el fondo del contenedor */
         .stNumberInput > div > div {
-            background-color: #f5f5f5 !important;
+            background-color: #ffffff !important;
         }
-        /* Para date_input */
         .stDateInput > div > div {
-            background-color: #f5f5f5 !important;
+            background-color: #ffffff !important;
         }
-        /* Mejorar contraste en modo oscuro (opcional) */
+        
+        /* Modo oscuro (si el usuario lo tiene activado) */
         @media (prefers-color-scheme: dark) {
             .stTextInput input, .stNumberInput input, .stTextArea textarea, .stDateInput input {
                 background-color: #2d2d2d !important;
-                border: 1.5px solid #666 !important;
+                border: 2px solid #888888 !important;
+                color: #f0f0f0 !important;
             }
             .stSelectbox div[data-baseweb="select"] {
                 background-color: #2d2d2d !important;
-                border: 1.5px solid #666 !important;
+                border: 2px solid #888888 !important;
+            }
+        }
+        
+        /* Hacer que las etiquetas de los campos sean legibles */
+        label {
+            color: #000000 !important;
+            font-weight: 600 !important;
+        }
+        @media (prefers-color-scheme: dark) {
+            label {
+                color: #f0f0f0 !important;
             }
         }
     </style>
@@ -628,22 +641,20 @@ if modulo == "👨‍⚕️ Consultorio":
             c1, c2, c3, sp, c4 = st.columns([2, 2, 2, 0.5, 2])
             esfera_od = c1.number_input("Esfera OD", step=0.25, format="%.2f", key="esf_od")
             cilindro_od = c2.number_input("Cilindro OD", step=0.25, format="%.2f", key="cil_od", on_change=force_negative_cyl_od)
-            # ============ CAMBIO: Eje OD paso 5, rango 0-175 ============
-            eje_od = c3.number_input("Eje OD", min_value=0, max_value=175, step=5, key="eje_od")  # <--- CAMBIO
+            eje_od = c3.number_input("Eje OD", min_value=0, max_value=175, step=5, key="eje_od")
             dp_od = c4.text_input("D.P. OD (mm)", key="dp_od_input")
 
             st.markdown("**Ojo Izquierdo (OI)**")
             c5, c6, c7, sp2, c8 = st.columns([2, 2, 2, 0.5, 2])
             esfera_oi = c5.number_input("Esfera OI", step=0.25, format="%.2f", key="esf_oi")
             cilindro_oi = c6.number_input("Cilindro OI", step=0.25, format="%.2f", key="cil_oi", on_change=force_negative_cyl_oi)
-            # ============ CAMBIO: Eje OI paso 5, rango 0-175 ============
-            eje_oi = c7.number_input("Eje OI", min_value=0, max_value=175, step=5, key="eje_oi")  # <--- CAMBIO
+            eje_oi = c7.number_input("Eje OI", min_value=0, max_value=175, step=5, key="eje_oi")
             dp_oi = c8.text_input("D.P. OI (mm)", key="dp_oi_input")
             
-            # ============ CAMBIO: Adición en columna más estrecha ============
-            col_add1, col_add2 = st.columns([1, 3])  # <--- CAMBIO
+            # Adición en columna más estrecha
+            col_add1, col_add2 = st.columns([1, 3])
             with col_add1:
-                adicion = st.number_input("Adición", min_value=0.00, step=0.25, format="%.2f", key="add_input")  # <--- CAMBIO (etiqueta más corta y en columna)
+                adicion = st.number_input("Adición", min_value=0.00, step=0.25, format="%.2f", key="add_input")
             with col_add2:
                 st.write("")  # espacio vacío
 
@@ -891,7 +902,6 @@ elif modulo == "🛍️ Óptica y Facturación":
                             file_name=f"Facturacion_{num_factura}.pdf",
                             mime="application/pdf"
                         )
-                        # Usamos iframe con sandbox para mayor compatibilidad
                         b64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
                         st.markdown(
                             f"""
