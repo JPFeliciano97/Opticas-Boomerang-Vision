@@ -11,7 +11,7 @@ from fpdf import FPDF
 from datetime import datetime
 
 # =====================================================================
-# 1. CONFIGURACIÓN INICIAL DE PÁGINA Y ESTILOS (MODO CLARO CON ACENTOS)
+# 1. CONFIGURACIÓN INICIAL DE PÁGINA Y ESTILOS (MODO CLARO CON ACENTOS SUAVES)
 # =====================================================================
 st.set_page_config(page_title="Boomerang Visión ERP", layout="wide", page_icon="👓", initial_sidebar_state="expanded")
 
@@ -35,16 +35,13 @@ st.markdown("""
             color: #000000 !important;
         }
         
-        /* Títulos y encabezados con un toque de rojo */
+        /* Títulos y encabezados en negro */
         h1, h2, h3, h4, h5, h6 {
             color: #000000 !important;
         }
-        h3 strong, .css-1v3fvcr {
-            color: #CC0000 !important;
-        }
         
         /* ----- Cuadros de texto (inputs) ----- */
-        /* Contenedor del input */
+        /* Contenedor del input: sin bordes extra */
         .stTextInput > div, 
         .stNumberInput > div, 
         .stTextArea > div, 
@@ -52,6 +49,7 @@ st.markdown("""
         .stSelectbox > div {
             background-color: transparent !important;
             border: none !important;
+            box-shadow: none !important;
         }
         
         /* El input en sí */
@@ -60,23 +58,25 @@ st.markdown("""
         .stTextArea textarea,
         .stDateInput input,
         .stSelectbox div[data-baseweb="select"] {
-            background-color: #f5f5f5 !important;
+            background-color: #f2f2f2 !important;  /* gris claro */
             border: 1.5px solid #b0b0b0 !important;
-            border-radius: 4px !important;
+            border-radius: 6px !important;        /* esquinas redondeadas suaves */
             color: #000000 !important;
             padding: 8px 10px !important;
             font-size: 16px !important;
             transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
+            box-shadow: none !important;
+            outline: none !important;
         }
         
-        /* Efecto al enfocar (foco) - borde rojo */
+        /* Efecto al enfocar (foco) - borde rojo suave */
         .stTextInput input:focus,
         .stNumberInput input:focus,
         .stTextArea textarea:focus,
         .stDateInput input:focus,
         .stSelectbox div[data-baseweb="select"]:focus {
-            border-color: #CC0000 !important;
-            box-shadow: 0 0 0 2px rgba(204, 0, 0, 0.2) !important;
+            border-color: #e57373 !important;     /* rojo más claro */
+            box-shadow: 0 0 0 2px rgba(229, 115, 115, 0.3) !important;
             outline: none !important;
         }
         
@@ -85,7 +85,7 @@ st.markdown("""
             color: #000000 !important;
         }
         
-        /* Número: fondo del contenedor extra */
+        /* Número: fondo del contenedor extra (transparente) */
         .stNumberInput > div > div {
             background-color: transparent !important;
         }
@@ -93,16 +93,6 @@ st.markdown("""
         /* Date input: fondo */
         .stDateInput > div > div {
             background-color: transparent !important;
-        }
-        
-        /* Eliminar bordes de contenedores que puedan duplicar */
-        .stTextInput > div, 
-        .stNumberInput > div, 
-        .stTextArea > div, 
-        .stDateInput > div,
-        .stSelectbox > div {
-            border: none !important;
-            box-shadow: none !important;
         }
         
         /* Labels y textos generales en negro */
@@ -113,25 +103,24 @@ st.markdown("""
             color: #000000 !important;
         }
         
-        /* Botones del menú lateral: estilo original de Streamlit */
-        /* No forzamos colores, dejamos el estilo por defecto */
-        
-        /* Botones primarios (rojo) */
+        /* ----- Botones ----- */
+        /* Botón primario (rojo claro) */
         .stButton > button {
-            background-color: #CC0000 !important;
-            color: white !important;
-            border: none !important;
+            background-color: #f5c2c2 !important;   /* rojo muy claro (80% más claro) */
+            color: #000000 !important;
+            border: 1px solid #d0a0a0 !important;
             border-radius: 4px !important;
             font-weight: 600 !important;
+            transition: background-color 0.2s ease !important;
         }
         .stButton > button:hover {
-            background-color: #B30000 !important;
-            color: white !important;
+            background-color: #e8a8a8 !important;   /* un poco más oscuro al pasar el mouse */
+            color: #000000 !important;
         }
         .stButton > button:active {
-            background-color: #990000 !important;
+            background-color: #d48c8c !important;
         }
-        /* Botón secundario (en sidebar) - azul por defecto */
+        /* Botones secundarios (por ejemplo en sidebar) - estilo por defecto de Streamlit */
         .stButton > button[data-baseweb="button"] {
             background-color: #f0f0f0 !important;
             color: #000000 !important;
@@ -169,8 +158,8 @@ st.markdown("""
         }
         .stTabs [aria-selected="true"] {
             background-color: #ffffff !important;
-            color: #CC0000 !important;
-            border-bottom: 2px solid #CC0000 !important;
+            color: #e57373 !important;
+            border-bottom: 2px solid #e57373 !important;
         }
         
         /* Checkbox y toggle */
@@ -204,6 +193,14 @@ st.markdown("""
         }
         .stAlert[data-baseweb="notification"] {
             background-color: #f9f9f9 !important;
+        }
+        
+        /* Ajustes adicionales para eliminar bordes no deseados */
+        .stTextInput > div > div, 
+        .stNumberInput > div > div,
+        .stDateInput > div > div {
+            border: none !important;
+            box-shadow: none !important;
         }
     </style>
 """, unsafe_allow_html=True)
@@ -973,7 +970,7 @@ elif modulo == "🛍️ Óptica y Facturación":
                     st.markdown(f"""
                         <div style="background-color: #f0f0f0; border: 1px solid #b0b0b0; padding: 9px; border-radius: 6px; text-align: center; margin-top: 24px;">
                             <span style="font-size: 0.8em; color: #000000; font-weight: 600;">SALDO PENDIENTE</span><br>
-                            <span style="font-size: 1.3em; font-weight: bold; color: #CC0000;">${format_currency_co(sal_pend)}</span>
+                            <span style="font-size: 1.3em; font-weight: bold; color: #e57373;">${format_currency_co(sal_pend)}</span>
                         </div>
                     """, unsafe_allow_html=True)
 
