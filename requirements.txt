@@ -2,6 +2,6 @@ streamlit
 supabase
 pandas
 altair
-fpdf2
 python-dotenv
-openpyxl
+fpdf2
+bcrypt
