@@ -103,55 +103,68 @@ st.markdown("""
             transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
         }
 
-        /* 4c. Selectbox — fondo gris + borde explícito (igual que inputs).
-               Atacamos tanto el wrapper de BaseWeb como el div nativo
-               para garantizar que el borde sea siempre visible. */
+        /* 4c. Selectbox — estrategia multicapa para Streamlit Cloud.
+               Streamlit Cloud inyecta estilos inline vía su motor de temas,
+               que sobreescriben los de hoja de estilos incluso con !important.
+               Usamos: (a) selectores de máxima especificidad, (b) atacamos
+               todos los elementos que pueden mostrar fondo blanco, y (c)
+               forzamos el borde en el contenedor visible correcto. */
 
-        /* Wrapper externo de BaseWeb */
-        .stSelectbox [data-baseweb="select"],
-        .stSelectbox [data-baseweb="select"] > div {
+        /* Capa 1: limpiar todos los wrappers intermedios */
+        div[data-testid="stSelectbox"] > div,
+        div[data-testid="stSelectbox"] > div > div,
+        .stSelectbox > div,
+        .stSelectbox > div > div {
             background-color: transparent !important;
             border: none !important;
             box-shadow: none !important;
+            outline: none !important;
         }
-        /* Control visible (primer div hijo directo) */
-        .stSelectbox [data-baseweb="select"] > div:first-child {
-            background-color: #f2f2f2 !important;
-            border: 1.5px solid #b0b0b0 !important;
+
+        /* Capa 2: el control visible de BaseWeb — múltiples selectores
+           para cubrir distintas versiones del tema de Streamlit */
+        div[data-testid="stSelectbox"] [data-baseweb="select"] > div:first-child,
+        .stSelectbox [data-baseweb="select"] > div:first-child,
+        div[data-testid="stSelectbox"] div[role="combobox"],
+        .stSelectbox div[role="combobox"] {
+            background-color: #ebebeb !important;
+            border: 2px solid #999999 !important;
             border-radius: 6px !important;
             box-shadow: none !important;
             box-sizing: border-box !important;
-            padding: 4px 10px !important;
             min-height: 40px !important;
+            padding: 2px 10px !important;
             width: 100% !important;
         }
-        /* Fallback: selector nativo baseweb-input */
-        .stSelectbox [class*="controlContainer"],
-        .stSelectbox [class*="ValueContainer"],
-        .stSelectbox div[role="combobox"] {
-            background-color: #f2f2f2 !important;
-            border: 1.5px solid #b0b0b0 !important;
-            border-radius: 6px !important;
-        }
-        /* Texto seleccionado */
-        .stSelectbox [data-baseweb="select"] span,
-        .stSelectbox [data-baseweb="select"] p {
-            color: #000000 !important;
-        }
-        /* Sub-divs internos del control: sin fondo propio para no tapar el borde */
+
+        /* Capa 3: sub-divs y spans internos — sin fondo para no tapar el borde */
+        div[data-testid="stSelectbox"] [data-baseweb="select"] > div:first-child > div,
         .stSelectbox [data-baseweb="select"] > div:first-child > div {
             background-color: transparent !important;
             border: none !important;
             box-shadow: none !important;
         }
-        /* Flecha (icono chevron) */
-        .stSelectbox [data-baseweb="select"] svg {
-            fill: #555555 !important;
+
+        /* Texto del valor seleccionado */
+        div[data-testid="stSelectbox"] [data-baseweb="select"] span,
+        div[data-testid="stSelectbox"] [data-baseweb="select"] p,
+        .stSelectbox [data-baseweb="select"] span,
+        .stSelectbox [data-baseweb="select"] p {
+            color: #000000 !important;
+            background-color: transparent !important;
         }
-        /* Foco */
+
+        /* Flecha chevron */
+        div[data-testid="stSelectbox"] [data-baseweb="select"] svg,
+        .stSelectbox [data-baseweb="select"] svg {
+            fill: #444444 !important;
+        }
+
+        /* Foco: borde rojo suave */
+        div[data-testid="stSelectbox"] [data-baseweb="select"] > div:first-child:focus-within,
         .stSelectbox [data-baseweb="select"] > div:first-child:focus-within {
             border-color: #e57373 !important;
-            box-shadow: 0 0 0 3px rgba(229, 115, 115, 0.25) !important;
+            box-shadow: 0 0 0 3px rgba(229,115,115,0.20) !important;
         }
 
         /* Menú desplegable (popover) */
@@ -387,6 +400,46 @@ def init_connection():
     return create_client(url, key)
 
 supabase = init_connection()
+
+# Parche JS global: fuerza estilos de borde en selectbox después de cada re-render
+# (Streamlit Cloud inyecta estilos inline que sobreescriben el CSS; este JS los pisa de vuelta)
+st.markdown("""
+    <script>
+    (function() {
+        function styleSelects() {
+            var controls = document.querySelectorAll(
+                '.stSelectbox [data-baseweb="select"] > div:first-child, ' +
+                '.stSelectbox div[role="combobox"]'
+            );
+            controls.forEach(function(el) {
+                el.style.setProperty('background-color', '#ebebeb', 'important');
+                el.style.setProperty('border', '2px solid #999999', 'important');
+                el.style.setProperty('border-radius', '6px', 'important');
+                el.style.setProperty('box-shadow', 'none', 'important');
+                el.style.setProperty('min-height', '40px', 'important');
+            });
+            document.querySelectorAll(
+                '.stSelectbox [data-baseweb="select"] > div:first-child > div'
+            ).forEach(function(el) {
+                el.style.setProperty('background-color', 'transparent', 'important');
+                el.style.setProperty('border', 'none', 'important');
+            });
+        }
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', styleSelects);
+        } else {
+            styleSelects();
+        }
+        var obs = new MutationObserver(function(muts) {
+            if (muts.some(function(m) { return m.addedNodes.length > 0; })) {
+                clearTimeout(window._sst);
+                window._sst = setTimeout(styleSelects, 80);
+            }
+        });
+        obs.observe(document.body, { childList: true, subtree: true });
+    })();
+    </script>
+""", unsafe_allow_html=True)
 
 @st.cache_data(ttl=60, show_spinner=False)
 def query_cached(tabla, filtros=None):
@@ -1713,6 +1766,21 @@ elif modulo == "🔬 Control de Laboratorios":
                             }}
                         }})();
                         </script>
+                        <style>
+                        /* Fuerza el estilo de los selectbox dentro de las tarjetas de lab.
+                           Se inyecta inline para superar los estilos del tema de Streamlit Cloud. */
+                        [data-testid="stVerticalBlockBorderWrapper"] [data-testid="stSelectbox"] [data-baseweb="select"] > div:first-child,
+                        [data-testid="stVerticalBlockBorderWrapper"] [data-testid="stSelectbox"] div[role="combobox"] {{
+                            background-color: #e8e8e8 !important;
+                            border: 2px solid #888888 !important;
+                            border-radius: 6px !important;
+                            box-shadow: none !important;
+                        }}
+                        [data-testid="stVerticalBlockBorderWrapper"] [data-testid="stSelectbox"] [data-baseweb="select"] > div:first-child > div {{
+                            background-color: transparent !important;
+                            border: none !important;
+                        }}
+                        </style>
                         <div style="margin-bottom:10px; padding-top:2px;">
                             <span style="background-color:{badge_bg}; color:{badge_fg}; padding:4px 12px;
                                 border-radius:20px; font-weight:700; font-size:0.8em; letter-spacing:0.6px;">
