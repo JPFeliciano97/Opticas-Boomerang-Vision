@@ -9,6 +9,7 @@ import altair as alt
 from dotenv import load_dotenv
 from fpdf import FPDF
 from datetime import datetime
+import bcrypt
 
 # =====================================================================
 # 1. CONFIGURACIÓN INICIAL DE PÁGINA Y ESTILOS (MODO CLARO CON ACENTOS SUAVES)
@@ -372,9 +373,14 @@ st.markdown("""
 # =====================================================================
 # 2. CONEXIÓN A SUPABASE
 # =====================================================================
+# Compatible con Streamlit Cloud (st.secrets) y desarrollo local (.env)
 load_dotenv()
-url = os.getenv("SUPABASE_URL")
-key = os.getenv("SUPABASE_KEY")
+try:
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_KEY"]
+except Exception:
+    url = os.getenv("SUPABASE_URL")
+    key = os.getenv("SUPABASE_KEY")
 
 @st.cache_resource
 def init_connection():
@@ -382,16 +388,28 @@ def init_connection():
 
 supabase = init_connection()
 
+@st.cache_data(ttl=60, show_spinner=False)
+def query_cached(tabla, filtros=None):
+    """Cache de 60 s para consultas de solo lectura frecuentes."""
+    q = supabase.table(tabla).select("*")
+    if filtros:
+        for col, val in filtros.items():
+            q = q.eq(col, val)
+    return q.execute().data or []
+
 # =====================================================================
 # 3. SISTEMA DE AUTENTICACIÓN Y ROLES LOCALES (PERSISTENCIA DIARIA)
 # =====================================================================
+# ── Usuarios del sistema ──────────────────────────────────────────────
+# Para agregar o cambiar contraseñas usa el script tools/hash_password.py
+# NUNCA escribas contraseñas en texto plano en este archivo.
 USUARIOS_PERMITIDOS = {
-    "1022396649": {"pass": "mateo", "nombre": "Dr. Mateo F.", "rol": "admin", "id": "1022396649"},
-    "1024585129": {"pass": "juan", "nombre": "Dr. Juan Pablo", "rol": "admin", "id": "1024585129"},
-    "39667008": {"pass": "rosa", "nombre": "Rosa (Asesora)", "rol": "admin", "id": "39667008"},
-    "79203712": {"pass": "nelson", "nombre": "Nelson (Asesor)", "rol": "admin", "id": "79203712"},
-    "asesor": {"pass": "1234", "nombre": "Asesor Invitado", "rol": "asesor_limitado", "id": "asesor"},
-    "doctor": {"pass": "1234", "nombre": "Doctor Invitado", "rol": "doctor_limitado", "id": "doctor"}
+    "1022396649": {"hash": "$2b$12$gFAaYBKx9MbY6LmB5jzlyua138yntPOt70A4vMek48tf7ar//iAVW", "nombre": "Dr. Mateo F.", "rol": "admin", "id": "1022396649"},
+    "1024585129": {"hash": "$2b$12$B/6vCxYqn3UIhacSuTd/C.9AtZwQeHjVdLqpA8hLpc1RwhFx/A7zy", "nombre": "Dr. Juan Pablo", "rol": "admin", "id": "1024585129"},
+    "39667008": {"hash": "$2b$12$d20TxP8RA0VcZUIRDYS0OeZb1aj7ZJjFbFYxWYf5fq1tqDsC.t.ZG", "nombre": "Rosa (Asesora)", "rol": "admin", "id": "39667008"},
+    "79203712": {"hash": "$2b$12$utxfnI7yKTFK3bu/RckDiOeHLgk2wu6iGp5KUR30QYUlbuSdj2qWO", "nombre": "Nelson (Asesor)", "rol": "admin", "id": "79203712"},
+    "asesor":     {"hash": "$2b$12$.qveRTit/Shp7AytkdWGveb6kl6fHPvJ9iMecNzFRII1kB19uMSl2", "nombre": "Asesor Invitado", "rol": "asesor_limitado", "id": "asesor"},
+    "doctor":     {"hash": "$2b$12$v0DR0MvszR5DM2FCMotUqeHqCyc9bPqnZzs6v4.V06ibN9g2/oAvK", "nombre": "Doctor Invitado", "rol": "doctor_limitado", "id": "doctor"}
 }
 
 def get_image_base64(path):
@@ -429,7 +447,7 @@ if not st.session_state.user_info:
             
             if st.button("🔐 Iniciar Sesión", type="primary", use_container_width=True):
                 user_clean = user_input.strip().lower()
-                if user_clean in USUARIOS_PERMITIDOS and USUARIOS_PERMITIDOS[user_clean]["pass"] == pass_input.strip():
+                if user_clean in USUARIOS_PERMITIDOS and bcrypt.checkpw(pass_input.strip().encode(), USUARIOS_PERMITIDOS[user_clean]["hash"].encode()):
                     st.session_state.user_info = USUARIOS_PERMITIDOS[user_clean]
                     nuevo_token = base64.b64encode(f"{user_clean}||{datetime.now().strftime('%Y-%m-%d')}".encode("utf-8")).decode("utf-8")
                     st.query_params["auth_token"] = nuevo_token
@@ -893,6 +911,18 @@ with st.sidebar:
                 st.rerun()
                 
     st.markdown("---")
+    # Alerta de stock crítico (productos en 0)
+    if user_rol in ["admin", "asesor_limitado"]:
+        try:
+            inv_sidebar = supabase.table("inventario").select("codigo,marca,cantidad").execute().data or []
+            sin_stock = [p for p in inv_sidebar if int(p.get("cantidad", 0)) == 0]
+            if sin_stock:
+                st.warning(f"⚠️ **{len(sin_stock)} producto(s) sin stock**")
+                with st.expander("Ver productos"):
+                    for p in sin_stock:
+                        st.caption(f"• {p.get('marca','').upper()} — {p.get('codigo','')}")
+        except Exception:
+            pass
     st.caption("🚀 Boomerang Visión - V1.0")
 
 modulo = st.session_state.current_module
@@ -907,7 +937,7 @@ modulo = st.session_state.current_module
 if modulo == "👨‍⚕️ Consultorio":
     styled_header("Recepción y Clínica", "👨‍⚕️")
     
-    tab_adm, tab_ref, tab_cierre = st.tabs(["📋 1. Admisión Paciente", "👁️ 2. Refracción (Rx)", "📝 3. Diagnóstico y Cierre"])
+    tab_adm, tab_ref, tab_cierre, tab_hist = st.tabs(["📋 1. Admisión Paciente", "👁️ 2. Refracción (Rx)", "📝 3. Diagnóstico y Cierre", "📂 4. Historial"])
     
     with tab_adm:
         col_doc_search, col_doc_btn = st.columns([3, 1])
@@ -977,7 +1007,12 @@ if modulo == "👨‍⚕️ Consultorio":
             else:
                 rx_od_final = build_rx_string(esfera_od, cilindro_od, eje_od); rx_oi_final = build_rx_string(esfera_oi, cilindro_oi, eje_oi)
                 dp_combined = f"{dp_od}/{dp_oi}" if dp_od and dp_oi else (dp_od or dp_oi or "")
-                doc_up = str(documento).upper(); nom_up = str(nombre).upper(); cel_up = str(celular).upper()
+                doc_up = str(documento).upper(); nom_up = str(nombre).upper()
+                # Normalizar celular: solo dígitos, sin prefijo 57, exactamente 10 dígitos
+                cel_digits = "".join(filter(str.isdigit, str(celular)))
+                if cel_digits.startswith("57") and len(cel_digits) == 12:
+                    cel_digits = cel_digits[2:]
+                cel_up = cel_digits if cel_digits else str(celular).upper()
                 
                 try: supabase.table("pacientes").upsert({"documento": doc_up, "nombre_completo": nom_up, "celular": cel_up, "ocupacion": str(ocupacion).upper(), "direccion": str(direccion).upper(), "edad": str(edad).upper(), "fecha_nacimiento": fecha_nacimiento.strftime("%Y-%m-%d"), "habeas_data": True, "habeas_data_fecha": datetime.now().isoformat()}).execute()
                 except Exception: supabase.table("pacientes").upsert({"documento": doc_up, "nombre_completo": nom_up, "celular": cel_up, "ocupacion": str(ocupacion).upper(), "direccion": str(direccion).upper(), "fecha_nacimiento": fecha_nacimiento.strftime("%Y-%m-%d"), "habeas_data": True, "habeas_data_fecha": datetime.now().isoformat()}).execute()
@@ -986,6 +1021,55 @@ if modulo == "👨‍⚕️ Consultorio":
                 st.session_state.global_toast = f"Historia de {nom_up} guardada."
                 st.session_state.trigger_clear_doc = True
                 st.rerun()
+
+    with tab_hist:
+        st.markdown("#### 🔍 Buscar Historial de un Paciente")
+        col_h1, col_h2 = st.columns([3, 1])
+        with col_h1:
+            doc_hist = st.text_input("Cédula del paciente:", key="doc_hist_input").strip().upper()
+        with col_h2:
+            st.write(""); st.write("")
+            buscar_hist = st.button("Buscar", key="btn_buscar_hist", use_container_width=True)
+
+        if buscar_hist and doc_hist:
+            pac_hist = supabase.table("pacientes").select("*").eq("documento", doc_hist).execute().data
+            hist_data = supabase.table("historias_clinicas").select("*").eq("paciente_documento", doc_hist).order("fecha", desc=True).limit(10).execute().data
+
+            if not pac_hist:
+                st.error("No se encontró ningún paciente con ese documento.")
+            else:
+                p = pac_hist[0]
+                with st.container(border=True):
+                    c1, c2, c3 = st.columns(3)
+                    c1.markdown(f"**👤 {str(p.get('nombre_completo','')).upper()}**")
+                    c2.markdown(f"**📱** {p.get('celular','N/A')}")
+                    c3.markdown(f"**🎂** {p.get('fecha_nacimiento','N/A')}")
+
+                if not hist_data:
+                    st.info("Este paciente no tiene historias clínicas registradas.")
+                else:
+                    st.markdown(f"**Últimas {len(hist_data)} consulta(s) registradas:**")
+                    for h in hist_data:
+                        fecha_fmt = h.get("fecha", "")[:10]
+                        try:
+                            fecha_fmt = datetime.strptime(fecha_fmt, "%Y-%m-%d").strftime("%d/%m/%Y")
+                        except Exception:
+                            pass
+                        with st.container(border=True):
+                            hc1, hc2 = st.columns([1, 3])
+                            hc1.markdown(f"**📅 {fecha_fmt}**")
+                            hc2.markdown(f"**Motivo:** {h.get('motivo_consulta','—')}")
+                            rx_od = h.get("rx_final_od", "")
+                            rx_oi = h.get("rx_final_oi", "")
+                            dp = h.get("dp", "")
+                            add = h.get("adicion", "")
+                            obs = h.get("observaciones", "")
+                            if rx_od or rx_oi:
+                                st.markdown(f"**Rx OD:** `{rx_od}`  |  **Rx OI:** `{rx_oi}`" + (f"  |  **D.P.:** `{dp}`" if dp else "") + (f"  |  **Adición:** `{add}`" if add else ""))
+                            if obs:
+                                st.caption(f"📝 {obs}")
+        elif buscar_hist and not doc_hist:
+            st.warning("Escribe la cédula del paciente antes de buscar.")
 
 # ------------------------------------------
 # MÓDULO 2: FACTURACIÓN Y WIZARD REESTRUCTURADO
@@ -1309,11 +1393,18 @@ elif modulo == "🛍️ Óptica y Facturación":
                 if fac_a.get("estado") == "ANULADA": st.error("⚠️ Esta factura ya se encuentra ANULADA.")
                 else:
                     st.warning(f"⚠️ ¿Confirmas la anulación de la Factura N° **{fac_a['numero_factura']}** de **{fac_a['titular_nombre']}** por valor de **${format_currency_co(fac_a['total'])}**?")
-                    if st.button("🚨 CONFIRMAR ANULACIÓN DE FACTURA", type="primary"):
-                        supabase.table("ventas_facturacion").update({"estado": "ANULADA"}).eq("numero_factura", fac_a["numero_factura"]).execute()
-                        st.session_state.global_toast = "Factura ANULADA exitosamente."
-                        st.session_state.global_toast_icon = "🚨"
-                        st.rerun()
+                    confirmar_anulacion = st.checkbox(
+                        "Entiendo que esta acción es **irreversible** y deseo anular la factura.",
+                        key=f"chk_anular_{fac_a['numero_factura']}"
+                    )
+                    if confirmar_anulacion:
+                        if st.button("🚨 CONFIRMAR ANULACIÓN DE FACTURA", type="primary"):
+                            supabase.table("ventas_facturacion").update({"estado": "ANULADA"}).eq("numero_factura", fac_a["numero_factura"]).execute()
+                            st.session_state.global_toast = "Factura ANULADA exitosamente."
+                            st.session_state.global_toast_icon = "🚨"
+                            st.rerun()
+                    else:
+                        st.info("Marca la casilla de confirmación para habilitar el botón de anulación.")
             else:
                 st.error("No existe ninguna factura con ese número.")
 
@@ -1671,12 +1762,17 @@ elif modulo == "📅 CRM y Fidelización":
     tab_anual, tab_cumple, tab_directorio, tab_plantillas = st.tabs(["🔄 Control Anual", "🎂 Cumpleaños", "📞 Directorio", "⚙️ Plantillas WhatsApp"])
     
     if "tpl_anual" not in st.session_state:
-        st.session_state.tpl_anual = "¡Hola [NOMBRE]! Te saludamos de Boomerang Visión 👓. Ha pasado un año desde tu último examen visual y queremos invitarte a tu control anual para cuidar de tu salud visual. ¿Te gustaría agendar una cita?"
-    if "tpl_cumple" not in st.session_state:
-        st.session_state.tpl_cumple = "¡Feliz cumpleaños, [NOMBRE]! 🥳 Te deseamos un día maravilloso de parte de todo el equipo de Boomerang Visión. Queremos regalarte un descuento especial del 20% en tu próximo par de lentes o montura en este mes. ¡Te esperamos!"
+        try:
+            tpl_db = supabase.table("configuracion").select("clave,valor").in_("clave", ["tpl_anual","tpl_cumple"]).execute().data or []
+            tpl_map = {r["clave"]: r["valor"] for r in tpl_db}
+        except Exception:
+            tpl_map = {}
+        st.session_state.tpl_anual = tpl_map.get("tpl_anual", "¡Hola [NOMBRE]! Te saludamos de Boomerang Visión 👓. Ha pasado un año desde tu último examen visual y queremos invitarte a tu control anual para cuidar de tu salud visual. ¿Te gustaría agendar una cita?")
+        st.session_state.tpl_cumple = tpl_map.get("tpl_cumple", "¡Feliz cumpleaños, [NOMBRE]! 🥳 Te deseamos un día maravilloso de parte de todo el equipo de Boomerang Visión. Queremos regalarte un descuento especial del 20% en tu próximo par de lentes o montura en este mes. ¡Te esperamos!")
 
     with tab_anual:
-        historias_todas = supabase.table("historias_clinicas").select("*").execute().data or []
+        with st.spinner("Cargando datos de control anual..."):
+            historias_todas = supabase.table("historias_clinicas").select("*").execute().data or []
         pacientes_para_llamar = []
         for h in historias_todas:
             f_str = h.get("fecha")
@@ -1701,7 +1797,8 @@ elif modulo == "📅 CRM y Fidelización":
         else: st.info("No hay pacientes cumpliendo un año de su última consulta.")
 
     with tab_cumple:
-        todos_pacientes = supabase.table("pacientes").select("*").execute().data or []
+        with st.spinner("Cargando directorio..."):
+            todos_pacientes = supabase.table("pacientes").select("*").execute().data or []
         cumpleañeros = []
         for p in todos_pacientes:
             fnac = p.get("fecha_nacimiento")
@@ -1749,7 +1846,12 @@ elif modulo == "📅 CRM y Fidelización":
         st.session_state.tpl_anual = st.text_area("Plantilla Control Anual", value=st.session_state.tpl_anual, height=100)
         st.session_state.tpl_cumple = st.text_area("Plantilla Cumpleaños", value=st.session_state.tpl_cumple, height=100)
         if st.button("💾 Guardar Plantillas", type="primary"):
-            st.success("¡Plantillas actualizadas correctamente para esta sesión!")
+            try:
+                supabase.table("configuracion").upsert({"clave": "tpl_anual", "valor": st.session_state.tpl_anual}).execute()
+                supabase.table("configuracion").upsert({"clave": "tpl_cumple", "valor": st.session_state.tpl_cumple}).execute()
+                st.success("¡Plantillas guardadas permanentemente en la base de datos!")
+            except Exception:
+                st.success("¡Plantillas actualizadas para esta sesión! (Para persistencia crea la tabla 'configuracion' con columnas clave/valor en Supabase)")
 
 # ------------------------------------------
 # MÓDULO 7: ANALÍTICA Y GRÁFICO AGRUPADO
