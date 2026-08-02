@@ -113,10 +113,10 @@ st.markdown("""
 
         /* Wrapper externo — controlado por Streamlit, no por React/BaseWeb */
         div[data-testid="stSelectbox"] {
-            background-color: #ebebeb !important;
-            border: 2px solid #aaaaaa !important;
-            border-radius: 8px !important;
-            padding: 2px !important;
+            background-color: #f2f2f2 !important;
+            border: 1.5px solid #b0b0b0 !important;
+            border-radius: 6px !important;
+            padding: 0 !important;
         }
 
         /* Todos los divs intermedios de BaseWeb: transparent para que se vea el outer */
@@ -137,7 +137,8 @@ st.markdown("""
             background-color: transparent !important;
             border: none !important;
             box-shadow: none !important;
-            min-height: 36px !important;
+            min-height: 38px !important;
+            padding: 4px 8px !important;
         }
 
         /* Texto del valor seleccionado */
@@ -187,10 +188,10 @@ st.markdown("""
 
                 /* 4d. Multiselect — misma estrategia: estilo en el wrapper de Streamlit */
         div[data-testid="stMultiSelect"] {
-            background-color: #ebebeb !important;
-            border: 2px solid #aaaaaa !important;
-            border-radius: 8px !important;
-            padding: 2px !important;
+            background-color: #f2f2f2 !important;
+            border: 1.5px solid #b0b0b0 !important;
+            border-radius: 6px !important;
+            padding: 0 !important;
         }
         div[data-testid="stMultiSelect"] > div,
         div[data-testid="stMultiSelect"] > div > div,
@@ -409,10 +410,10 @@ st.markdown("""
                 'div[data-testid="stSelectbox"], div[data-testid="stMultiSelect"]'
             );
             outers.forEach(function(el) {
-                el.style.setProperty('background-color', '#ebebeb', 'important');
-                el.style.setProperty('border', '2px solid #aaaaaa', 'important');
-                el.style.setProperty('border-radius', '8px', 'important');
-                el.style.setProperty('padding', '2px', 'important');
+                el.style.setProperty('background-color', '#f2f2f2', 'important');
+                el.style.setProperty('border', '1.5px solid #b0b0b0', 'important');
+                el.style.setProperty('border-radius', '6px', 'important');
+                el.style.setProperty('padding', '0', 'important');
             });
             // Inner BaseWeb divs → transparent para que se vea el fondo del outer
             var inners = document.querySelectorAll(
@@ -1787,10 +1788,10 @@ elif modulo == "🔬 Control de Laboratorios":
                         /* Estilo de selectbox en tarjetas de lab — apunta al wrapper externo
                            de Streamlit que React no toca, garantizando persistencia. */
                         [data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stSelectbox"] {{
-                            background-color: #e4e4e4 !important;
-                            border: 2px solid #888888 !important;
-                            border-radius: 8px !important;
-                            padding: 2px !important;
+                            background-color: #f2f2f2 !important;
+                            border: 1.5px solid #b0b0b0 !important;
+                            border-radius: 6px !important;
+                            padding: 0 !important;
                         }}
                         [data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stSelectbox"] > div,
                         [data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stSelectbox"] [data-baseweb="select"],
