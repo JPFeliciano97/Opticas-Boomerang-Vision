@@ -103,66 +103,58 @@ st.markdown("""
             transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
         }
 
-        /* 4c. Selectbox — estrategia multicapa para Streamlit Cloud.
-               Streamlit Cloud inyecta estilos inline vía su motor de temas,
-               que sobreescriben los de hoja de estilos incluso con !important.
-               Usamos: (a) selectores de máxima especificidad, (b) atacamos
-               todos los elementos que pueden mostrar fondo blanco, y (c)
-               forzamos el borde en el contenedor visible correcto. */
+        /* 4c. Selectbox ─ estilo en el wrapper de Streamlit (estable ante re-renders de React)
+               Streamlit Cloud usa React/BaseWeb para los controles internos del selectbox.
+               React reconcilia y resetea los estilos inline de esos divs internos en cada
+               re-render, por lo que ningún CSS ni JS en ellos persiste.
+               SOLUCIÓN: estilamos el div[data-testid="stSelectbox"] que pertenece a
+               Streamlit (no a React) → no se resetea, siempre tiene borde y fondo visibles.
+               Los divs internos de BaseWeb se ponen en transparent para que se vea el outer. */
 
-        /* Capa 1: limpiar todos los wrappers intermedios */
+        /* Wrapper externo — controlado por Streamlit, no por React/BaseWeb */
+        div[data-testid="stSelectbox"] {
+            background-color: #ebebeb !important;
+            border: 2px solid #aaaaaa !important;
+            border-radius: 8px !important;
+            padding: 2px !important;
+        }
+
+        /* Todos los divs intermedios de BaseWeb: transparent para que se vea el outer */
         div[data-testid="stSelectbox"] > div,
         div[data-testid="stSelectbox"] > div > div,
-        .stSelectbox > div,
-        .stSelectbox > div > div {
+        div[data-testid="stSelectbox"] [data-baseweb="select"],
+        div[data-testid="stSelectbox"] [data-baseweb="select"] > div,
+        div[data-testid="stSelectbox"] [data-baseweb="select"] > div > div,
+        div[data-testid="stSelectbox"] div[role="combobox"] {
             background-color: transparent !important;
             border: none !important;
             box-shadow: none !important;
             outline: none !important;
         }
 
-        /* Capa 2: el control visible de BaseWeb — múltiples selectores
-           para cubrir distintas versiones del tema de Streamlit */
-        div[data-testid="stSelectbox"] [data-baseweb="select"] > div:first-child,
-        .stSelectbox [data-baseweb="select"] > div:first-child,
-        div[data-testid="stSelectbox"] div[role="combobox"],
-        .stSelectbox div[role="combobox"] {
-            background-color: #ebebeb !important;
-            border: 2px solid #999999 !important;
-            border-radius: 6px !important;
-            box-shadow: none !important;
-            box-sizing: border-box !important;
-            min-height: 40px !important;
-            padding: 2px 10px !important;
-            width: 100% !important;
-        }
-
-        /* Capa 3: sub-divs y spans internos — sin fondo para no tapar el borde */
-        div[data-testid="stSelectbox"] [data-baseweb="select"] > div:first-child > div,
-        .stSelectbox [data-baseweb="select"] > div:first-child > div {
+        /* El control visible de BaseWeb (primer div hijo) también transparent */
+        div[data-testid="stSelectbox"] [data-baseweb="select"] > div:first-child {
             background-color: transparent !important;
             border: none !important;
             box-shadow: none !important;
+            min-height: 36px !important;
         }
 
         /* Texto del valor seleccionado */
         div[data-testid="stSelectbox"] [data-baseweb="select"] span,
         div[data-testid="stSelectbox"] [data-baseweb="select"] p,
-        .stSelectbox [data-baseweb="select"] span,
-        .stSelectbox [data-baseweb="select"] p {
+        div[data-testid="stSelectbox"] [data-baseweb="select"] [data-testid="stMarkdownContainer"] {
             color: #000000 !important;
             background-color: transparent !important;
         }
 
         /* Flecha chevron */
-        div[data-testid="stSelectbox"] [data-baseweb="select"] svg,
-        .stSelectbox [data-baseweb="select"] svg {
+        div[data-testid="stSelectbox"] [data-baseweb="select"] svg {
             fill: #444444 !important;
         }
 
         /* Foco: borde rojo suave */
-        div[data-testid="stSelectbox"] [data-baseweb="select"] > div:first-child:focus-within,
-        .stSelectbox [data-baseweb="select"] > div:first-child:focus-within {
+        div[data-testid="stSelectbox"]:focus-within {
             border-color: #e57373 !important;
             box-shadow: 0 0 0 3px rgba(229,115,115,0.20) !important;
         }
@@ -173,13 +165,13 @@ st.markdown("""
             overflow: hidden !important;
         }
         [data-baseweb="popover"] [data-baseweb="menu"] {
-            background-color: #f2f2f2 !important;
-            border: 1.5px solid #b0b0b0 !important;
+            background-color: #f0f0f0 !important;
+            border: 1.5px solid #aaaaaa !important;
             border-radius: 8px !important;
             box-shadow: 0 4px 16px rgba(0,0,0,0.14) !important;
         }
         [data-baseweb="popover"] [role="option"] {
-            background-color: #f2f2f2 !important;
+            background-color: #f0f0f0 !important;
             color: #000000 !important;
             padding: 10px 14px !important;
         }
@@ -193,32 +185,35 @@ st.markdown("""
             font-weight: 600 !important;
         }
 
-        /* 4d. Multiselect – mismo tratamiento */
-        .stMultiSelect [data-baseweb="select"] > div:first-child {
-            background-color: #f2f2f2 !important;
-            border: 1.5px solid #b0b0b0 !important;
-            border-radius: 6px !important;
-            box-shadow: none !important;
-            box-sizing: border-box !important;
-            min-height: 40px !important;
+                /* 4d. Multiselect — misma estrategia: estilo en el wrapper de Streamlit */
+        div[data-testid="stMultiSelect"] {
+            background-color: #ebebeb !important;
+            border: 2px solid #aaaaaa !important;
+            border-radius: 8px !important;
+            padding: 2px !important;
         }
-        .stMultiSelect [data-baseweb="select"] > div:first-child > div {
+        div[data-testid="stMultiSelect"] > div,
+        div[data-testid="stMultiSelect"] > div > div,
+        div[data-testid="stMultiSelect"] [data-baseweb="select"],
+        div[data-testid="stMultiSelect"] [data-baseweb="select"] > div,
+        div[data-testid="stMultiSelect"] [data-baseweb="select"] > div:first-child {
             background-color: transparent !important;
             border: none !important;
+            box-shadow: none !important;
         }
-        .stMultiSelect [data-baseweb="select"] > div:first-child:focus-within {
+        div[data-testid="stMultiSelect"]:focus-within {
             border-color: #e57373 !important;
-            box-shadow: 0 0 0 3px rgba(229, 115, 115, 0.25) !important;
+            box-shadow: 0 0 0 3px rgba(229,115,115,0.20) !important;
         }
         /* Tags dentro del multiselect */
-        .stMultiSelect [data-baseweb="tag"] {
+        div[data-testid="stMultiSelect"] [data-baseweb="tag"] {
             background-color: #f5c2c2 !important;
             border-radius: 4px !important;
             color: #000000 !important;
             border: 1px solid #d0a0a0 !important;
         }
 
-        /* 4e. Foco: borde rojo suave + glow discreto.
+                /* 4e. Foco: borde rojo suave + glow discreto.
                Para el selectbox se usa :focus-within porque
                el foco real cae en el <input> hijo oculto. */
         .stTextInput input:focus,
@@ -407,24 +402,28 @@ st.markdown("""
     <script>
     (function() {
         function styleSelects() {
-            // Selectbox y Multiselect: control visible principal
-            var controls = document.querySelectorAll(
-                '.stSelectbox [data-baseweb="select"] > div:first-child, ' +
-                '.stSelectbox div[role="combobox"], ' +
-                '.stMultiSelect [data-baseweb="select"] > div:first-child'
+            // Apuntamos al WRAPPER EXTERNO de Streamlit (data-testid="stSelectbox")
+            // porque ese div NO es controlado por React/BaseWeb y sus estilos persisten.
+            // Los divs internos de BaseWeb se ponen en transparent para que el outer se vea.
+            var outers = document.querySelectorAll(
+                'div[data-testid="stSelectbox"], div[data-testid="stMultiSelect"]'
             );
-            controls.forEach(function(el) {
+            outers.forEach(function(el) {
                 el.style.setProperty('background-color', '#ebebeb', 'important');
-                el.style.setProperty('border', '2px solid #999999', 'important');
-                el.style.setProperty('border-radius', '6px', 'important');
-                el.style.setProperty('box-shadow', 'none', 'important');
-                el.style.setProperty('min-height', '40px', 'important');
+                el.style.setProperty('border', '2px solid #aaaaaa', 'important');
+                el.style.setProperty('border-radius', '8px', 'important');
+                el.style.setProperty('padding', '2px', 'important');
             });
-            // Sub-divs internos: transparentes para no tapar el borde
-            document.querySelectorAll(
-                '.stSelectbox [data-baseweb="select"] > div:first-child > div, ' +
-                '.stMultiSelect [data-baseweb="select"] > div:first-child > div'
-            ).forEach(function(el) {
+            // Inner BaseWeb divs → transparent para que se vea el fondo del outer
+            var inners = document.querySelectorAll(
+                'div[data-testid="stSelectbox"] > div, ' +
+                'div[data-testid="stSelectbox"] [data-baseweb="select"], ' +
+                'div[data-testid="stSelectbox"] [data-baseweb="select"] > div, ' +
+                'div[data-testid="stMultiSelect"] > div, ' +
+                'div[data-testid="stMultiSelect"] [data-baseweb="select"], ' +
+                'div[data-testid="stMultiSelect"] [data-baseweb="select"] > div'
+            );
+            inners.forEach(function(el) {
                 el.style.setProperty('background-color', 'transparent', 'important');
                 el.style.setProperty('border', 'none', 'important');
                 el.style.setProperty('box-shadow', 'none', 'important');
@@ -1785,18 +1784,20 @@ elif modulo == "🔬 Control de Laboratorios":
                         }})();
                         </script>
                         <style>
-                        /* Fuerza el estilo de los selectbox dentro de las tarjetas de lab.
-                           Se inyecta inline para superar los estilos del tema de Streamlit Cloud. */
-                        [data-testid="stVerticalBlockBorderWrapper"] [data-testid="stSelectbox"] [data-baseweb="select"] > div:first-child,
-                        [data-testid="stVerticalBlockBorderWrapper"] [data-testid="stSelectbox"] div[role="combobox"] {{
-                            background-color: #e8e8e8 !important;
+                        /* Estilo de selectbox en tarjetas de lab — apunta al wrapper externo
+                           de Streamlit que React no toca, garantizando persistencia. */
+                        [data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stSelectbox"] {{
+                            background-color: #e4e4e4 !important;
                             border: 2px solid #888888 !important;
-                            border-radius: 6px !important;
-                            box-shadow: none !important;
+                            border-radius: 8px !important;
+                            padding: 2px !important;
                         }}
-                        [data-testid="stVerticalBlockBorderWrapper"] [data-testid="stSelectbox"] [data-baseweb="select"] > div:first-child > div {{
+                        [data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stSelectbox"] > div,
+                        [data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stSelectbox"] [data-baseweb="select"],
+                        [data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stSelectbox"] [data-baseweb="select"] > div {{
                             background-color: transparent !important;
                             border: none !important;
+                            box-shadow: none !important;
                         }}
                         </style>
                         <div style="margin-bottom:10px; padding-top:2px;">
