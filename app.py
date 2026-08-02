@@ -407,9 +407,11 @@ st.markdown("""
     <script>
     (function() {
         function styleSelects() {
+            // Selectbox y Multiselect: control visible principal
             var controls = document.querySelectorAll(
                 '.stSelectbox [data-baseweb="select"] > div:first-child, ' +
-                '.stSelectbox div[role="combobox"]'
+                '.stSelectbox div[role="combobox"], ' +
+                '.stMultiSelect [data-baseweb="select"] > div:first-child'
             );
             controls.forEach(function(el) {
                 el.style.setProperty('background-color', '#ebebeb', 'important');
@@ -418,11 +420,14 @@ st.markdown("""
                 el.style.setProperty('box-shadow', 'none', 'important');
                 el.style.setProperty('min-height', '40px', 'important');
             });
+            // Sub-divs internos: transparentes para no tapar el borde
             document.querySelectorAll(
-                '.stSelectbox [data-baseweb="select"] > div:first-child > div'
+                '.stSelectbox [data-baseweb="select"] > div:first-child > div, ' +
+                '.stMultiSelect [data-baseweb="select"] > div:first-child > div'
             ).forEach(function(el) {
                 el.style.setProperty('background-color', 'transparent', 'important');
                 el.style.setProperty('border', 'none', 'important');
+                el.style.setProperty('box-shadow', 'none', 'important');
             });
         }
         if (document.readyState === 'loading') {
@@ -550,7 +555,12 @@ def convert_df_to_excel(df, sheet_name="Reporte"):
     return output.getvalue()
 
 def styled_header(text, icon=""):
-    st.markdown(f"<h3 style='font-weight: 700; margin-bottom: 20px; color:#000000;'>{icon} {text}</h3>", unsafe_allow_html=True)
+    st.markdown(f"""
+        <div style="display:flex; align-items:center; justify-content:space-between;
+                    border-bottom: 2px solid #f5c2c2; padding-bottom:10px; margin-bottom:20px;">
+            <h3 style='font-weight:700; margin:0; color:#000000;'>{icon} {text}</h3>
+        </div>
+    """, unsafe_allow_html=True)
 
 def build_rx_string(sph, cyl, axis):
     sph_str = "NEUTRO" if sph == 0.0 else f"{sph:+.2f}"
@@ -968,12 +978,19 @@ with st.sidebar:
     if user_rol in ["admin", "asesor_limitado"]:
         try:
             inv_sidebar = supabase.table("inventario").select("codigo,marca,cantidad").execute().data or []
-            sin_stock = [p for p in inv_sidebar if int(p.get("cantidad", 0)) == 0]
+            sin_stock  = [p for p in inv_sidebar if int(p.get("cantidad", 0)) == 0]
+            bajo_stock = [p for p in inv_sidebar if 0 < int(p.get("cantidad", 0)) <= 2]
             if sin_stock:
-                st.warning(f"⚠️ **{len(sin_stock)} producto(s) sin stock**")
-                with st.expander("Ver productos"):
+                st.error(f"🚨 **{len(sin_stock)} producto(s) sin stock**")
+                with st.expander("Ver productos sin stock"):
                     for p in sin_stock:
-                        st.caption(f"• {p.get('marca','').upper()} — {p.get('codigo','')}")
+                        st.caption(f"• {p.get('marca','').upper()} — Ref. {p.get('codigo','')}")
+            if bajo_stock:
+                st.warning(f"⚠️ **{len(bajo_stock)} producto(s) con stock bajo (≤2)**")
+                with st.expander("Ver stock bajo"):
+                    for p in bajo_stock:
+                        cant = int(p.get("cantidad", 0))
+                        st.caption(f"• {p.get('marca','').upper()} — Ref. {p.get('codigo','')} ({cant} ud.)")
         except Exception:
             pass
     st.caption("🚀 Boomerang Visión - V1.0")
@@ -1085,8 +1102,9 @@ if modulo == "👨‍⚕️ Consultorio":
             buscar_hist = st.button("Buscar", key="btn_buscar_hist", use_container_width=True)
 
         if buscar_hist and doc_hist:
-            pac_hist = supabase.table("pacientes").select("*").eq("documento", doc_hist).execute().data
-            hist_data = supabase.table("historias_clinicas").select("*").eq("paciente_documento", doc_hist).order("fecha", desc=True).limit(10).execute().data
+            with st.spinner("Buscando historial..."):
+                pac_hist = supabase.table("pacientes").select("*").eq("documento", doc_hist).execute().data
+                hist_data = supabase.table("historias_clinicas").select("*").eq("paciente_documento", doc_hist).order("fecha", desc=True).limit(10).execute().data
 
             if not pac_hist:
                 st.error("No se encontró ningún paciente con ese documento.")
@@ -1839,8 +1857,8 @@ elif modulo == "📅 CRM y Fidelización":
         st.session_state.tpl_cumple = tpl_map.get("tpl_cumple", "¡Feliz cumpleaños, [NOMBRE]! 🥳 Te deseamos un día maravilloso de parte de todo el equipo de Boomerang Visión. Queremos regalarte un descuento especial del 20% en tu próximo par de lentes o montura en este mes. ¡Te esperamos!")
 
     with tab_anual:
-        with st.spinner("Cargando datos de control anual..."):
-            historias_todas = supabase.table("historias_clinicas").select("*").execute().data or []
+        with st.spinner("Cargando historial de pacientes..."):
+            historias_todas = supabase.table("historias_clinicas").select("paciente_documento,fecha").execute().data or []
         pacientes_para_llamar = []
         for h in historias_todas:
             f_str = h.get("fecha")
@@ -1928,6 +1946,19 @@ elif modulo == "📈 Analítica y Estadísticas":
     styled_header("Dashboard Analítico y Respaldo General", "📈")
     
     ventas_db = supabase.table("ventas_facturacion").select("*").neq("estado", "ANULADA").execute().data or []
+    hoy_an = datetime.now()
+    mes_actual = hoy_an.strftime("%Y-%m")
+    ventas_mes = [v for v in ventas_db if str(v.get("fecha_venta","")).startswith(mes_actual)]
+    total_mes = sum(int(v.get("total",0)) for v in ventas_mes)
+    recaudado_mes = sum(int(v.get("abono",0)) for v in ventas_mes)
+    pendiente_mes = total_mes - recaudado_mes
+    
+    km1, km2, km3, km4 = st.columns(4)
+    km1.metric("🛍️ Ventas del mes",    f"{len(ventas_mes)}")
+    km2.metric("💰 Facturado",          f"${format_currency_co(total_mes)}")
+    km3.metric("✅ Recaudado",          f"${format_currency_co(recaudado_mes)}")
+    km4.metric("⏳ Por recaudar",       f"${format_currency_co(pendiente_mes)}")
+    st.markdown("---")
     gastos_db = supabase.table("gastos_caja").select("*").execute().data or []
     
     if ventas_db:
