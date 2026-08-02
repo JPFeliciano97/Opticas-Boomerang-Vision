@@ -103,25 +103,38 @@ st.markdown("""
             transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
         }
 
-        /* 4c. Selectbox ─ estilo en el wrapper de Streamlit (estable ante re-renders de React)
-               Streamlit Cloud usa React/BaseWeb para los controles internos del selectbox.
-               React reconcilia y resetea los estilos inline de esos divs internos en cada
-               re-render, por lo que ningún CSS ni JS en ellos persiste.
-               SOLUCIÓN: estilamos el div[data-testid="stSelectbox"] que pertenece a
-               Streamlit (no a React) → no se resetea, siempre tiene borde y fondo visibles.
-               Los divs internos de BaseWeb se ponen en transparent para que se vea el outer. */
+        /* 4c. Selectbox — borde solo en el control, no en el label
+               El div[data-testid="stSelectbox"] contiene tanto el label como el control.
+               Si le ponemos borde al wrapper entero, el label queda dentro del recuadro
+               (feo). La solución: wrapper sin borde, y usamos :last-child para apuntar
+               solo al div del control de BaseWeb — selector estructural que React no pisa. */
 
-        /* Wrapper externo — controlado por Streamlit, no por React/BaseWeb */
+        /* Wrapper externo: sin borde, solo posicionamiento */
         div[data-testid="stSelectbox"] {
-            background-color: #f2f2f2 !important;
-            border: 1.5px solid #b0b0b0 !important;
-            border-radius: 6px !important;
+            background-color: transparent !important;
+            border: none !important;
             padding: 0 !important;
         }
 
-        /* Todos los divs intermedios de BaseWeb: transparent para que se vea el outer */
-        div[data-testid="stSelectbox"] > div,
-        div[data-testid="stSelectbox"] > div > div,
+        /* Label del selectbox: estilo limpio, fuera del recuadro */
+        div[data-testid="stSelectbox"] > label {
+            font-size: 14px !important;
+            font-weight: 500 !important;
+            color: #000000 !important;
+            margin-bottom: 4px !important;
+            display: block !important;
+        }
+
+        /* El control visible: el div que envuelve al BaseWeb select.
+           Usamos > div:last-child que apunta al contenedor del control
+           (después del label), estable estructuralmente ante re-renders. */
+        div[data-testid="stSelectbox"] > div:last-child {
+            background-color: #f2f2f2 !important;
+            border: 1.5px solid #b0b0b0 !important;
+            border-radius: 6px !important;
+        }
+
+        /* Todos los divs internos de BaseWeb: transparent */
         div[data-testid="stSelectbox"] [data-baseweb="select"],
         div[data-testid="stSelectbox"] [data-baseweb="select"] > div,
         div[data-testid="stSelectbox"] [data-baseweb="select"] > div > div,
@@ -132,30 +145,30 @@ st.markdown("""
             outline: none !important;
         }
 
-        /* El control visible de BaseWeb (primer div hijo) también transparent */
+        /* Control BaseWeb primer div — altura y padding consistentes con inputs */
         div[data-testid="stSelectbox"] [data-baseweb="select"] > div:first-child {
             background-color: transparent !important;
             border: none !important;
             box-shadow: none !important;
             min-height: 38px !important;
-            padding: 4px 8px !important;
+            padding: 6px 10px !important;
         }
 
         /* Texto del valor seleccionado */
         div[data-testid="stSelectbox"] [data-baseweb="select"] span,
-        div[data-testid="stSelectbox"] [data-baseweb="select"] p,
-        div[data-testid="stSelectbox"] [data-baseweb="select"] [data-testid="stMarkdownContainer"] {
+        div[data-testid="stSelectbox"] [data-baseweb="select"] p {
             color: #000000 !important;
             background-color: transparent !important;
+            font-size: 15px !important;
         }
 
         /* Flecha chevron */
         div[data-testid="stSelectbox"] [data-baseweb="select"] svg {
-            fill: #444444 !important;
+            fill: #555555 !important;
         }
 
-        /* Foco: borde rojo suave */
-        div[data-testid="stSelectbox"]:focus-within {
+        /* Foco: borde rojo suave en el control */
+        div[data-testid="stSelectbox"] > div:last-child:focus-within {
             border-color: #e57373 !important;
             box-shadow: 0 0 0 3px rgba(229,115,115,0.20) !important;
         }
@@ -166,35 +179,38 @@ st.markdown("""
             overflow: hidden !important;
         }
         [data-baseweb="popover"] [data-baseweb="menu"] {
-            background-color: #f0f0f0 !important;
-            border: 1.5px solid #aaaaaa !important;
+            background-color: #f8f8f8 !important;
+            border: 1.5px solid #b0b0b0 !important;
             border-radius: 8px !important;
-            box-shadow: 0 4px 16px rgba(0,0,0,0.14) !important;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.10) !important;
         }
         [data-baseweb="popover"] [role="option"] {
-            background-color: #f0f0f0 !important;
+            background-color: #f8f8f8 !important;
             color: #000000 !important;
-            padding: 10px 14px !important;
+            padding: 9px 14px !important;
+            font-size: 14px !important;
         }
         [data-baseweb="popover"] [role="option"]:hover {
-            background-color: #f5c2c2 !important;
+            background-color: #fce4e4 !important;
             color: #000000 !important;
         }
         [data-baseweb="popover"] [aria-selected="true"] {
-            background-color: #e8a8a8 !important;
+            background-color: #f5c2c2 !important;
             color: #000000 !important;
             font-weight: 600 !important;
         }
 
-                /* 4d. Multiselect — misma estrategia: estilo en el wrapper de Streamlit */
+                /* 4d. Multiselect — misma estrategia: borde solo en el control, label afuera */
         div[data-testid="stMultiSelect"] {
+            background-color: transparent !important;
+            border: none !important;
+            padding: 0 !important;
+        }
+        div[data-testid="stMultiSelect"] > div:last-child {
             background-color: #f2f2f2 !important;
             border: 1.5px solid #b0b0b0 !important;
             border-radius: 6px !important;
-            padding: 0 !important;
         }
-        div[data-testid="stMultiSelect"] > div,
-        div[data-testid="stMultiSelect"] > div > div,
         div[data-testid="stMultiSelect"] [data-baseweb="select"],
         div[data-testid="stMultiSelect"] [data-baseweb="select"] > div,
         div[data-testid="stMultiSelect"] [data-baseweb="select"] > div:first-child {
@@ -202,11 +218,10 @@ st.markdown("""
             border: none !important;
             box-shadow: none !important;
         }
-        div[data-testid="stMultiSelect"]:focus-within {
+        div[data-testid="stMultiSelect"] > div:last-child:focus-within {
             border-color: #e57373 !important;
             box-shadow: 0 0 0 3px rgba(229,115,115,0.20) !important;
         }
-        /* Tags dentro del multiselect */
         div[data-testid="stMultiSelect"] [data-baseweb="tag"] {
             background-color: #f5c2c2 !important;
             border-radius: 4px !important;
@@ -403,28 +418,33 @@ st.markdown("""
     <script>
     (function() {
         function styleSelects() {
-            // Apuntamos al WRAPPER EXTERNO de Streamlit (data-testid="stSelectbox")
-            // porque ese div NO es controlado por React/BaseWeb y sus estilos persisten.
-            // Los divs internos de BaseWeb se ponen en transparent para que el outer se vea.
-            var outers = document.querySelectorAll(
-                'div[data-testid="stSelectbox"], div[data-testid="stMultiSelect"]'
-            );
-            outers.forEach(function(el) {
-                el.style.setProperty('background-color', '#f2f2f2', 'important');
-                el.style.setProperty('border', '1.5px solid #b0b0b0', 'important');
-                el.style.setProperty('border-radius', '6px', 'important');
-                el.style.setProperty('padding', '0', 'important');
+            // Apuntamos al ultimo div hijo de stSelectbox/stMultiSelect:
+            // ese es el contenedor del control de BaseWeb, justo despues del label.
+            // Asi el borde rodea solo el control, no el label → estetica limpia.
+            [
+                'div[data-testid="stSelectbox"]',
+                'div[data-testid="stMultiSelect"]'
+            ].forEach(function(sel) {
+                document.querySelectorAll(sel).forEach(function(wrapper) {
+                    // Outer wrapper: sin borde ni fondo
+                    wrapper.style.setProperty('background-color', 'transparent', 'important');
+                    wrapper.style.setProperty('border', 'none', 'important');
+                    // Last child: el control visual
+                    var ctrl = wrapper.lastElementChild;
+                    if (ctrl) {
+                        ctrl.style.setProperty('background-color', '#f2f2f2', 'important');
+                        ctrl.style.setProperty('border', '1.5px solid #b0b0b0', 'important');
+                        ctrl.style.setProperty('border-radius', '6px', 'important');
+                    }
+                });
             });
-            // Inner BaseWeb divs → transparent para que se vea el fondo del outer
-            var inners = document.querySelectorAll(
-                'div[data-testid="stSelectbox"] > div, ' +
+            // Todos los divs internos de BaseWeb: transparent
+            document.querySelectorAll(
                 'div[data-testid="stSelectbox"] [data-baseweb="select"], ' +
                 'div[data-testid="stSelectbox"] [data-baseweb="select"] > div, ' +
-                'div[data-testid="stMultiSelect"] > div, ' +
                 'div[data-testid="stMultiSelect"] [data-baseweb="select"], ' +
                 'div[data-testid="stMultiSelect"] [data-baseweb="select"] > div'
-            );
-            inners.forEach(function(el) {
+            ).forEach(function(el) {
                 el.style.setProperty('background-color', 'transparent', 'important');
                 el.style.setProperty('border', 'none', 'important');
                 el.style.setProperty('box-shadow', 'none', 'important');
@@ -1788,12 +1808,14 @@ elif modulo == "🔬 Control de Laboratorios":
                         /* Estilo de selectbox en tarjetas de lab — apunta al wrapper externo
                            de Streamlit que React no toca, garantizando persistencia. */
                         [data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stSelectbox"] {{
+                            background-color: transparent !important;
+                            border: none !important;
+                        }}
+                        [data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stSelectbox"] > div:last-child {{
                             background-color: #f2f2f2 !important;
                             border: 1.5px solid #b0b0b0 !important;
                             border-radius: 6px !important;
-                            padding: 0 !important;
                         }}
-                        [data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stSelectbox"] > div,
                         [data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stSelectbox"] [data-baseweb="select"],
                         [data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stSelectbox"] [data-baseweb="select"] > div {{
                             background-color: transparent !important;
