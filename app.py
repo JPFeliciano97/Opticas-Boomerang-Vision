@@ -1888,13 +1888,10 @@ elif modulo == "🔬 Control de Trabajos":
                         # Botón WhatsApp — aparece solo cuando el estado es "Recibido en Óptica"
                         if est_act == "Recibido en Óptica":
                             nombre_pac = str(t.get("titular_nombre", "")).split()[0].capitalize()
-                            # El campo de teléfono en ventas_facturacion se llama "titular_tel"
                             celular_pac = str(t.get("titular_tel", t.get("celular", ""))).strip()
-                            # Si no hay tel en la factura, buscar en tabla pacientes
                             if not celular_pac or celular_pac in ("None", ""):
                                 pac_data = supabase.table("pacientes").select("celular").eq("documento", str(t.get("paciente_documento",""))).execute().data
                                 celular_pac = str(pac_data[0].get("celular", "")) if pac_data else ""
-                            # Normalizar número: 10 dígitos colombianos → agregar prefijo 57
                             cel_digits = "".join(filter(str.isdigit, celular_pac))
                             if cel_digits.startswith("57") and len(cel_digits) == 12:
                                 cel_wa = cel_digits
@@ -1902,13 +1899,22 @@ elif modulo == "🔬 Control de Trabajos":
                                 cel_wa = "57" + cel_digits
                             else:
                                 cel_wa = cel_digits
+                            # Mensaje sin emojis para evitar problemas de codificación
                             msg_wa = (
-                                f"¡Hola {nombre_pac}! Te saludamos de Boomerang Visión 👓. "
+                                f"Hola {nombre_pac}, te saludamos de Boomerang Vision. "
                                 f"Te informamos que tus gafas ya se encuentran listas para retirar "
-                                f"en nuestra óptica. ¡Te esperamos!"
+                                f"en nuestra optica. Te esperamos!"
                             )
                             import urllib.parse as _up
-                            wa_url = f"https://wa.me/{cel_wa}?text={_up.quote(msg_wa)}"
+                            wa_url = f"https://wa.me/{cel_wa}?text={_up.quote(msg_wa)}" if cel_wa and len(cel_wa) >= 10 else "#"
+                            # Aviso de sin número también dentro del mismo bloque HTML → layout estable
+                            sin_cel = not cel_wa or len(cel_wa) < 10
+                            aviso_html = (
+                                "<p style='margin:6px 0 0 0; font-size:0.78em; color:#b45309; text-align:center;'>"
+                                "Sin numero de celular registrado para este paciente."
+                                "</p>"
+                            ) if sin_cel else ""
+                            btn_style = "opacity:0.5; cursor:not-allowed; pointer-events:none;" if sin_cel else ""
                             st.markdown(f"""
                                 <div style="margin-top:12px; width:100%; box-sizing:border-box;">
                                     <a href="{wa_url}" target="_blank" style="
@@ -1919,6 +1925,7 @@ elif modulo == "🔬 Control de Trabajos":
                                         font-weight: 700; font-size: 0.85em;
                                         text-decoration: none; letter-spacing: 0.2px;
                                         box-shadow: 0 2px 6px rgba(37,211,102,0.30);
+                                        {btn_style}
                                     ">
                                         <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15"
                                              viewBox="0 0 24 24" fill="white" style="flex-shrink:0;">
@@ -1927,10 +1934,9 @@ elif modulo == "🔬 Control de Trabajos":
                                         </svg>
                                         Avisar al paciente por WhatsApp
                                     </a>
+                                    {aviso_html}
                                 </div>
                             """, unsafe_allow_html=True)
-                            if not cel_wa or len(cel_wa) < 10:
-                                st.caption("⚠️ Sin número de celular registrado para este paciente.")
         else:
             st.info("No hay trabajos registrados con esos filtros.")
 
