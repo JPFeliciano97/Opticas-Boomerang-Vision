@@ -367,6 +367,7 @@ st.markdown("""
             border: 1px solid #d0d0d0 !important;
             border-radius: 10px !important;
             overflow: hidden !important;
+            padding-bottom: 6px !important;
         }
 
         /* --- 12b. Tarjetas de laboratorio coloreadas por estado ---
@@ -1941,7 +1942,7 @@ elif modulo == "🔬 Control de Trabajos":
                                 '</svg>'
                             )
                             wa_html = (
-                                '<div style="margin-top:12px;width:100%;box-sizing:border-box;">'
+                                '<div style="margin-top:12px;margin-bottom:16px;width:100%;box-sizing:border-box;">'
                                 f'<a href="{wa_url}" target="_blank" style="'
                                 'display:flex;align-items:center;justify-content:center;'
                                 'gap:8px;width:100%;box-sizing:border-box;'
