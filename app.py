@@ -654,7 +654,7 @@ def parse_for_grid(rx_str):
 # =====================================================================
 # 5. FUNCIONES DE DIBUJO DE PDF (se mantienen igual, solo usan logo.png)
 # =====================================================================
-def dibujar_media_carta(pdf, paciente, historia, venta, tipo_documento, logo_path="logo.png"):
+def dibujar_media_carta(pdf, paciente, historia, venta, tipo_documento, logo_path="logo.png", fecha_impresion=None):
     pdf.set_font("helvetica", "B", 10)
     pdf.text(10, 15, "Boomerang Vision MF")
     pdf.set_font("helvetica", "", 8.5)
@@ -668,7 +668,7 @@ def dibujar_media_carta(pdf, paciente, historia, venta, tipo_documento, logo_pat
     pdf.set_font("helvetica", "", 9); pdf.set_xy(10, 39)
     pdf.cell(20, 6, "FECHA", border=1)
     pdf.set_font("helvetica", "B", 9)
-    pdf.cell(65, 6, now_co().strftime("%d/%m/%Y %H:%M"), border=1)
+    pdf.cell(65, 6, (fecha_impresion or now_co()).strftime("%d/%m/%Y %H:%M"), border=1)
     
     pdf.set_font("helvetica", "", 9)
     pdf.cell(55, 6, "FACTURA", border=1, align="R")
@@ -735,7 +735,7 @@ def dibujar_media_carta(pdf, paciente, historia, venta, tipo_documento, logo_pat
     pdf.set_font("helvetica", "I", 7); pdf.set_xy(10, 128)
     pdf.cell(195, 4, f"BOOMERANG VISION  --  {tipo_documento}", align="C", ln=1)
 
-def dibujar_orden_laboratorio(pdf, paciente, historia, venta, tipo_orden="", logo_path="logo.png"):
+def dibujar_orden_laboratorio(pdf, paciente, historia, venta, tipo_orden="", logo_path="logo.png", fecha_impresion=None):
     pdf.rect(10, 10, 80, 18); pdf.set_font("helvetica", "B", 34); pdf.set_xy(10, 10)
     pdf.cell(80, 18, f"{venta['numero_factura']}", border=0, align="C")
     
@@ -750,7 +750,7 @@ def dibujar_orden_laboratorio(pdf, paciente, historia, venta, tipo_orden="", log
     
     pdf.set_font("helvetica", "", 8.5)
     pdf.cell(15, 6, "FECHA", border="T,B")
-    pdf.set_font("helvetica", "", 9); pdf.cell(55, 6, now_co().strftime("%d/%m/%Y %H:%M"), border="T,B", ln=1)
+    pdf.set_font("helvetica", "", 9); pdf.cell(55, 6, (fecha_impresion or now_co()).strftime("%d/%m/%Y %H:%M"), border="T,B", ln=1)
     
     pdf.set_xy(10, 38); pdf.set_font("helvetica", "", 8.5); pdf.cell(20, 6, "NOMBRE:  ", border="B")
     pdf.set_font("helvetica", "B", 9); pdf.cell(100, 6, venta['titular_nombre'].upper(), border="B")
@@ -796,7 +796,7 @@ def dibujar_orden_laboratorio(pdf, paciente, historia, venta, tipo_orden="", log
     pdf.set_font("helvetica", "I", 7); pdf.set_xy(10, 128)
     pdf.cell(195, 4, f"BOOMERANG VISION -- ORDEN DE LAB / EXCEL", align="C", ln=1)
 
-def dibujar_prescripcion_clinica(pdf, paciente, historia, detalles_rx, logo_path="logo.png"):
+def dibujar_prescripcion_clinica(pdf, paciente, historia, detalles_rx, logo_path="logo.png", fecha_impresion=None):
     pdf.set_font("helvetica", "B", 10)
     if os.path.exists(logo_path): pdf.image(logo_path, x=10, y=10, w=45)
     pdf.set_xy(60, 10); pdf.set_font("helvetica", "", 9)
@@ -810,7 +810,7 @@ def dibujar_prescripcion_clinica(pdf, paciente, historia, detalles_rx, logo_path
     pdf.ln(5); y_start = 28
     pdf.set_xy(10, y_start); pdf.set_font("helvetica", "I", 8)
     pdf.cell(110, 4, "Nombre del paciente:", border="L,T,R"); pdf.cell(25, 4, "Fecha", border=1, align="C")
-    pdf.set_font("helvetica", "", 9); pdf.cell(60, 4, now_co().strftime("%d/%m/%Y %I:%M %p"), border=1, align="C", ln=1)
+    pdf.set_font("helvetica", "", 9); pdf.cell(60, 4, (fecha_impresion or now_co()).strftime("%d/%m/%Y %I:%M %p"), border=1, align="C", ln=1)
 
     pdf.set_x(10); pdf.set_font("helvetica", "", 10)
     pdf.cell(110, 6, paciente['nombre_completo'].upper(), border="L,B,R")
@@ -1179,7 +1179,7 @@ if modulo == "👨‍⚕️ Consultorio":
 # ------------------------------------------
 elif modulo == "🛍️ Óptica y Facturación":
     styled_header("Facturación y Ventas", "🛍️")
-    tab_venta, tab_recaudo, tab_anular = st.tabs(["🛒 Nueva Venta", "💵 Recaudar Saldo", "🚫 Anular"])
+    tab_venta, tab_recaudo, tab_anular, tab_reimprimir = st.tabs(["🛒 Nueva Venta", "💵 Recaudar Saldo", "🚫 Anular", "🖨️ Reimprimir"])
     
     with tab_venta:
         search_doc = st.text_input("🔍 Buscar Cédula del Paciente:", key="search_opt").upper()
@@ -1517,6 +1517,182 @@ elif modulo == "🛍️ Óptica y Facturación":
                         st.info("Marca la casilla de confirmación para habilitar el botón de anulación.")
             else:
                 st.error("No existe ninguna factura con ese número.")
+
+    with tab_reimprimir:
+        st.markdown("<h4 style='color:#000000;'>🖨️ Reimprimir Documentos de una Factura</h4>", unsafe_allow_html=True)
+        st.caption("Busca una factura anterior y descarga sus documentos con la fecha original de emisión.")
+
+        reimp_search = st.text_input("N° de Factura o Cédula del paciente:", key="reimp_search").strip().upper()
+
+        if reimp_search:
+            with st.spinner("Buscando factura..."):
+                res_reimp = supabase.table("ventas_facturacion").select("*").or_(
+                    f"numero_factura.eq.{reimp_search},paciente_documento.eq.{reimp_search}"
+                ).neq("estado", "ANULADA").order("fecha_venta", desc=True).limit(1).execute()
+
+            if not res_reimp.data:
+                st.error("No se encontró ninguna factura activa para ese criterio.")
+            else:
+                venta_r = res_reimp.data[0]
+
+                # Parsear fecha_venta original (incluye hora y timezone Colombia)
+                fv_raw = venta_r.get("fecha_venta", "")
+                try:
+                    if "T" in fv_raw:
+                        fecha_original = datetime.fromisoformat(fv_raw.replace("Z", "+00:00"))
+                        # Convertir a hora Colombia si viene en UTC
+                        fecha_original = fecha_original.astimezone(timezone(timedelta(hours=-5)))
+                        # Quitar timezone para strftime (naive datetime)
+                        fecha_original = fecha_original.replace(tzinfo=None)
+                    else:
+                        fecha_original = datetime.strptime(fv_raw[:10], "%Y-%m-%d")
+                except Exception:
+                    fecha_original = None
+
+                fecha_display = fecha_original.strftime("%d/%m/%Y %H:%M") if fecha_original else "—"
+
+                # Resumen de la factura encontrada
+                with st.container(border=True):
+                    rc1, rc2, rc3 = st.columns(3)
+                    rc1.markdown(f"**Fac N°:** {venta_r['numero_factura']}")
+                    rc2.markdown(f"**Fecha original:** {fecha_display}")
+                    rc3.markdown(f"**Estado:** `{venta_r.get('estado_lab', '—')}`")
+                    rc1.markdown(f"**Titular:** {venta_r['titular_nombre']}")
+                    rc2.markdown(f"**Total:** ${format_currency_co(int(venta_r.get('total', 0)))}")
+                    rc3.markdown(f"**Saldo:** ${format_currency_co(int(venta_r.get('saldo', 0)))}")
+                    st.markdown(f"**Detalle:** {venta_r.get('descripcion', '—')}")
+
+                # Cargar datos del paciente
+                pac_doc = venta_r.get("paciente_documento", "")
+                pac_data_r = supabase.table("pacientes").select("*").eq("documento", pac_doc).execute().data
+                paciente_r = pac_data_r[0] if pac_data_r else {
+                    "nombre_completo": venta_r.get("titular_nombre", ""),
+                    "documento": pac_doc, "direccion": "", "celular": ""
+                }
+
+                # Buscar la historia clínica más cercana (anterior o igual) a fecha_venta
+                historias_r = supabase.table("historias_clinicas").select("*").eq(
+                    "paciente_documento", pac_doc
+                ).order("fecha", desc=True).execute().data or []
+
+                hist_r = None
+                if historias_r and fecha_original:
+                    # La más reciente que sea anterior o igual a la fecha de la venta
+                    for h in historias_r:
+                        h_raw = h.get("fecha", "")
+                        try:
+                            if "T" in h_raw:
+                                h_dt = datetime.fromisoformat(h_raw.replace("Z", "+00:00")).replace(tzinfo=None)
+                            else:
+                                h_dt = datetime.strptime(h_raw[:10], "%Y-%m-%d")
+                            if h_dt <= fecha_original:
+                                hist_r = h
+                                break
+                        except Exception:
+                            continue
+                if not hist_r and historias_r:
+                    hist_r = historias_r[-1]  # Fallback: la más antigua disponible
+                if not hist_r:
+                    hist_r = {"rx_final_od": "", "rx_final_oi": "", "dp": "", "adicion": "", "observaciones": ""}
+
+                st.markdown("---")
+                st.markdown("**Selecciona los documentos a descargar:**")
+                d1, d2, d3 = st.columns(3)
+
+                # ── Documento 1: Factura (2 copias) ──────────────────────────────
+                with d1:
+                    with st.container(border=True):
+                        st.markdown("**📄 Factura**")
+                        st.caption("2 copias: cliente + óptica/caja")
+                        try:
+                            pdf_f = FPDF(orientation="P", unit="mm", format="Letter")
+                            pdf_f.set_compression(True)
+                            pdf_f.add_page()
+                            dibujar_media_carta(pdf_f, paciente_r, hist_r, venta_r, "COPIA CLIENTE", fecha_impresion=fecha_original)
+                            pdf_f.add_page()
+                            dibujar_media_carta(pdf_f, paciente_r, hist_r, venta_r, "COPIA ÓPTICA / CAJA", fecha_impresion=fecha_original)
+                            pdf_bytes_f = bytes(pdf_f.output())
+                            st.download_button(
+                                "⬇️ Descargar Factura",
+                                data=pdf_bytes_f,
+                                file_name=f"Factura_{venta_r['numero_factura']}.pdf",
+                                mime="application/pdf",
+                                use_container_width=True,
+                                key=f"dl_fac_{venta_r['numero_factura']}"
+                            )
+                        except Exception as e:
+                            st.error(f"Error generando factura: {e}")
+
+                # ── Documento 2: Orden de laboratorio ────────────────────────────
+                with d2:
+                    with st.container(border=True):
+                        st.markdown("**🔬 Orden de Laboratorio**")
+                        st.caption("Con Rx y datos del trabajo")
+                        try:
+                            pdf_o = FPDF(orientation="P", unit="mm", format="Letter")
+                            pdf_o.set_compression(True)
+                            pdf_o.add_page()
+                            dibujar_orden_laboratorio(pdf_o, paciente_r, hist_r, venta_r, fecha_impresion=fecha_original)
+                            pdf_bytes_o = bytes(pdf_o.output())
+                            st.download_button(
+                                "⬇️ Descargar Orden de Lab",
+                                data=pdf_bytes_o,
+                                file_name=f"OrdenLab_{venta_r['numero_factura']}.pdf",
+                                mime="application/pdf",
+                                use_container_width=True,
+                                key=f"dl_ord_{venta_r['numero_factura']}"
+                            )
+                        except Exception as e:
+                            st.error(f"Error generando orden: {e}")
+
+                # ── Documento 3: Prescripción clínica ────────────────────────────
+                with d3:
+                    with st.container(border=True):
+                        st.markdown("**📋 Prescripción Clínica**")
+                        st.caption("Receta del optómetra")
+                        try:
+                            # Reconstruir detalles_rx desde la historia clínica
+                            rx_od_r = hist_r.get("rx_final_od", "") or ""
+                            rx_oi_r = hist_r.get("rx_final_oi", "") or ""
+                            def _parse_rx(rx_str):
+                                parts = str(rx_str).replace("(", "").replace(")", "").split()
+                                sph = parts[0] if len(parts) > 0 else ""
+                                cyl = parts[1] if len(parts) > 1 else ""
+                                axis = parts[2] if len(parts) > 2 else ""
+                                return sph, cyl, axis
+                            esf_od_r, cil_od_r, eje_od_r = _parse_rx(rx_od_r)
+                            esf_oi_r, cil_oi_r, eje_oi_r = _parse_rx(rx_oi_r)
+                            dp_r = hist_r.get("dp", "") or ""
+                            dp_parts = str(dp_r).split("/")
+                            dp_od_r = dp_parts[0].strip() if dp_parts else ""
+                            dp_oi_r = dp_parts[1].strip() if len(dp_parts) > 1 else dp_od_r
+                            add_r = hist_r.get("adicion", "") or ""
+                            detalles_rx_r = {
+                                "esf_od": esf_od_r, "cil_od": cil_od_r, "eje_od": eje_od_r,
+                                "esf_oi": esf_oi_r, "cil_oi": cil_oi_r, "eje_oi": eje_oi_r,
+                                "dp_od": dp_od_r, "dp_oi": dp_oi_r,
+                                "adicion": add_r, "av_lejos": "20/20", "av_cerca": "",
+                                "tipo_lente": "", "uso": "", "filtro": "", "prox_control": ""
+                            }
+                            pdf_p = FPDF(orientation="P", unit="mm", format="Letter")
+                            pdf_p.set_compression(True)
+                            pdf_p.add_page()
+                            dibujar_prescripcion_clinica(pdf_p, paciente_r, hist_r, detalles_rx_r, fecha_impresion=fecha_original)
+                            pdf_bytes_p = bytes(pdf_p.output())
+                            st.download_button(
+                                "⬇️ Descargar Prescripción",
+                                data=pdf_bytes_p,
+                                file_name=f"Prescripcion_{venta_r['numero_factura']}.pdf",
+                                mime="application/pdf",
+                                use_container_width=True,
+                                key=f"dl_presc_{venta_r['numero_factura']}"
+                            )
+                        except Exception as e:
+                            st.error(f"Error generando prescripción: {e}")
+
+                if not hist_r.get("rx_final_od") and not hist_r.get("rx_final_oi"):
+                    st.warning("⚠️ No se encontró historia clínica con Rx para este paciente. La orden de laboratorio y prescripción irán sin datos de fórmula.")
+
 
 # ------------------------------------------
 # MÓDULO 3: CUADRE DE CAJA (DD/MM/YYYY)
