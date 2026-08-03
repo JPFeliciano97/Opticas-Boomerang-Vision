@@ -8,12 +8,17 @@ import pandas as pd
 import altair as alt
 from dotenv import load_dotenv
 from fpdf import FPDF
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import bcrypt
 
 # =====================================================================
 # 1. CONFIGURACIÓN INICIAL DE PÁGINA Y ESTILOS (MODO CLARO CON ACENTOS SUAVES)
 # =====================================================================
+# Zona horaria Colombia GMT-5
+def now_co():
+    """Retorna datetime actual en hora Colombia (GMT-5)."""
+    return datetime.now(timezone(timedelta(hours=-5)))
+
 st.set_page_config(page_title="Boomerang Visión", layout="wide", page_icon="👓", initial_sidebar_state="expanded")
 
 # ============ CSS MEJORADO ============
@@ -369,21 +374,25 @@ st.markdown("""
            en su propio stVerticalBlockBorderWrapper. Estos selectores de
            atributo tienen mayor especificidad que la regla base de arriba
            y sobreescriben el border-left con el color del estado. */
-        [data-testid="stVerticalBlockBorderWrapper"][data-estado="Pendiente de enviar"] {
+        [data-testid="stVerticalBlockBorderWrapper"][data-estado="Pendiente de enviar"],
+        [data-testid="stVerticalBlockBorderWrapper"][data-estado="Pendiente de enviar"] > div[data-testid="stVerticalBlock"] {
             border-left: 6px solid #E61B23 !important;
-            background-color: #fff8f8 !important;
+            background-color: #fff5f5 !important;
         }
-        [data-testid="stVerticalBlockBorderWrapper"][data-estado="En Laboratorio"] {
+        [data-testid="stVerticalBlockBorderWrapper"][data-estado="En Laboratorio"],
+        [data-testid="stVerticalBlockBorderWrapper"][data-estado="En Laboratorio"] > div[data-testid="stVerticalBlock"] {
             border-left: 6px solid #ff9800 !important;
-            background-color: #fffbf4 !important;
+            background-color: #fffaf2 !important;
         }
-        [data-testid="stVerticalBlockBorderWrapper"][data-estado="Recibido en Óptica"] {
+        [data-testid="stVerticalBlockBorderWrapper"][data-estado="Recibido en Óptica"],
+        [data-testid="stVerticalBlockBorderWrapper"][data-estado="Recibido en Óptica"] > div[data-testid="stVerticalBlock"] {
             border-left: 6px solid #2196F3 !important;
-            background-color: #f5f9ff !important;
+            background-color: #f3f8ff !important;
         }
-        [data-testid="stVerticalBlockBorderWrapper"][data-estado="Entregado"] {
+        [data-testid="stVerticalBlockBorderWrapper"][data-estado="Entregado"],
+        [data-testid="stVerticalBlockBorderWrapper"][data-estado="Entregado"] > div[data-testid="stVerticalBlock"] {
             border-left: 6px solid #4CAF50 !important;
-            background-color: #f6fdf6 !important;
+            background-color: #f4fdf4 !important;
         }
 
         /* --- 13. Spinner / Progress --- */
@@ -503,7 +512,7 @@ if st.session_state.user_info is None and "auth_token" in st.query_params:
         token = st.query_params["auth_token"]
         decoded_token = base64.b64decode(token).decode("utf-8")
         token_user_id, token_date = decoded_token.split("||")
-        if token_date == datetime.now().strftime("%Y-%m-%d") and token_user_id in USUARIOS_PERMITIDOS:
+        if token_date == now_co().strftime("%Y-%m-%d") and token_user_id in USUARIOS_PERMITIDOS:
             st.session_state.user_info = USUARIOS_PERMITIDOS[token_user_id]
     except Exception: pass
 
@@ -527,7 +536,7 @@ if not st.session_state.user_info:
                 user_clean = user_input.strip().lower()
                 if user_clean in USUARIOS_PERMITIDOS and bcrypt.checkpw(pass_input.strip().encode(), USUARIOS_PERMITIDOS[user_clean]["hash"].encode()):
                     st.session_state.user_info = USUARIOS_PERMITIDOS[user_clean]
-                    nuevo_token = base64.b64encode(f"{user_clean}||{datetime.now().strftime('%Y-%m-%d')}".encode("utf-8")).decode("utf-8")
+                    nuevo_token = base64.b64encode(f"{user_clean}||{now_co().strftime('%Y-%m-%d')}".encode("utf-8")).decode("utf-8")
                     st.query_params["auth_token"] = nuevo_token
                     st.rerun()
                 else:
@@ -658,7 +667,7 @@ def dibujar_media_carta(pdf, paciente, historia, venta, tipo_documento, logo_pat
     pdf.set_font("helvetica", "", 9); pdf.set_xy(10, 39)
     pdf.cell(20, 6, "FECHA", border=1)
     pdf.set_font("helvetica", "B", 9)
-    pdf.cell(65, 6, datetime.now().strftime("%d/%m/%Y %H:%M"), border=1)
+    pdf.cell(65, 6, now_co().strftime("%d/%m/%Y %H:%M"), border=1)
     
     pdf.set_font("helvetica", "", 9)
     pdf.cell(55, 6, "FACTURA", border=1, align="R")
@@ -740,7 +749,7 @@ def dibujar_orden_laboratorio(pdf, paciente, historia, venta, tipo_orden="", log
     
     pdf.set_font("helvetica", "", 8.5)
     pdf.cell(15, 6, "FECHA", border="T,B")
-    pdf.set_font("helvetica", "", 9); pdf.cell(55, 6, datetime.now().strftime("%d/%m/%Y %H:%M"), border="T,B", ln=1)
+    pdf.set_font("helvetica", "", 9); pdf.cell(55, 6, now_co().strftime("%d/%m/%Y %H:%M"), border="T,B", ln=1)
     
     pdf.set_xy(10, 38); pdf.set_font("helvetica", "", 8.5); pdf.cell(20, 6, "NOMBRE:  ", border="B")
     pdf.set_font("helvetica", "B", 9); pdf.cell(100, 6, venta['titular_nombre'].upper(), border="B")
@@ -800,7 +809,7 @@ def dibujar_prescripcion_clinica(pdf, paciente, historia, detalles_rx, logo_path
     pdf.ln(5); y_start = 28
     pdf.set_xy(10, y_start); pdf.set_font("helvetica", "I", 8)
     pdf.cell(110, 4, "Nombre del paciente:", border="L,T,R"); pdf.cell(25, 4, "Fecha", border=1, align="C")
-    pdf.set_font("helvetica", "", 9); pdf.cell(60, 4, datetime.now().strftime("%d/%m/%Y %I:%M %p"), border=1, align="C", ln=1)
+    pdf.set_font("helvetica", "", 9); pdf.cell(60, 4, now_co().strftime("%d/%m/%Y %I:%M %p"), border=1, align="C", ln=1)
 
     pdf.set_x(10); pdf.set_font("helvetica", "", 10)
     pdf.cell(110, 6, paciente['nombre_completo'].upper(), border="L,B,R")
@@ -997,9 +1006,11 @@ with st.sidebar:
     # Alerta de stock crítico (productos en 0)
     if user_rol in ["admin", "asesor_limitado"]:
         try:
-            inv_sidebar = supabase.table("inventario").select("codigo,marca,cantidad").execute().data or []
-            sin_stock  = [p for p in inv_sidebar if int(p.get("cantidad", 0)) == 0]
-            bajo_stock = [p for p in inv_sidebar if 0 < int(p.get("cantidad", 0)) <= 2]
+            inv_sidebar = supabase.table("inventario").select("codigo,marca,cantidad,categoria").execute().data or []
+            # Excluir Monturas del alerta de stock (rotan constantemente)
+            inv_no_montura = [p for p in inv_sidebar if str(p.get("categoria", "")).lower() != "montura"]
+            sin_stock  = [p for p in inv_no_montura if int(p.get("cantidad", 0)) == 0]
+            bajo_stock = [p for p in inv_no_montura if 0 < int(p.get("cantidad", 0)) <= 2]
             if sin_stock:
                 st.error(f"🚨 **{len(sin_stock)} producto(s) sin stock**")
                 with st.expander("Ver productos sin stock"):
@@ -1051,7 +1062,7 @@ if modulo == "👨‍⚕️ Consultorio":
             celular = col3.text_input("Celular *", key="cel_input")
             direccion = col1.text_input("Dirección", key="dir_input")
             ocupacion = col2.text_input("Ocupación", key="ocu_input")
-            fecha_nacimiento = col3.date_input("Fecha Nacimiento", value=datetime(1995, 1, 1), min_value=datetime(1900, 1, 1), max_value=datetime.now(), format="DD/MM/YYYY")
+            fecha_nacimiento = col3.date_input("Fecha Nacimiento", value=datetime(1995, 1, 1), min_value=datetime(1900, 1, 1), max_value=now_co().replace(tzinfo=None), format="DD/MM/YYYY")
             edad = col1.text_input("Edad", key="edad_input")
             
         col_mot, col_ctrl = st.columns([2, 1])
@@ -1104,10 +1115,10 @@ if modulo == "👨‍⚕️ Consultorio":
                     cel_digits = cel_digits[2:]
                 cel_up = cel_digits if cel_digits else str(celular).upper()
                 
-                try: supabase.table("pacientes").upsert({"documento": doc_up, "nombre_completo": nom_up, "celular": cel_up, "ocupacion": str(ocupacion).upper(), "direccion": str(direccion).upper(), "edad": str(edad).upper(), "fecha_nacimiento": fecha_nacimiento.strftime("%Y-%m-%d"), "habeas_data": True, "habeas_data_fecha": datetime.now().isoformat()}).execute()
-                except Exception: supabase.table("pacientes").upsert({"documento": doc_up, "nombre_completo": nom_up, "celular": cel_up, "ocupacion": str(ocupacion).upper(), "direccion": str(direccion).upper(), "fecha_nacimiento": fecha_nacimiento.strftime("%Y-%m-%d"), "habeas_data": True, "habeas_data_fecha": datetime.now().isoformat()}).execute()
+                try: supabase.table("pacientes").upsert({"documento": doc_up, "nombre_completo": nom_up, "celular": cel_up, "ocupacion": str(ocupacion).upper(), "direccion": str(direccion).upper(), "edad": str(edad).upper(), "fecha_nacimiento": fecha_nacimiento.strftime("%Y-%m-%d"), "habeas_data": True, "habeas_data_fecha": now_co().isoformat()}).execute()
+                except Exception: supabase.table("pacientes").upsert({"documento": doc_up, "nombre_completo": nom_up, "celular": cel_up, "ocupacion": str(ocupacion).upper(), "direccion": str(direccion).upper(), "fecha_nacimiento": fecha_nacimiento.strftime("%Y-%m-%d"), "habeas_data": True, "habeas_data_fecha": now_co().isoformat()}).execute()
 
-                supabase.table("historias_clinicas").insert({"paciente_documento": doc_up, "motivo_consulta": str(motivo).upper(), "rx_final_od": rx_od_final, "rx_final_oi": rx_oi_final, "dp": dp_combined, "ultimo_control": str(ultimo_control).upper(), "observaciones": str(obs).upper(), "adicion": f"{adicion:+.2f}" if adicion > 0.0 else "", "fecha": datetime.now().isoformat()}).execute()
+                supabase.table("historias_clinicas").insert({"paciente_documento": doc_up, "motivo_consulta": str(motivo).upper(), "rx_final_od": rx_od_final, "rx_final_oi": rx_oi_final, "dp": dp_combined, "ultimo_control": str(ultimo_control).upper(), "observaciones": str(obs).upper(), "adicion": f"{adicion:+.2f}" if adicion > 0.0 else "", "fecha": now_co().isoformat()}).execute()
                 st.session_state.global_toast = f"Historia de {nom_up} guardada."
                 st.session_state.trigger_clear_doc = True
                 st.rerun()
@@ -1183,7 +1194,7 @@ elif modulo == "🛍️ Óptica y Facturación":
                     if st.button("Guardar y Alimentar Base de Datos") and q_nom and q_cel:
                         supabase.table("pacientes").insert({
                             "documento": search_doc, "nombre_completo": q_nom, "celular": q_cel, 
-                            "direccion": q_dir, "habeas_data": True, "habeas_data_fecha": datetime.now().isoformat()
+                            "direccion": q_dir, "habeas_data": True, "habeas_data_fecha": now_co().isoformat()
                         }).execute()
                         st.success("¡Paciente guardado exitosamente!")
                         st.rerun()
@@ -1348,7 +1359,7 @@ elif modulo == "🛍️ Óptica y Facturación":
                                 "titular_doc": titular_doc, "titular_tel": titular_tel, "descripcion": desc_producto, "subtotal": sub_val,
                                 "descuento": desc_calc, "total": tot_neto, "abono": abono_val, "saldo": sal_pend,
                                 "fecha_entrega": fecha_entrega, "altura_focal": altura_focal, "metodo_pago": metodo_pago,
-                                "estado": "ACTIVA", "estado_lab": "Pendiente de enviar", "fecha_venta": datetime.now().isoformat()
+                                "estado": "ACTIVA", "estado_lab": "Pendiente de enviar", "fecha_venta": now_co().isoformat()
                             }).execute()
                             
                             if origen_montura == "Montura de Vitrina" and selected_frame_code:
@@ -1465,7 +1476,7 @@ elif modulo == "🛍️ Óptica y Facturación":
                             "paciente_documento": fac_pen['paciente_documento'], 
                             "monto_pagado": monto_rec, 
                             "metodo_pago": metodo_rec, 
-                            "fecha_pago": datetime.now().isoformat()
+                            "fecha_pago": now_co().isoformat()
                         }).execute()
                         
                         st.session_state.global_toast = f"Pago registrado. Nuevo saldo: ${format_currency_co(nuevo_saldo)} | Estado: {nuevo_est_recaudo}"
@@ -1507,7 +1518,7 @@ elif modulo == "📊 Cuadre de Caja Físico":
     
     col_fc1, col_fc2 = st.columns([2, 1])
     with col_fc1:
-        fecha_consulta = st.date_input("Selecciona la fecha a consultar:", datetime.now().date(), format="DD/MM/YYYY")
+        fecha_consulta = st.date_input("Selecciona la fecha a consultar:", now_co().date(), format="DD/MM/YYYY")
     with col_fc2:
         base_caja_inicial = st.number_input("Base Inicial en Gaveta ($)", min_value=0, value=50000, step=10000)
 
@@ -1570,7 +1581,7 @@ elif modulo == "📊 Cuadre de Caja Físico":
         if st.button("💾 Guardar Gasto de Caja", type="primary"):
             if not desc_gasto or monto_gasto <= 0: st.warning("⚠️ Ingresa una descripción y valor válidos.")
             else:
-                supabase.table("gastos_caja").insert({"descripcion": desc_gasto, "monto": monto_gasto, "metodo_pago": metodo_gasto, "fecha_gasto": datetime.now().isoformat()}).execute()
+                supabase.table("gastos_caja").insert({"descripcion": desc_gasto, "monto": monto_gasto, "metodo_pago": metodo_gasto, "fecha_gasto": now_co().isoformat()}).execute()
                 st.session_state.global_toast = "Gasto registrado correctamente."
                 st.session_state.trigger_clear_gastos = True
                 st.rerun()
@@ -1594,7 +1605,12 @@ elif modulo == "📦 Inventario":
                 venta = int(p.get("precio_venta", 0))
                 inv_total += (cant * compra)
                 potencial += (cant * venta)
-                tabla_inv.append({"Código": str(p.get("codigo", "")), "Categoría": str(p.get("categoria", "")), "Marca": str(p.get("marca", "")).upper(), "Descripción": str(p.get("descripcion", "")).upper(), "Cant.": cant, "Costo": compra, "P. Venta": venta})
+                fi_raw = p.get("fecha_ingreso", "")
+                fi_fmt = ""
+                if fi_raw:
+                    try: fi_fmt = datetime.strptime(str(fi_raw)[:10], "%Y-%m-%d").strftime("%d/%m/%Y")
+                    except: fi_fmt = str(fi_raw)[:10]
+                tabla_inv.append({"Código": str(p.get("codigo", "")), "Categoría": str(p.get("categoria", "")), "Marca": str(p.get("marca", "")).upper(), "Descripción": str(p.get("descripcion", "")).upper(), "Cant.": cant, "Costo": compra, "P. Venta": venta, "Ingreso": fi_fmt})
             
             df_inv = pd.DataFrame(tabla_inv)
             
@@ -1659,7 +1675,7 @@ elif modulo == "📦 Inventario":
                                     "codigo": r, "categoria": "Montura", "marca": inv_marca, 
                                     "descripcion": desc_final, "proveedor": inv_prov, 
                                     "cantidad": 1, "precio_compra": val_compra, "precio_venta": val_venta, 
-                                    "fecha_ingreso": datetime.now().isoformat()
+                                    "fecha_ingreso": now_co().isoformat()
                                 }).execute()
                             st.session_state.global_toast = f"{inv_cant} montura(s) registrada(s) correctamente."
                             st.rerun()
@@ -1688,7 +1704,7 @@ elif modulo == "📦 Inventario":
                                 "codigo": inv_codigo, "categoria": inv_categoria, "marca": inv_marca, 
                                 "descripcion": inv_desc, "proveedor": inv_prov, "cantidad": inv_cant, 
                                 "precio_compra": val_compra, "precio_venta": val_venta, 
-                                "fecha_ingreso": datetime.now().isoformat()
+                                "fecha_ingreso": now_co().isoformat()
                             }).execute()
                             st.session_state.global_toast = f"Producto '{inv_codigo}' registrado."
                             st.rerun()
@@ -1788,6 +1804,9 @@ elif modulo == "🔬 Control de Laboratorios":
                                     while (cur && cur !== document.body) {{
                                         if (cur.getAttribute && cur.getAttribute('data-testid') === 'stVerticalBlockBorderWrapper') {{
                                             cur.setAttribute('data-estado', '{est_act}');
+                                            // Propaga color al stVerticalBlock interior
+                                            var inner = cur.querySelector('[data-testid="stVerticalBlock"]');
+                                            if (inner) {{ inner.style.setProperty('background-color', '{card_bg}', 'important'); }}
                                             clearInterval(interval);
                                             return;
                                         }}
@@ -1837,7 +1856,9 @@ elif modulo == "🔬 Control de Laboratorios":
                         st.markdown(f"**Titular:** {t['titular_nombre']}")
                         st.markdown(f"**Detalle:** {t['descripcion']}")
                     with c2:
-                        st.markdown(f"**Entrega:** `{t['fecha_entrega']}`")
+                        entrega_val = t.get('fecha_entrega', '') or ''
+                        entrega_txt = entrega_val.strip() if entrega_val.strip() else "—"
+                        st.markdown(f"**Entrega:** {entrega_txt}")
                         if int(t.get('saldo', 0)) > 0:
                             st.markdown(f"**Saldo:** ${format_currency_co(int(t['saldo']))}")
                         else:
@@ -1865,7 +1886,7 @@ elif modulo == "🔬 Control de Laboratorios":
 elif modulo == "📅 CRM y Fidelización":
     styled_header("CRM y Retención de Pacientes", "📅")
     
-    hoy = datetime.now()
+    hoy = now_co()
     if hoy.day == 1:
         st.success(f"🔔 **¡Hoy inicia un nuevo mes!** Es el momento perfecto para revisar la lista de cumpleaños y enviar recordatorios de control anual a tus pacientes.")
     
@@ -1932,24 +1953,53 @@ elif modulo == "📅 CRM y Fidelización":
         else: st.info("No hay pacientes registrados con fecha de nacimiento en el mes actual.")
 
     with tab_directorio:
-        busqueda_dir = st.text_input("🔍 Filtrar por nombre o cédula:").upper()
+        POR_PAGINA = 50
+        d_col1, d_col2 = st.columns([3, 1])
+        busqueda_dir = d_col1.text_input("🔍 Filtrar por nombre o cédula:").upper()
+
+        # Construir lista filtrada
         tabla_dir = []
         for p in todos_pacientes:
             fnac_raw = p.get("fecha_nacimiento", "N/A")
             fnac_fmt = "N/A"
             if fnac_raw and fnac_raw != "N/A":
-                try:
-                    fnac_fmt = datetime.strptime(str(fnac_raw)[:10], "%Y-%m-%d").strftime("%d/%m/%Y")
+                try: fnac_fmt = datetime.strptime(str(fnac_raw)[:10], "%Y-%m-%d").strftime("%d/%m/%Y")
                 except: pass
             if not busqueda_dir or busqueda_dir in str(p.get("nombre_completo", "")).upper() or busqueda_dir in str(p.get("documento", "")):
                 tabla_dir.append({"Documento": str(p.get("documento", "")), "Nombre": str(p.get("nombre_completo", "")).upper(), "Celular": p.get("celular", "N/A"), "F. Nacimiento": fnac_fmt, "Habeas Data": "Sí" if p.get("habeas_data") else "No"})
-        
-        if tabla_dir:
-            df_dir = pd.DataFrame(tabla_dir)
-            st.dataframe(df_dir, use_container_width=True)
-            st.download_button("📊 Descargar Directorio (.xlsx)", convert_df_to_excel(df_dir, "Pacientes"), "Directorio.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-        else: st.info("No hay registros que coincidan.")
 
+        total = len(tabla_dir)
+        total_pags = max(1, (total + POR_PAGINA - 1) // POR_PAGINA)
+        if "dir_pagina" not in st.session_state: st.session_state.dir_pagina = 1
+        if busqueda_dir: st.session_state.dir_pagina = 1  # reset al buscar
+
+        pag = st.session_state.dir_pagina
+        inicio = (pag - 1) * POR_PAGINA
+        fin    = inicio + POR_PAGINA
+        pagina_actual = tabla_dir[inicio:fin]
+
+        if tabla_dir:
+            st.caption(f"**{total}** pacientes registrados  •  Página **{pag}** de **{total_pags}**")
+            df_dir = pd.DataFrame(pagina_actual)
+            st.dataframe(df_dir, use_container_width=True)
+
+            # Controles de paginación
+            if total_pags > 1:
+                nav1, nav2, nav3, nav4, nav5 = st.columns([1, 1, 2, 1, 1])
+                if nav1.button("⏮ Primera", key="dir_first", disabled=(pag==1)):
+                    st.session_state.dir_pagina = 1; st.rerun()
+                if nav2.button("◀ Anterior", key="dir_prev", disabled=(pag==1)):
+                    st.session_state.dir_pagina = pag - 1; st.rerun()
+                nav3.markdown(f"<div style='text-align:center; padding-top:8px;'>{pag} / {total_pags}</div>", unsafe_allow_html=True)
+                if nav4.button("Siguiente ▶", key="dir_next", disabled=(pag==total_pags)):
+                    st.session_state.dir_pagina = pag + 1; st.rerun()
+                if nav5.button("Última ⏭", key="dir_last", disabled=(pag==total_pags)):
+                    st.session_state.dir_pagina = total_pags; st.rerun()
+
+            df_full = pd.DataFrame(tabla_dir)
+            st.download_button("📊 Descargar Directorio completo (.xlsx)", convert_df_to_excel(df_full, "Pacientes"), "Directorio.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        else:
+            st.info("No hay registros que coincidan.")
     with tab_plantillas:
         st.markdown("### Personaliza tus Mensajes de WhatsApp")
         st.caption("Usa la etiqueta [NOMBRE] para insertar automáticamente el nombre del paciente.")
@@ -1970,7 +2020,7 @@ elif modulo == "📈 Analítica y Estadísticas":
     styled_header("Dashboard Analítico y Respaldo General", "📈")
     
     ventas_db = supabase.table("ventas_facturacion").select("*").neq("estado", "ANULADA").execute().data or []
-    hoy_an = datetime.now()
+    hoy_an = now_co()
     mes_actual = hoy_an.strftime("%Y-%m")
     ventas_mes = [v for v in ventas_db if str(v.get("fecha_venta","")).startswith(mes_actual)]
     total_mes = sum(int(v.get("total",0)) for v in ventas_mes)
@@ -2118,7 +2168,7 @@ elif modulo == "📈 Analítica y Estadísticas":
             st.download_button(
                 label="📥 Descargar Master Backup (.xlsx)",
                 data=excel_bytes,
-                file_name=f"MasterBackup_BoomerangVision_{datetime.now().strftime('%d-%m-%Y')}.xlsx",
+                file_name=f"MasterBackup_BoomerangVision_{now_co().strftime('%d-%m-%Y')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
     else:
