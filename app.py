@@ -1438,10 +1438,17 @@ elif modulo == "🛍️ Óptica y Facturación":
         st.markdown("<h4 style='color: #000000;'>💵 Recaudar Saldo y Cambiar Estado a Entregado</h4>", unsafe_allow_html=True)
         fac_search = st.text_input("Ingrese el N° de Factura o Cédula a buscar:").upper()
         if fac_search:
+            # Primero buscamos la factura SIN filtrar por saldo, para detectar si ya está pagada
+            res_cualquier = supabase.table("ventas_facturacion").select("*").or_(f"numero_factura.eq.{fac_search},paciente_documento.eq.{fac_search}").neq("estado", "ANULADA").order("fecha_venta", desc=True).limit(1).execute()
             res_saldo = supabase.table("ventas_facturacion").select("*").or_(f"numero_factura.eq.{fac_search},paciente_documento.eq.{fac_search}").gt("saldo", 0).neq("estado", "ANULADA").execute()
-            if res_saldo.data:
+
+            if res_cualquier.data and not res_saldo.data:
+                # Factura encontrada pero saldo = 0 → ya está pagada
+                fac_pagada = res_cualquier.data[0]
+                st.success(f"✅ La Factura N° **{fac_pagada['numero_factura']}** de **{fac_pagada['titular_nombre']}** ya se encuentra **cancelada en su totalidad** (Total: ${format_currency_co(int(fac_pagada.get('total', 0)))}). No tiene saldo pendiente.")
+            elif res_saldo.data:
                 fac_pen = res_saldo.data[0]
-                saldo_actual_int = int(fac_pen['saldo']) 
+                saldo_actual_int = int(fac_pen['saldo'])
                 st.info(f"📌 Factura N° **{fac_pen['numero_factura']}** | Paciente: **{fac_pen['titular_nombre']}** | Estado Actual: `{fac_pen.get('estado_lab', 'Pendiente')}`")
                 st.warning(f"**Saldo Pendiente Actual:** ${format_currency_co(saldo_actual_int)}")
                 
@@ -1483,7 +1490,7 @@ elif modulo == "🛍️ Óptica y Facturación":
                         st.session_state.trigger_clear_recaudo = True
                         st.rerun()
             else:
-                st.info("No se encontraron facturas activas con saldo pendiente para ese criterio.")
+                st.warning("⚠️ No se encontraron facturas para ese número de factura o cédula.")
 
     with tab_anular:
         st.markdown("<h4 style='color: #000000;'>🚫 Anulación de Facturas</h4>", unsafe_allow_html=True)
@@ -1903,30 +1910,20 @@ elif modulo == "🔬 Control de Trabajos":
                             import urllib.parse as _up
                             wa_url = f"https://wa.me/{cel_wa}?text={_up.quote(msg_wa)}"
                             st.markdown(f"""
-                                <div style="margin-top:10px;">
+                                <div style="margin-top:12px; width:100%; box-sizing:border-box;">
                                     <a href="{wa_url}" target="_blank" style="
-                                        display: inline-flex; align-items: center; gap: 8px;
+                                        display: flex; align-items: center; justify-content: center;
+                                        gap: 8px; width: 100%; box-sizing: border-box;
                                         background-color: #25D366; color: #ffffff;
-                                        padding: 8px 16px; border-radius: 6px;
-                                        font-weight: 700; font-size: 0.88em;
-                                        text-decoration: none; letter-spacing: 0.3px;
-                                        box-shadow: 0 2px 6px rgba(37,211,102,0.35);
+                                        padding: 9px 12px; border-radius: 6px;
+                                        font-weight: 700; font-size: 0.85em;
+                                        text-decoration: none; letter-spacing: 0.2px;
+                                        box-shadow: 0 2px 6px rgba(37,211,102,0.30);
                                     ">
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"
-                                             viewBox="0 0 24 24" fill="white">
-                                            <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15
-                                            -.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475
-                                            -.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52
-                                            .149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207
-                                            -.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372
-                                            -.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2
-                                            5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085
-                                            1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/>
-                                            <path d="M12 0C5.373 0 0 5.373 0 12c0 2.123.554 4.116 1.524 5.845L0 24l6.318-1.508
-                                            A11.95 11.95 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818
-                                            a9.808 9.808 0 01-5.032-1.388l-.36-.214-3.733.891.939-3.618-.236-.374
-                                            A9.808 9.808 0 012.182 12C2.182 6.575 6.575 2.182 12 2.182S21.818 6.575
-                                            21.818 12 17.425 21.818 12 21.818z"/>
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15"
+                                             viewBox="0 0 24 24" fill="white" style="flex-shrink:0;">
+                                            <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/>
+                                            <path d="M12 0C5.373 0 0 5.373 0 12c0 2.123.554 4.116 1.524 5.845L0 24l6.318-1.508A11.95 11.95 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.808 9.808 0 01-5.032-1.388l-.36-.214-3.733.891.939-3.618-.236-.374A9.808 9.808 0 012.182 12C2.182 6.575 6.575 2.182 12 2.182S21.818 6.575 21.818 12 17.425 21.818 12 21.818z"/>
                                         </svg>
                                         Avisar al paciente por WhatsApp
                                     </a>
