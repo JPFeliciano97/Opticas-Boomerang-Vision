@@ -957,7 +957,7 @@ user_id = st.session_state.user_info["id"]
 
 clinica_mods = ["👨‍⚕️ Consultorio"] if (user_rol == "admin" and user_id in ["1022396649", "1024585129"]) or user_rol == "doctor_limitado" else []
 comercial_mods = ["🛍️ Óptica y Facturación", "📊 Cuadre de Caja Físico"] if user_rol in ["admin", "asesor_limitado"] else []
-operaciones_mods = ["📦 Inventario", "🔬 Control de Laboratorios"] if user_rol in ["admin", "asesor_limitado"] else []
+operaciones_mods = ["📦 Inventario", "🔬 Control de Trabajos"] if user_rol in ["admin", "asesor_limitado"] else []
 admin_mods = ["📅 CRM y Fidelización", "📈 Analítica y Estadísticas"] if user_rol == "admin" else []
 
 all_mods = clinica_mods + comercial_mods + operaciones_mods + admin_mods
@@ -1733,10 +1733,10 @@ elif modulo == "📦 Inventario":
                             st.rerun()
 
 # ------------------------------------------
-# MÓDULO 5: CONTROL DE LABORATORIO
+# MÓDULO 5: CONTROL DE TRABAJOS
 # ------------------------------------------
-elif modulo == "🔬 Control de Laboratorios":
-    styled_header("Trazabilidad y Laboratorios", "🔬")
+elif modulo == "🔬 Control de Trabajos":
+    styled_header("Control de Trabajos", "🔬")
     
     tab_trabajos, tab_labs = st.tabs(["📋 Control de Trabajos", "⚙️ Gestionar Laboratorios"])
     
@@ -1877,6 +1877,63 @@ elif modulo == "🔬 Control de Laboratorios":
                                 supabase.table("ventas_facturacion").update({"estado_lab": nuevo_est, "laboratorio": nuevo_lab_sel if nuevo_lab_sel != "NO ASIGNADO" else None}).eq("numero_factura", fac_id).execute()
                                 st.session_state.global_toast = f"Trabajo actualizado a: {nuevo_est}"
                                 st.rerun()
+
+                        # Botón WhatsApp — aparece solo cuando el estado es "Recibido en Óptica"
+                        if est_act == "Recibido en Óptica":
+                            nombre_pac = str(t.get("titular_nombre", "")).split()[0].capitalize()
+                            # El campo de teléfono en ventas_facturacion se llama "titular_tel"
+                            celular_pac = str(t.get("titular_tel", t.get("celular", ""))).strip()
+                            # Si no hay tel en la factura, buscar en tabla pacientes
+                            if not celular_pac or celular_pac in ("None", ""):
+                                pac_data = supabase.table("pacientes").select("celular").eq("documento", str(t.get("paciente_documento",""))).execute().data
+                                celular_pac = str(pac_data[0].get("celular", "")) if pac_data else ""
+                            # Normalizar número: 10 dígitos colombianos → agregar prefijo 57
+                            cel_digits = "".join(filter(str.isdigit, celular_pac))
+                            if cel_digits.startswith("57") and len(cel_digits) == 12:
+                                cel_wa = cel_digits
+                            elif len(cel_digits) == 10:
+                                cel_wa = "57" + cel_digits
+                            else:
+                                cel_wa = cel_digits
+                            msg_wa = (
+                                f"¡Hola {nombre_pac}! Te saludamos de Boomerang Visión 👓. "
+                                f"Te informamos que tus gafas ya se encuentran listas para retirar "
+                                f"en nuestra óptica. ¡Te esperamos!"
+                            )
+                            import urllib.parse as _up
+                            wa_url = f"https://wa.me/{cel_wa}?text={_up.quote(msg_wa)}"
+                            st.markdown(f"""
+                                <div style="margin-top:10px;">
+                                    <a href="{wa_url}" target="_blank" style="
+                                        display: inline-flex; align-items: center; gap: 8px;
+                                        background-color: #25D366; color: #ffffff;
+                                        padding: 8px 16px; border-radius: 6px;
+                                        font-weight: 700; font-size: 0.88em;
+                                        text-decoration: none; letter-spacing: 0.3px;
+                                        box-shadow: 0 2px 6px rgba(37,211,102,0.35);
+                                    ">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"
+                                             viewBox="0 0 24 24" fill="white">
+                                            <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15
+                                            -.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475
+                                            -.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52
+                                            .149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207
+                                            -.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372
+                                            -.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2
+                                            5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085
+                                            1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/>
+                                            <path d="M12 0C5.373 0 0 5.373 0 12c0 2.123.554 4.116 1.524 5.845L0 24l6.318-1.508
+                                            A11.95 11.95 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818
+                                            a9.808 9.808 0 01-5.032-1.388l-.36-.214-3.733.891.939-3.618-.236-.374
+                                            A9.808 9.808 0 012.182 12C2.182 6.575 6.575 2.182 12 2.182S21.818 6.575
+                                            21.818 12 17.425 21.818 12 21.818z"/>
+                                        </svg>
+                                        Avisar al paciente por WhatsApp
+                                    </a>
+                                </div>
+                            """, unsafe_allow_html=True)
+                            if not cel_wa or len(cel_wa) < 10:
+                                st.caption("⚠️ Sin número de celular registrado para este paciente.")
         else:
             st.info("No hay trabajos registrados con esos filtros.")
 
