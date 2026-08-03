@@ -1,9 +1,18 @@
 [theme]
-primaryColor = "#E61B23"
+# Tema nativo de Streamlit — reemplaza ~250 líneas de CSS inyectado.
+# Al definirlo aquí, el motor de temas de Streamlit genera los estilos
+# correctos para TODOS los widgets (inputs, selectbox, multiselect,
+# date_input, etc.) sin necesidad de pelear con !important ni JavaScript.
+base = "light"
+primaryColor = "#E57373"
 backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F4F6F9"
+secondaryBackgroundColor = "#F2F2F2"
 textColor = "#111111"
 font = "sans serif"
 
 [client]
+showErrorDetails = true
 toolbarMode = "minimal"
+
+[server]
+enableStaticServing = true
