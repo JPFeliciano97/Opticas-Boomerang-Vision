@@ -1906,37 +1906,57 @@ elif modulo == "🔬 Control de Trabajos":
                                 f"en nuestra optica. Te esperamos!"
                             )
                             import urllib.parse as _up
-                            wa_url = f"https://wa.me/{cel_wa}?text={_up.quote(msg_wa)}" if cel_wa and len(cel_wa) >= 10 else "#"
-                            # Aviso de sin número también dentro del mismo bloque HTML → layout estable
                             sin_cel = not cel_wa or len(cel_wa) < 10
-                            aviso_html = (
-                                "<p style='margin:6px 0 0 0; font-size:0.78em; color:#b45309; text-align:center;'>"
-                                "Sin numero de celular registrado para este paciente."
-                                "</p>"
+                            wa_url  = f"https://wa.me/{cel_wa}?text={_up.quote(msg_wa)}" if not sin_cel else "#"
+                            btn_opacity = "opacity:0.5;cursor:not-allowed;pointer-events:none;" if sin_cel else ""
+                            aviso_p = (
+                                "<p style='margin:6px 0 0 0;font-size:0.78em;"
+                                "color:#b45309;text-align:center;'>"
+                                "Sin numero de celular registrado para este paciente.</p>"
                             ) if sin_cel else ""
-                            btn_style = "opacity:0.5; cursor:not-allowed; pointer-events:none;" if sin_cel else ""
-                            st.markdown(f"""
-                                <div style="margin-top:12px; width:100%; box-sizing:border-box;">
-                                    <a href="{wa_url}" target="_blank" style="
-                                        display: flex; align-items: center; justify-content: center;
-                                        gap: 8px; width: 100%; box-sizing: border-box;
-                                        background-color: #25D366; color: #ffffff;
-                                        padding: 9px 12px; border-radius: 6px;
-                                        font-weight: 700; font-size: 0.85em;
-                                        text-decoration: none; letter-spacing: 0.2px;
-                                        box-shadow: 0 2px 6px rgba(37,211,102,0.30);
-                                        {btn_style}
-                                    ">
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15"
-                                             viewBox="0 0 24 24" fill="white" style="flex-shrink:0;">
-                                            <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/>
-                                            <path d="M12 0C5.373 0 0 5.373 0 12c0 2.123.554 4.116 1.524 5.845L0 24l6.318-1.508A11.95 11.95 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.808 9.808 0 01-5.032-1.388l-.36-.214-3.733.891.939-3.618-.236-.374A9.808 9.808 0 012.182 12C2.182 6.575 6.575 2.182 12 2.182S21.818 6.575 21.818 12 17.425 21.818 12 21.818z"/>
-                                        </svg>
-                                        Avisar al paciente por WhatsApp
-                                    </a>
-                                    {aviso_html}
-                                </div>
-                            """, unsafe_allow_html=True)
+                            # SVG fuera del f-string para evitar que las llaves de los path
+                            # sean interpretadas como variables de Python
+                            svg_icon = (
+                                '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" '
+                                'viewBox="0 0 24 24" fill="white" style="flex-shrink:0;">'
+                                '<path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967'
+                                '-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164'
+                                '-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475'
+                                '-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606'
+                                '.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497'
+                                '.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207'
+                                '-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01'
+                                '-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479'
+                                ' 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487'
+                                '.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118'
+                                '.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289'
+                                '.173-1.413-.074-.124-.272-.198-.57-.347z"/>'
+                                '<path d="M12 0C5.373 0 0 5.373 0 12c0 2.123.554 4.116'
+                                ' 1.524 5.845L0 24l6.318-1.508A11.95 11.95 0 0012 24'
+                                'c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818'
+                                'a9.808 9.808 0 01-5.032-1.388l-.36-.214-3.733.891'
+                                '.939-3.618-.236-.374A9.808 9.808 0 012.182 12'
+                                'C2.182 6.575 6.575 2.182 12 2.182S21.818 6.575'
+                                ' 21.818 12 17.425 21.818 12 21.818z"/>'
+                                '</svg>'
+                            )
+                            wa_html = (
+                                '<div style="margin-top:12px;width:100%;box-sizing:border-box;">'
+                                f'<a href="{wa_url}" target="_blank" style="'
+                                'display:flex;align-items:center;justify-content:center;'
+                                'gap:8px;width:100%;box-sizing:border-box;'
+                                'background-color:#25D366;color:#ffffff;'
+                                'padding:9px 12px;border-radius:6px;'
+                                'font-weight:700;font-size:0.85em;'
+                                'text-decoration:none;letter-spacing:0.2px;'
+                                f'box-shadow:0 2px 6px rgba(37,211,102,0.30);{btn_opacity}">'
+                                + svg_icon +
+                                'Avisar al paciente por WhatsApp'
+                                '</a>'
+                                + aviso_p +
+                                '</div>'
+                            )
+                            st.markdown(wa_html, unsafe_allow_html=True)
         else:
             st.info("No hay trabajos registrados con esos filtros.")
 
