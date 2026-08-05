@@ -1240,12 +1240,16 @@ def dibujar_prescripcion_clinica(pdf, paciente, historia, detalles_rx, logo_path
     esf_od, cil_od, eje_od = parse_for_grid(historia.get('rx_final_od'))
     pdf.cell(30, 6, esf_od, border=1, align="C"); pdf.cell(30, 6, cil_od, border=1, align="C"); pdf.cell(20, 6, eje_od, border=1, align="C")
     dp_od, dp_oi = parse_dp_individual(historia.get('dp'))
-    pdf.cell(30, 6, dp_od, border=1, align="C"); pdf.cell(40, 6, detalles_rx.get('av_lejos', '').upper(), border=1, align="C", ln=1)
+    # av_od/av_oi (por ojo) tienen prioridad; av_lejos (compartido) queda
+    # como respaldo para llamadas antiguas que no separan por ojo.
+    av_od = detalles_rx.get('av_od') or detalles_rx.get('av_lejos', '')
+    av_oi = detalles_rx.get('av_oi') or detalles_rx.get('av_lejos', '')
+    pdf.cell(30, 6, dp_od, border=1, align="C"); pdf.cell(40, 6, av_od.upper(), border=1, align="C", ln=1)
     
     pdf.set_xy(30, y4+6); pdf.cell(25, 6, "IZQUIERDO", border=1, align="C")
     esf_oi, cil_oi, eje_oi = parse_for_grid(historia.get('rx_final_oi'))
     pdf.cell(30, 6, esf_oi, border=1, align="C"); pdf.cell(30, 6, cil_oi, border=1, align="C"); pdf.cell(20, 6, eje_oi, border=1, align="C")
-    pdf.cell(30, 6, dp_oi, border=1, align="C"); pdf.cell(40, 6, detalles_rx.get('av_lejos', '').upper(), border=1, align="C", ln=1)
+    pdf.cell(30, 6, dp_oi, border=1, align="C"); pdf.cell(40, 6, av_oi.upper(), border=1, align="C", ln=1)
     
     y5 = pdf.get_y(); pdf.set_x(10)
     pdf.cell(20, 12, "CERCA", border=1, align="C")
@@ -1253,14 +1257,16 @@ def dibujar_prescripcion_clinica(pdf, paciente, historia, detalles_rx, logo_path
     pdf.set_xy(30, y5); pdf.cell(25, 6, "DERECHO", border=1, align="C")
     add_str = format_add(historia.get('adicion'))
     cerca_esf = f"{add_str} ADD" if add_str else ""
+    av_cerca_od = detalles_rx.get('av_cerca_od') or detalles_rx.get('av_cerca', '')
+    av_cerca_oi = detalles_rx.get('av_cerca_oi') or detalles_rx.get('av_cerca', '')
     pdf.cell(30, 6, cerca_esf, border=1, align="C"); pdf.cell(30, 6, "", border=1, align="C")
     pdf.cell(20, 6, "", border=1, align="C"); pdf.cell(30, 6, "", border=1, align="C")
-    pdf.cell(40, 6, detalles_rx.get('av_cerca', '').upper() if add_str else "", border=1, align="C", ln=1)
+    pdf.cell(40, 6, av_cerca_od.upper() if add_str else "", border=1, align="C", ln=1)
     
     pdf.set_xy(30, y5+6); pdf.cell(25, 6, "IZQUIERDO", border=1, align="C")
     pdf.cell(30, 6, cerca_esf, border=1, align="C"); pdf.cell(30, 6, "", border=1, align="C")
     pdf.cell(20, 6, "", border=1, align="C"); pdf.cell(30, 6, "", border=1, align="C")
-    pdf.cell(40, 6, detalles_rx.get('av_cerca', '').upper() if add_str else "", border=1, align="C", ln=1)
+    pdf.cell(40, 6, av_cerca_oi.upper() if add_str else "", border=1, align="C", ln=1)
     
     y6 = pdf.get_y(); pdf.set_x(10)
     pdf.cell(35, 6, "CONTROL:", border=1); pdf.cell(60, 6, detalles_rx.get('prox_control', '').upper(), border=1)
@@ -1342,6 +1348,9 @@ if "trigger_clear_doc" in st.session_state and st.session_state.trigger_clear_do
 
 if "trigger_clear_factura" in st.session_state and st.session_state.trigger_clear_factura:
     for k in ["subtotal_input", "abono_input", "descuento_input", "altura_focal_input"]: st.session_state[k] = ""
+    for k in ["esf_od_ext", "cil_od_ext", "esf_oi_ext", "cil_oi_ext", "add_ext"]: st.session_state[k] = 0.0
+    for k in ["eje_od_ext", "eje_oi_ext"]: st.session_state[k] = 0
+    for k in ["av_od_ext", "dp_od_ext", "av_oi_ext", "dp_oi_ext", "av_cerca_od_input", "av_cerca_oi_input"]: st.session_state[k] = ""
     st.session_state.trigger_clear_factura = False
 
 if "trigger_clear_recaudo" in st.session_state and st.session_state.trigger_clear_recaudo:
@@ -1355,6 +1364,42 @@ if "trigger_clear_gastos" in st.session_state and st.session_state.trigger_clear
     st.session_state.monto_gasto_input = ""
     st.session_state.metodo_gasto_input = "EFECTIVO"
     st.session_state.trigger_clear_gastos = False
+
+if "trigger_clear_venta_busqueda" in st.session_state and st.session_state.trigger_clear_venta_busqueda:
+    st.session_state.search_opt = ""
+    st.session_state.trigger_clear_venta_busqueda = False
+
+if "trigger_clear_anular" in st.session_state and st.session_state.trigger_clear_anular:
+    st.session_state.input_anular = ""
+    st.session_state.trigger_clear_anular = False
+
+if "trigger_clear_ajuste" in st.session_state and st.session_state.trigger_clear_ajuste:
+    st.session_state.codigo_ajuste_input = ""
+    st.session_state.ajuste_cantidad = 1
+    st.session_state.trigger_clear_ajuste = False
+
+if "trigger_clear_laboratorio" in st.session_state and st.session_state.trigger_clear_laboratorio:
+    st.session_state.nuevo_lab_input = ""
+    st.session_state.trigger_clear_laboratorio = False
+
+if "trigger_clear_montura" in st.session_state and st.session_state.trigger_clear_montura:
+    for k in ["m_marca", "m_prov", "p_compra_m", "p_venta_m", "m_ref_unico", "m_color_unico", "m_base_ref"]:
+        if k in st.session_state: st.session_state[k] = ""
+    for i in range(st.session_state.get("ultima_cant_monturas", 1)):
+        for k in [f"ref_{i}", f"col_{i}"]:
+            if k in st.session_state: st.session_state[k] = ""
+    st.session_state.m_cant = 1
+    st.session_state.trigger_clear_montura = False
+
+if "trigger_clear_producto" in st.session_state and st.session_state.trigger_clear_producto:
+    for k in ["inv_codigo", "inv_marca", "inv_desc", "inv_prov", "p_compra_input", "p_venta_input"]:
+        st.session_state[k] = ""
+    st.session_state.trigger_clear_producto = False
+
+if "trigger_clear_paciente_rapido" in st.session_state and st.session_state.trigger_clear_paciente_rapido:
+    for k in ["q_nom_nuevo", "q_cel_nuevo", "q_dir_nuevo"]:
+        if k in st.session_state: st.session_state[k] = ""
+    st.session_state.trigger_clear_paciente_rapido = False
 
 if "global_toast" in st.session_state:
     st.toast(st.session_state.global_toast, icon=st.session_state.get("global_toast_icon", "✅"))
@@ -1724,8 +1769,7 @@ elif modulo == "🛍️ Óptica y Facturación":
                             "direccion": q_dir, "habeas_data": True, "habeas_data_fecha": now_co().isoformat()
                         }).execute()
                         st.success("¡Paciente guardado exitosamente!")
-                        for k in ["q_nom_nuevo", "q_cel_nuevo", "q_dir_nuevo"]:
-                            if k in st.session_state: del st.session_state[k]
+                        st.session_state.trigger_clear_paciente_rapido = True
                         st.rerun()
             else:
                 paciente = res_paciente.data[0]
@@ -1799,10 +1843,36 @@ elif modulo == "🛍️ Óptica y Facturación":
                 if origen_rx == "Fórmula del Sistema" and historias_data:
                     historia = historias_data[0]
                 elif origen_rx == "Fórmula Externa":
-                    c_od, c_oi, c_ad, c_dp = st.columns(4)
-                    rx_od_ext = c_od.text_input("RX OD").upper()
-                    rx_oi_ext = c_oi.text_input("RX OI").upper()
-                    historia = {"rx_final_od": rx_od_ext or "N/A", "rx_final_oi": rx_oi_ext or "N/A", "adicion": c_ad.text_input("ADD").upper(), "dp": c_dp.text_input("DP").upper(), "observaciones": "FÓRMULA EXTERNA"}
+                    st.caption("Ingresa cada valor por separado -- se guardan estructurados "
+                               "(no como texto libre), para que la receta y las órdenes de "
+                               "laboratorio los lean correctamente.")
+                    st.markdown("**Ojo Derecho (OD)**")
+                    ext1, ext2, ext3, ext4, ext5 = st.columns(5)
+                    esf_od_ext = ext1.number_input("Esfera OD", step=0.25, format="%.2f", key="esf_od_ext")
+                    cil_od_ext = ext2.number_input("Cilindro OD", step=0.25, format="%.2f", key="cil_od_ext")
+                    eje_od_ext = ext3.number_input("Eje OD", min_value=0, max_value=175, step=5, key="eje_od_ext")
+                    av_od_ext = ext4.text_input("AV OD", key="av_od_ext").upper()
+                    dp_od_ext = ext5.text_input("DP OD (mm)", key="dp_od_ext").upper()
+
+                    st.markdown("**Ojo Izquierdo (OI)**")
+                    ext6, ext7, ext8, ext9, ext10 = st.columns(5)
+                    esf_oi_ext = ext6.number_input("Esfera OI", step=0.25, format="%.2f", key="esf_oi_ext")
+                    cil_oi_ext = ext7.number_input("Cilindro OI", step=0.25, format="%.2f", key="cil_oi_ext")
+                    eje_oi_ext = ext8.number_input("Eje OI", min_value=0, max_value=175, step=5, key="eje_oi_ext")
+                    av_oi_ext = ext9.text_input("AV OI", key="av_oi_ext").upper()
+                    dp_oi_ext = ext10.text_input("DP OI (mm)", key="dp_oi_ext").upper()
+
+                    add_ext = st.number_input("Adición (ADD)", min_value=0.00, step=0.25, format="%.2f", key="add_ext")
+
+                    rx_od_final_ext = build_rx_string(esf_od_ext, cil_od_ext, eje_od_ext)
+                    rx_oi_final_ext = build_rx_string(esf_oi_ext, cil_oi_ext, eje_oi_ext)
+                    dp_ext_combined = f"{dp_od_ext or 'N/A'}/{dp_oi_ext or 'N/A'}"
+                    historia = {
+                        "rx_final_od": rx_od_final_ext, "rx_final_oi": rx_oi_final_ext,
+                        "adicion": f"{add_ext:+.2f}" if add_ext > 0.0 else "",
+                        "dp": dp_ext_combined, "observaciones": "FÓRMULA EXTERNA",
+                        "av_od": av_od_ext, "av_oi": av_oi_ext,
+                    }
                 else:
                     historia = {"rx_final_od": "N/A", "rx_final_oi": "N/A", "adicion": "", "dp": "", "observaciones": "NO APLICA RX"}
 
@@ -1874,9 +1944,12 @@ elif modulo == "🛍️ Óptica y Facturación":
                     filtro = col_rx1.selectbox("Filtro", ["SIN FILTRO", "ANTIRREFLEJO", "FOTOSENSIBLE", "ANTIRREFLEJO + FOTOSENSIBLE"])
                     uso = col_rx2.selectbox("Uso", ["PERMANENTE", "PROLONGADO", "ESFUERZO VISUAL", "PROTECCIÓN"])
                     prox_control = col_rx2.text_input("Próximo Control").upper()
-                    av_lejos = col_rx1.text_input("AV Lejos").upper()
-                    av_cerca = col_rx2.text_input("AV Cerca").upper()
-                    detalles_rx = {"tipo_lente": tipo_lente, "filtro": filtro, "uso": uso, "prox_control": prox_control, "av_lejos": av_lejos, "av_cerca": av_cerca}
+                    av_od = col_rx1.text_input("AV Lejos OD", value=historia.get("av_od", "")).upper()
+                    av_oi = col_rx2.text_input("AV Lejos OI", value=historia.get("av_oi", "")).upper()
+                    av_cerca_od = col_rx1.text_input("AV Cerca OD", key="av_cerca_od_input").upper()
+                    av_cerca_oi = col_rx2.text_input("AV Cerca OI", key="av_cerca_oi_input").upper()
+                    detalles_rx = {"tipo_lente": tipo_lente, "filtro": filtro, "uso": uso, "prox_control": prox_control,
+                                    "av_od": av_od, "av_oi": av_oi, "av_cerca_od": av_cerca_od, "av_cerca_oi": av_cerca_oi}
                 
                 st.divider()
                 col_btn1, col_btn2 = st.columns([1, 1])
@@ -1935,7 +2008,7 @@ elif modulo == "🛍️ Óptica y Facturación":
                         st.session_state.ultima_venta_pdfs = {
                             "numero_factura": num_factura, "pdf_bytes": pdf_bytes,
                         }
-                        st.session_state.search_opt = ""
+                        st.session_state.trigger_clear_venta_busqueda = True
                         st.session_state.trigger_clear_factura = True
                         st.rerun()
 
@@ -2111,7 +2184,7 @@ elif modulo == "🛍️ Óptica y Facturación":
                             supabase.table("ventas_facturacion").update({"estado": "ANULADA"}).eq("numero_factura", fac_a["numero_factura"]).execute()
                             st.session_state.global_toast = "Factura ANULADA exitosamente."
                             st.session_state.global_toast_icon = "🚨"
-                            st.session_state.input_anular = ""
+                            st.session_state.trigger_clear_anular = True
                             st.rerun()
                     else:
                         st.info("Marca la casilla de confirmación para habilitar el botón de anulación.")
@@ -2276,7 +2349,7 @@ elif modulo == "🛍️ Óptica y Facturación":
                                 "esf_od": esf_od_r, "cil_od": cil_od_r, "eje_od": eje_od_r,
                                 "esf_oi": esf_oi_r, "cil_oi": cil_oi_r, "eje_oi": eje_oi_r,
                                 "dp_od": dp_od_r, "dp_oi": dp_oi_r,
-                                "adicion": add_r, "av_lejos": "20/20", "av_cerca": "",
+                                "adicion": add_r, "av_od": "20/20", "av_oi": "20/20", "av_cerca_od": "", "av_cerca_oi": "",
                                 "tipo_lente": "", "uso": "", "filtro": "", "prox_control": ""
                             }
                             pdf_p = FPDF(orientation="P", unit="mm", format="Letter")
@@ -2549,13 +2622,8 @@ elif modulo == "📦 Inventario":
                                     "fecha_ingreso": now_co().isoformat()
                                 }).execute()
                             st.session_state.global_toast = f"{inv_cant} montura(s) registrada(s) correctamente."
-                            for k in ["m_marca", "m_prov", "p_compra_m", "p_venta_m", "m_ref_unico",
-                                      "m_color_unico", "m_base_ref"]:
-                                if k in st.session_state: st.session_state[k] = ""
-                            for i in range(int(inv_cant)):
-                                for k in [f"ref_{i}", f"col_{i}"]:
-                                    if k in st.session_state: st.session_state[k] = ""
-                            st.session_state.m_cant = 1
+                            st.session_state.ultima_cant_monturas = int(inv_cant)
+                            st.session_state.trigger_clear_montura = True
                             st.rerun()
                         except Exception as e:
                             st.error(f"Error al guardar en base de datos: {e}")
@@ -2585,8 +2653,7 @@ elif modulo == "📦 Inventario":
                                 "fecha_ingreso": now_co().isoformat()
                             }).execute()
                             st.session_state.global_toast = f"Producto '{inv_codigo}' registrado."
-                            for k in ["inv_codigo", "inv_marca", "inv_desc", "inv_prov", "p_compra_input", "p_venta_input"]:
-                                st.session_state[k] = ""
+                            st.session_state.trigger_clear_producto = True
                             st.rerun()
                         except Exception as e: 
                             st.error(f"Error: {e}")
@@ -2610,8 +2677,7 @@ elif modulo == "📦 Inventario":
                         else:
                             supabase.table("inventario").update({"cantidad": nuevo_stock}).eq("codigo", codigo_ajuste).execute()
                             st.session_state.global_toast = f"Stock actualizado a {nuevo_stock}."
-                            st.session_state.codigo_ajuste_input = ""
-                            st.session_state.ajuste_cantidad = 1
+                            st.session_state.trigger_clear_ajuste = True
                             st.rerun()
 
 # ------------------------------------------
@@ -2630,7 +2696,7 @@ elif modulo == "🔬 Control de Trabajos":
                 try:
                     supabase.table("laboratorios").insert({"nombre": nuevo_lab}).execute()
                     st.session_state.global_toast = "Laboratorio añadido correctamente."
-                    st.session_state.nuevo_lab_input = ""
+                    st.session_state.trigger_clear_laboratorio = True
                     st.rerun()
                 except Exception as e:
                     st.error("⚠️ Es posible que este laboratorio ya exista o falte crear la tabla en Supabase.")
