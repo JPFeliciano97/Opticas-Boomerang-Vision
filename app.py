@@ -593,6 +593,21 @@ def filtro_busqueda_factura(termino):
     return condiciones
 
 
+def _fecha_gasto_seguro(fecha_str):
+    """
+    Parsea fecha_gasto (formato ISO8601, mezcla de precisiones entre
+    gastos nuevos y migrados) a 'YYYY-MM'. Nunca lanza excepción:
+    devuelve None ante un valor vacío o corrupto en vez de tumbar
+    la página completa de Analítica.
+    """
+    if not fecha_str:
+        return None
+    try:
+        return datetime.fromisoformat(str(fecha_str).replace("Z", "+00:00")).strftime('%Y-%m')
+    except (ValueError, TypeError):
+        return None
+
+
 def traer_todas_las_filas(tabla, filtros_fn=None, orden_col=None, orden_desc=True, columnas="*"):
     """
     Trae TODAS las filas de una tabla, sin importar el límite de 1000
@@ -2797,7 +2812,20 @@ elif modulo == "📈 Analítica y Estadísticas":
     
     if ventas_db:
         df_dash = pd.DataFrame(ventas_db)
-        df_dash['fecha_venta'] = pd.to_datetime(df_dash['fecha_venta'])
+        # format='ISO8601' + errors='coerce': la tabla mezcla fechas de
+        # facturas nuevas (con microsegundos, ej. "...T10:23:45.123456-05:00")
+        # con fechas migradas del histórico (sin microsegundos, ej.
+        # "...T00:00:00-05:00"). Sin 'ISO8601', pandas infiere un formato
+        # fijo del primer valor y revienta al toparse con el otro formato,
+        # aunque ambos sean ISO8601 perfectamente válidos. 'coerce' además
+        # evita que una fecha vacía/corrupta tumbe todo el módulo.
+        df_dash['fecha_venta'] = pd.to_datetime(
+            df_dash['fecha_venta'], format='ISO8601', errors='coerce')
+        filas_antes = len(df_dash)
+        df_dash = df_dash.dropna(subset=['fecha_venta'])
+        if len(df_dash) < filas_antes:
+            st.caption(f"⚠️ Se omitieron {filas_antes - len(df_dash)} registro(s) "
+                       f"con fecha inválida en el análisis.")
         df_dash['mes_anio'] = df_dash['fecha_venta'].dt.strftime('%Y-%m')
         
         total_cartera_pendiente = df_dash['saldo'].sum()
@@ -2808,7 +2836,7 @@ elif modulo == "📈 Analítica y Estadísticas":
         if modo_analitica == "Filtrar por Mes Específico":
             mes_sel = st.selectbox("Selecciona el mes a analizar:", meses_disponibles)
             df_filtered = df_dash[df_dash['mes_anio'] == mes_sel]
-            gastos_filtered = [g for g in gastos_db if datetime.fromisoformat(g['fecha_gasto'].replace("Z", "+00:00")).strftime('%Y-%m') == mes_sel] if gastos_db else []
+            gastos_filtered = [g for g in gastos_db if _fecha_gasto_seguro(g.get('fecha_gasto')) == mes_sel] if gastos_db else []
             
             total_recaudado = df_filtered['total'].sum()
             total_facturas = len(df_filtered)
@@ -2835,7 +2863,7 @@ elif modulo == "📈 Analítica y Estadísticas":
                     df_m = df_comp[df_comp['mes_anio'] == m]
                     ventas_m = df_m['total'].sum()
                     fact_m = len(df_m)
-                    gastos_m = sum(g.get("monto", 0) for g in gastos_db if datetime.fromisoformat(g['fecha_gasto'].replace("Z", "+00:00")).strftime('%Y-%m') == m)
+                    gastos_m = sum(g.get("monto", 0) for g in gastos_db if _fecha_gasto_seguro(g.get('fecha_gasto')) == m)
                     ganancia_m = ventas_m - gastos_m
                     tabla_comp.append({"Mes": m, "Ventas Brutas": ventas_m, "Gastos": gastos_m, "Ganancia Neta": ganancia_m, "N° Facturas": fact_m})
                 
