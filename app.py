@@ -2613,7 +2613,13 @@ elif modulo == "📊 Cuadre de Caja Físico":
         
         movimientos = [{"Hora": "08:00", "Tipo": "BASE", "Detalle": "Apertura de Caja Inicial", "Monto": base_caja_inicial, "Método": "EFECTIVO"}]
         for v in ventas:
-            if v.get('abono', 0) > 0: movimientos.append({"Hora": hora_co(v['fecha_venta']), "Tipo": "VENTA", "Detalle": f"Fac #{v['numero_factura']} - {v['titular_nombre']}", "Monto": v['abono'], "Método": v['metodo_pago']})
+            if v.get('abono', 0) > 0:
+                # Las ventas menores (cordones, líquidos, etc.) no tienen un
+                # titular real -- mostrar la descripción del producto es más
+                # útil que "Fac #MEN-... - VENTA MENOR".
+                es_venta_menor = str(v.get('numero_factura', '')).startswith('MEN-')
+                detalle_venta = v.get('descripcion', '') if es_venta_menor else f"Fac #{formatear_numero_factura_display(v['numero_factura'])} - {v['titular_nombre']}"
+                movimientos.append({"Hora": hora_co(v['fecha_venta']), "Tipo": "VENTA", "Detalle": detalle_venta, "Monto": v['abono'], "Método": v['metodo_pago']})
         for r in recaudos:
             movimientos.append({"Hora": hora_co(r['fecha_pago']), "Tipo": "RECAUDO", "Detalle": f"Saldo Fac #{r['numero_factura']}", "Monto": r['monto_pagado'], "Método": r['metodo_pago']})
         for g in gastos:
@@ -3072,9 +3078,24 @@ elif modulo == "🔬 Control de Trabajos":
                         idx_lab = opciones_labs.index(lab_act) if lab_act in opciones_labs else 0
                         nuevo_lab_sel = st.selectbox("Laboratorio Externo:", opciones_labs, index=idx_lab, key=f"lab_{fac_id}")
 
-                        if nuevo_est != est_act or nuevo_lab_sel != lab_act:
+                        orden_lab_act = t.get("numero_orden_lab") or ""
+                        nuevo_orden_lab = orden_lab_act
+                        if nuevo_est == "En Laboratorio":
+                            nuevo_orden_lab = st.text_input(
+                                "N° de Orden del Laboratorio:", value=orden_lab_act,
+                                key=f"orden_lab_{fac_id}",
+                                help="Referencia que asigna el laboratorio externo, para hacer seguimiento del trabajo con ellos."
+                            ).strip()
+                        elif orden_lab_act:
+                            st.caption(f"📋 Orden Lab: `{orden_lab_act}`")
+
+                        if nuevo_est != est_act or nuevo_lab_sel != lab_act or nuevo_orden_lab != orden_lab_act:
                             if st.button(f"💾 Guardar #{fac_id_display}", key=f"btn_est_{fac_id}", type="primary"):
-                                supabase.table("ventas_facturacion").update({"estado_lab": nuevo_est, "laboratorio": nuevo_lab_sel if nuevo_lab_sel != "NO ASIGNADO" else None}).eq("numero_factura", fac_id).execute()
+                                supabase.table("ventas_facturacion").update({
+                                    "estado_lab": nuevo_est,
+                                    "laboratorio": nuevo_lab_sel if nuevo_lab_sel != "NO ASIGNADO" else None,
+                                    "numero_orden_lab": nuevo_orden_lab or None,
+                                }).eq("numero_factura", fac_id).execute()
                                 st.session_state.global_toast = f"Trabajo actualizado a: {nuevo_est}"
                                 st.rerun()
 
@@ -3241,15 +3262,38 @@ elif modulo == "📅 CRM y Fidelización":
             })
         pacientes_para_llamar.sort(key=lambda x: x["Ultima_Consulta"])
 
+        # Historial de compras por documento -- se trae UNA sola vez para
+        # todos los pacientes de la lista (evita una consulta por tarjeta).
+        compras_por_doc = {}
+        if pacientes_para_llamar:
+            docs_lista = [p["Documento"] for p in pacientes_para_llamar]
+            ventas_crm = traer_todas_las_filas(
+                "ventas_facturacion",
+                filtros_fn=lambda q: q.in_("paciente_documento", docs_lista).neq("estado", "ANULADA"),
+                columnas="paciente_documento,total",
+            )
+            for v in ventas_crm:
+                doc_v = v.get("paciente_documento")
+                if not doc_v:
+                    continue
+                reg = compras_por_doc.setdefault(doc_v, {"cantidad": 0, "total": 0})
+                reg["cantidad"] += 1
+                reg["total"] += v.get("total", 0) or 0
+
         if pacientes_para_llamar:
             st.info(f"Se encontraron **{len(pacientes_para_llamar)}** pacientes para control anual.")
             for item in pacientes_para_llamar:
                 nombre_corto = item['Nombre'].split()[0]
                 msg_final = st.session_state.tpl_anual.replace("[NOMBRE]", nombre_corto)
+                compras = compras_por_doc.get(item["Documento"])
                 with st.container(border=True):
                     c1, c2, c3 = st.columns([3, 2, 2])
                     etiqueta_legado = "" if item["Activo"] else "  ·  📜 solo en histórico"
                     c1.markdown(f"**👤 {str(item['Nombre']).upper()}**{etiqueta_legado}\n\nCédula: {item['Documento']} | Última visita: {item['Ultima_Consulta']}")
+                    if compras:
+                        c1.caption(f"🛍️ {compras['cantidad']} compra(s) -- ${format_currency_co(compras['total'])} en total")
+                    else:
+                        c1.caption("🛍️ Sin registro de compras en el sistema")
                     c2.markdown(f"📱 Cel: `{item['Celular'] or '—'}`")
                     if normalizar_texto_busqueda(item['Celular']) and item['Celular']:
                         c3.link_button("💬 Enviar WhatsApp", get_whatsapp_link(item['Celular'], msg_final), use_container_width=True)
