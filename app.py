@@ -1639,26 +1639,37 @@ elif modulo == "🛍️ Óptica y Facturación":
             if len(res_paciente.data) == 0:
                 st.warning("⚠️ Paciente no registrado en la base de datos (Fórmula Externa o Nuevo).")
 
-                # Buscar coincidencia en el historial legado por documento, para
-                # sugerir nombre/celular y que el asesor no tenga que volver a
-                # preguntarlos si ya existían en archivos antiguos.
+                # Buscar coincidencia en el historial (ya unificado en las
+                # tablas operativas: ventas_facturacion e historias_clinicas)
+                # por documento, para sugerir nombre/celular y que el
+                # asesor no tenga que volver a preguntarlos si ya existían
+                # en archivos antiguos.
                 nombre_sugerido, cel_sugerido = "", ""
                 try:
-                    leg_trab = supabase.table("historico_trabajos").select(
-                        "paciente_nombre_legado,celular_legado,fecha"
+                    leg_trab = supabase.table("ventas_facturacion").select(
+                        "titular_nombre,titular_tel,fecha_venta"
+                    ).eq("paciente_documento", search_doc).order("fecha_venta", desc=True).limit(1).execute().data
+                    leg_hc = supabase.table("historias_clinicas").select(
+                        "nombre_legado,celular_legado,fecha"
                     ).eq("paciente_documento", search_doc).order("fecha", desc=True).limit(1).execute().data
-                    leg_hc = supabase.table("historico_historias_clinicas").select(
-                        "paciente_nombre_legado,celular_legado,fecha"
-                    ).eq("paciente_documento", search_doc).order("fecha", desc=True).limit(1).execute().data
-                    candidatos = (leg_trab or []) + (leg_hc or [])
+                    candidatos = []
+                    for t in (leg_trab or []):
+                        candidatos.append({"nombre": t.get("titular_nombre"),
+                                            "celular": t.get("titular_tel"),
+                                            "fecha": t.get("fecha_venta")})
+                    for h in (leg_hc or []):
+                        candidatos.append({"nombre": h.get("nombre_legado"),
+                                            "celular": h.get("celular_legado"),
+                                            "fecha": h.get("fecha")})
                     if candidatos:
                         candidatos.sort(key=lambda x: x.get("fecha") or "", reverse=True)
                         mejor = candidatos[0]
-                        nombre_sugerido = mejor.get("paciente_nombre_legado", "") or ""
-                        cel_sugerido = mejor.get("celular_legado", "") or ""
-                        st.info(f"📜 Encontramos este documento en el historial antiguo: "
-                                f"**{nombre_sugerido}** · Tel: `{cel_sugerido or '—'}`. "
-                                f"Verifica los datos y confírmalos abajo.")
+                        nombre_sugerido = mejor.get("nombre") or ""
+                        cel_sugerido = mejor.get("celular") or ""
+                        if nombre_sugerido:
+                            st.info(f"📜 Encontramos este documento en el historial antiguo: "
+                                    f"**{nombre_sugerido}** · Tel: `{cel_sugerido or '—'}`. "
+                                    f"Verifica los datos y confírmalos abajo.")
                 except Exception as e:
                     st.caption(f"⚠️ No se pudo consultar el historial legado ({e}).")
 
