@@ -556,11 +556,14 @@ def clean_numeric_string(val_str):
 def valor_numerico_factura(numero_factura):
     """
     Extrae el valor numérico de un numero_factura para ORDENAR, sin
-    importar si es real ('5422') o legado ('LEG-2385', 'LEG-TR00001').
-    Como TRABAJOS.xlsx y REGISTRO_DIARIO.xlsx comparten la misma
-    numeración secuencial del negocio, ordenar por este valor da un
-    orden cronológico confiable -- más confiable que fecha_venta como
-    texto, que puede tener inconsistencias de formato entre orígenes.
+    importar si es real ('5422'), legado ('LEG-2385', 'LEG-TR00001')
+    o una venta menor ('MEN-20260805114523123456'). Como TRABAJOS.xlsx
+    y REGISTRO_DIARIO.xlsx comparten la misma numeración secuencial del
+    negocio, ordenar por este valor da un orden cronológico confiable
+    -- más confiable que fecha_venta como texto, que puede tener
+    inconsistencias de formato entre orígenes. Las ventas menores usan
+    un timestamp como número, que naturalmente las ordena de últimas
+    (son siempre las más recientes al momento de crearse).
     """
     nf = str(numero_factura or "")
     if nf.startswith("LEG-"):
@@ -568,6 +571,8 @@ def valor_numerico_factura(numero_factura):
         if resto.startswith("TR"):
             resto = resto[2:]
         resto = resto.split("-", 1)[0]  # quita sufijo de desambiguación (-B, -C...)
+    elif nf.startswith("MEN-"):
+        resto = nf[4:]
     else:
         resto = nf
     try:
@@ -580,11 +585,14 @@ def formatear_numero_factura_display(numero_factura):
     """
     Solo para VISUALIZACIÓN: convierte 'LEG-TR02385' -> '2385' y
     'LEG-2670' -> '2670'. Preserva sufijos de desambiguación
-    ('LEG-2347-B' -> '2347-B'). Las facturas reales (sin prefijo
-    'LEG-') se muestran tal cual. El valor original completo se sigue
-    usando internamente para keys de widgets y operaciones en BD.
+    ('LEG-2347-B' -> '2347-B'). Las ventas menores ('MEN-...') se
+    muestran como 'Venta menor'. Las facturas reales (sin prefijo
+    especial) se muestran tal cual. El valor original completo se
+    sigue usando internamente para keys de widgets y operaciones en BD.
     """
     nf = str(numero_factura or "")
+    if nf.startswith("MEN-"):
+        return "Venta menor"
     if not nf.startswith("LEG-"):
         return nf
     resto = nf[4:]
@@ -1601,8 +1609,8 @@ if modulo == "👨‍⚕️ Consultorio":
 # ------------------------------------------
 elif modulo == "🛍️ Óptica y Facturación":
     styled_header("Facturación y Ventas", "🛍️")
-    tab_venta, tab_recaudo, tab_anular, tab_reimprimir, tab_hist_fact = st.tabs(
-        ["🛒 Nueva Venta", "💵 Recaudar Saldo", "🚫 Anular", "🖨️ Reimprimir", "📜 Historial"]
+    tab_venta, tab_menor, tab_recaudo, tab_anular, tab_reimprimir, tab_hist_fact = st.tabs(
+        ["🛒 Nueva Venta", "🧦 Venta Menor", "💵 Recaudar Saldo", "🚫 Anular", "🖨️ Reimprimir", "📜 Historial"]
     )
     
     with tab_venta:
@@ -1893,6 +1901,71 @@ elif modulo == "🛍️ Óptica y Facturación":
                         """,
                         unsafe_allow_html=True
                     )
+
+    with tab_menor:
+        st.markdown("<h4 style='color: #000000;'>🧦 Registrar Venta Menor</h4>", unsafe_allow_html=True)
+        st.caption("Para artículos sueltos que no requieren una factura completa: "
+                   "cordones, líquidos de limpieza, tornillos, plaquetas, etc. "
+                   "Se registra como pagada de inmediato y entra al cuadre de caja del día.")
+
+        with st.form("form_venta_menor", clear_on_submit=True):
+            fm1, fm2, fm3 = st.columns([3, 1, 1])
+            with fm1:
+                desc_menor = st.text_input("Descripción del artículo", placeholder="Ej: Cordón, Líquido limpiador").upper()
+            with fm2:
+                cantidad_menor = st.number_input("Cantidad", min_value=1, value=1, step=1)
+            with fm3:
+                valor_unit_menor = st.number_input("Valor unitario ($)", min_value=0, step=1000, value=0)
+            metodo_menor = st.selectbox("Método de Pago", ["EFECTIVO", "BOLD", "LLAVE", "NEQUI", "DAVIPLATA"])
+            guardar_menor = st.form_submit_button("💾 Registrar Venta", type="primary", use_container_width=True)
+
+        if guardar_menor:
+            if not desc_menor or valor_unit_menor <= 0:
+                st.warning("⚠️ Ingresa una descripción y un valor válidos.")
+            else:
+                total_menor = int(valor_unit_menor) * int(cantidad_menor)
+                # Prefijo "MEN-" + timestamp con microsegundos: identificador
+                # único sin necesitar consultar la BD primero. No es una
+                # factura formal, así que no ocupa la numeración real.
+                num_menor = f"MEN-{now_co().strftime('%Y%m%d%H%M%S%f')}"
+                desc_final = desc_menor if cantidad_menor == 1 else f"{desc_menor} x{int(cantidad_menor)}"
+                supabase.table("ventas_facturacion").insert({
+                    "numero_factura": num_menor,
+                    "paciente_documento": "",
+                    "titular_nombre": "VENTA MENOR",
+                    "titular_doc": "", "titular_tel": "",
+                    "descripcion": desc_final,
+                    "subtotal": total_menor, "descuento": 0, "total": total_menor,
+                    "abono": total_menor, "saldo": 0,
+                    "fecha_entrega": "", "altura_focal": "",
+                    "metodo_pago": metodo_menor, "estado": "ACTIVA",
+                    "estado_lab": "Entregado",
+                    "fecha_venta": now_co().isoformat(),
+                    "laboratorio": "", "origen": "ACTUAL",
+                }).execute()
+                st.session_state.global_toast = f"Venta menor registrada: {desc_final} — ${format_currency_co(total_menor)}"
+                st.rerun()
+
+        st.divider()
+        st.markdown("#### 🧾 Ventas menores de hoy")
+        hoy_str = now_co().strftime("%Y-%m-%d")
+        ventas_menores_hoy = supabase.table("ventas_facturacion").select("*") \
+            .like("numero_factura", "MEN-%") \
+            .gte("fecha_venta", f"{hoy_str}T00:00:00").lte("fecha_venta", f"{hoy_str}T23:59:59") \
+            .order("fecha_venta", desc=True).execute().data or []
+
+        if ventas_menores_hoy:
+            total_dia_menor = sum(v.get("total", 0) for v in ventas_menores_hoy)
+            st.caption(f"**{len(ventas_menores_hoy)}** venta(s) menor(es) hoy · Total: **${format_currency_co(total_dia_menor)}**")
+            for vm in ventas_menores_hoy:
+                hora = (vm.get("fecha_venta") or "")[11:16]
+                with st.container(border=True):
+                    vc1, vc2, vc3 = st.columns([1, 3, 1])
+                    vc1.markdown(f"**🕐 {hora}**")
+                    vc2.markdown(vm.get("descripcion", ""))
+                    vc3.markdown(f"**${format_currency_co(vm.get('total', 0))}** · {vm.get('metodo_pago','')}")
+        else:
+            st.info("Todavía no hay ventas menores registradas hoy.")
 
     with tab_recaudo:
         st.markdown("<h4 style='color: #000000;'>💵 Recaudar Saldo y Cambiar Estado a Entregado</h4>", unsafe_allow_html=True)
@@ -2421,6 +2494,9 @@ elif modulo == "🔬 Control de Trabajos":
         
         def _filtros_trabajos(q):
             q = q.neq("estado", "ANULADA")
+            # Las ventas menores (cordones, líquidos, etc.) no tienen
+            # seguimiento de laboratorio -- no pertenecen a esta vista.
+            q = q.not_.like("numero_factura", "MEN-%")
             if filtro_estado != "Todos los Activos":
                 q = q.eq("estado_lab", filtro_estado)
             if search_fac_lab:
