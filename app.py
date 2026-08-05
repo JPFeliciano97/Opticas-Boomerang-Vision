@@ -1048,6 +1048,27 @@ def parse_for_grid(rx_str):
     cil = parts[1]; eje = parts[2].upper()
     return esf, cil, eje
 
+
+def rx_string_a_numeros(rx_str):
+    """
+    Inverso de build_rx_string(): convierte '+1.75 -0.75 x 0°' de vuelta
+    a (esfera, cilindro, eje) como floats/int, para prellenar los
+    number_input al editar una fórmula ya guardada. Nunca lanza
+    excepción -- ante cualquier formato no reconocido, devuelve ceros.
+    """
+    if not rx_str or str(rx_str).upper() in ("N/A", "NEUTRO", ""):
+        return 0.0, 0.0, 0
+    try:
+        s = str(rx_str).upper().replace('X', ' ').replace('°', '')
+        parts = s.split()
+        if len(parts) == 1:
+            return float(parts[0]), 0.0, 0
+        if len(parts) >= 3:
+            return float(parts[0]), float(parts[1]), int(float(parts[2]))
+    except (ValueError, IndexError):
+        pass
+    return 0.0, 0.0, 0
+
 # =====================================================================
 # 5. FUNCIONES DE DIBUJO DE PDF (se mantienen igual, solo usan logo.png)
 # =====================================================================
@@ -1401,6 +1422,10 @@ if "trigger_clear_paciente_rapido" in st.session_state and st.session_state.trig
         if k in st.session_state: st.session_state[k] = ""
     st.session_state.trigger_clear_paciente_rapido = False
 
+if "trigger_clear_editar" in st.session_state and st.session_state.trigger_clear_editar:
+    st.session_state.edit_search_input = ""
+    st.session_state.trigger_clear_editar = False
+
 if "global_toast" in st.session_state:
     st.toast(st.session_state.global_toast, icon=st.session_state.get("global_toast_icon", "✅"))
     del st.session_state.global_toast
@@ -1692,8 +1717,8 @@ if modulo == "👨‍⚕️ Consultorio":
 # ------------------------------------------
 elif modulo == "🛍️ Óptica y Facturación":
     styled_header("Facturación y Ventas", "🛍️")
-    tab_venta, tab_menor, tab_recaudo, tab_anular, tab_reimprimir, tab_hist_fact = st.tabs(
-        ["🛒 Nueva Venta", "🧦 Venta Menor", "💵 Recaudar Saldo", "🚫 Anular", "🖨️ Reimprimir", "📜 Historial"]
+    tab_venta, tab_menor, tab_recaudo, tab_anular, tab_editar, tab_reimprimir, tab_hist_fact = st.tabs(
+        ["🛒 Nueva Venta", "🧦 Venta Menor", "💵 Recaudar Saldo", "🚫 Anular", "✏️ Editar Reciente", "🖨️ Reimprimir", "📜 Historial"]
     )
     
     with tab_venta:
@@ -1966,13 +1991,21 @@ elif modulo == "🛍️ Óptica y Facturación":
                             "abono": abono_val, "saldo": sal_pend, "fecha_entrega": fecha_entrega, "altura_focal": altura_focal,
                             "metodo_pago": metodo_pago
                         }
+                        # Se calcula antes del insert para poder persistir la
+                        # fórmula usada en la venta (ya no vive solo en el PDF).
+                        hist_factura = procesar_historia_factura(historia, tipo_gafas)
                         try:
                             supabase.table("ventas_facturacion").insert({
                                 "numero_factura": num_factura, "paciente_documento": paciente['documento'], "titular_nombre": titular_nombre,
                                 "titular_doc": titular_doc, "titular_tel": titular_tel, "descripcion": desc_producto, "subtotal": sub_val,
                                 "descuento": desc_calc, "total": tot_neto, "abono": abono_val, "saldo": sal_pend,
                                 "fecha_entrega": fecha_entrega, "altura_focal": altura_focal, "metodo_pago": metodo_pago,
-                                "estado": "ACTIVA", "estado_lab": "Pendiente de enviar", "fecha_venta": now_co().isoformat()
+                                "estado": "ACTIVA", "estado_lab": "Pendiente de enviar", "fecha_venta": now_co().isoformat(),
+                                "rx_final_od": hist_factura.get("rx_final_od", ""), "rx_final_oi": hist_factura.get("rx_final_oi", ""),
+                                "adicion": hist_factura.get("adicion", ""), "dp": hist_factura.get("dp", ""),
+                                "av_od": detalles_rx.get("av_od", ""), "av_oi": detalles_rx.get("av_oi", ""),
+                                "av_cerca_od": detalles_rx.get("av_cerca_od", ""), "av_cerca_oi": detalles_rx.get("av_cerca_oi", ""),
+                                "origen_rx": origen_rx,
                             }).execute()
                             
                             if origen_montura == "Montura de Vitrina" and selected_frame_code:
@@ -1984,7 +2017,6 @@ elif modulo == "🛍️ Óptica y Facturación":
 
                         pdf = FPDF(orientation="P", unit="mm", format="Letter")
                         pdf.set_compression(True)
-                        hist_factura = procesar_historia_factura(historia, tipo_gafas)
                         pdf.add_page(); dibujar_media_carta(pdf, paciente, hist_factura, venta_data, "COPIA CLIENTE")
                         pdf.add_page(); dibujar_media_carta(pdf, paciente, hist_factura, venta_data, "COPIA ÓPTICA / CAJA")
                         
@@ -2191,6 +2223,105 @@ elif modulo == "🛍️ Óptica y Facturación":
             else:
                 st.error("No existe ninguna factura con ese número.")
 
+    with tab_editar:
+        st.markdown("<h4 style='color: #000000;'>✏️ Editar Factura Reciente</h4>", unsafe_allow_html=True)
+        st.caption("Solo se pueden editar facturas creadas en las **últimas 24 horas** -- "
+                   "pasado ese plazo, usa Anular y crea una nueva si hace falta corregir algo, "
+                   "para no alterar el historial financiero ya cerrado.")
+
+        edit_search = st.text_input("N° de Factura a editar:", key="edit_search_input").strip().upper()
+        if edit_search:
+            cond_edit = filtro_busqueda_factura(edit_search)
+            res_edit = supabase.table("ventas_facturacion").select("*").or_(",".join(cond_edit)).limit(1).execute()
+
+            if not res_edit.data:
+                st.error("No se encontró ninguna factura con ese número.")
+            else:
+                venta_e = res_edit.data[0]
+                if venta_e.get("estado") == "ANULADA":
+                    st.error("⚠️ Esta factura está ANULADA y no se puede editar.")
+                elif venta_e.get("origen") == "LEGADO":
+                    st.error("⚠️ Esta es una factura histórica migrada, no una venta reciente -- no se puede editar.")
+                else:
+                    fv_raw = venta_e.get("fecha_venta", "")
+                    try:
+                        fv_dt = datetime.fromisoformat(fv_raw.replace("Z", "+00:00")).astimezone(timezone(timedelta(hours=-5))).replace(tzinfo=None)
+                    except Exception:
+                        fv_dt = None
+
+                    horas_transcurridas = (now_co().replace(tzinfo=None) - fv_dt).total_seconds() / 3600 if fv_dt else None
+
+                    if horas_transcurridas is None or horas_transcurridas > 24:
+                        st.error(f"⚠️ Esta factura tiene más de 24 horas "
+                                 f"({horas_transcurridas:.1f} h) y ya no se puede editar."
+                                 if horas_transcurridas is not None else
+                                 "⚠️ No se pudo determinar la antigüedad de esta factura.")
+                    else:
+                        st.success(f"✏️ Editando Factura N° **{formatear_numero_factura_display(venta_e['numero_factura'])}** "
+                                   f"-- creada hace {horas_transcurridas:.1f} h, dentro del plazo permitido.")
+
+                        with st.form("form_editar_factura"):
+                            st.markdown("##### Datos generales")
+                            fe1, fe2 = st.columns(2)
+                            e_desc = fe1.text_input("Descripción", value=venta_e.get("descripcion", "")).upper()
+                            e_metodo = fe2.selectbox("Método de Pago", ["EFECTIVO", "BOLD", "LLAVE", "NEQUI", "DAVIPLATA"],
+                                                      index=["EFECTIVO", "BOLD", "LLAVE", "NEQUI", "DAVIPLATA"].index(venta_e.get("metodo_pago", "EFECTIVO")) if venta_e.get("metodo_pago") in ["EFECTIVO", "BOLD", "LLAVE", "NEQUI", "DAVIPLATA"] else 0)
+
+                            fe3, fe4, fe5 = st.columns(3)
+                            e_total = fe3.number_input("Total ($)", min_value=0, step=1000, value=int(venta_e.get("total", 0)))
+                            e_abono = fe4.number_input("Abono ($)", min_value=0, step=1000, value=int(venta_e.get("abono", 0)))
+                            e_saldo_calc = max(0, e_total - e_abono)
+                            fe5.metric("Saldo (calculado)", f"${format_currency_co(e_saldo_calc)}")
+
+                            e_entrega = st.text_input("Fecha/Hora Entrega", value=venta_e.get("fecha_entrega", "")).upper()
+
+                            st.markdown("##### Fórmula (Rx)")
+                            esf_od_prev, cil_od_prev, eje_od_prev = rx_string_a_numeros(venta_e.get("rx_final_od"))
+                            esf_oi_prev, cil_oi_prev, eje_oi_prev = rx_string_a_numeros(venta_e.get("rx_final_oi"))
+                            dp_prev = str(venta_e.get("dp", "") or "")
+                            dp_od_prev, dp_oi_prev = (dp_prev.split("/") + [""])[:2] if "/" in dp_prev else (dp_prev, dp_prev)
+
+                            st.markdown("**OD**")
+                            eo1, eo2, eo3, eo4, eo5 = st.columns(5)
+                            e_esf_od = eo1.number_input("Esfera OD", step=0.25, format="%.2f", value=esf_od_prev, key=f"e_esf_od_{venta_e['numero_factura']}")
+                            e_cil_od = eo2.number_input("Cilindro OD", step=0.25, format="%.2f", value=cil_od_prev, key=f"e_cil_od_{venta_e['numero_factura']}")
+                            e_eje_od = eo3.number_input("Eje OD", min_value=0, max_value=175, step=5, value=eje_od_prev, key=f"e_eje_od_{venta_e['numero_factura']}")
+                            e_av_od = eo4.text_input("AV OD", value=venta_e.get("av_od", "")).upper()
+                            e_dp_od = eo5.text_input("DP OD", value=dp_od_prev.strip()).upper()
+
+                            st.markdown("**OI**")
+                            ei1, ei2, ei3, ei4, ei5 = st.columns(5)
+                            e_esf_oi = ei1.number_input("Esfera OI", step=0.25, format="%.2f", value=esf_oi_prev, key=f"e_esf_oi_{venta_e['numero_factura']}")
+                            e_cil_oi = ei2.number_input("Cilindro OI", step=0.25, format="%.2f", value=cil_oi_prev, key=f"e_cil_oi_{venta_e['numero_factura']}")
+                            e_eje_oi = ei3.number_input("Eje OI", min_value=0, max_value=175, step=5, value=eje_oi_prev, key=f"e_eje_oi_{venta_e['numero_factura']}")
+                            e_av_oi = ei4.text_input("AV OI", value=venta_e.get("av_oi", "")).upper()
+                            e_dp_oi = ei5.text_input("DP OI", value=dp_oi_prev.strip()).upper()
+
+                            add_prev = 0.0
+                            try:
+                                add_prev = abs(float(str(venta_e.get("adicion", "") or "0").replace("+", "")))
+                            except ValueError:
+                                pass
+                            e_add = st.number_input("Adición (ADD)", min_value=0.00, step=0.25, format="%.2f", value=add_prev)
+
+                            guardar_edicion = st.form_submit_button("💾 Guardar Cambios", type="primary", use_container_width=True)
+
+                        if guardar_edicion:
+                            supabase.table("ventas_facturacion").update({
+                                "descripcion": e_desc, "metodo_pago": e_metodo,
+                                "total": int(e_total), "subtotal": int(e_total),
+                                "abono": int(e_abono), "saldo": int(e_saldo_calc),
+                                "fecha_entrega": e_entrega,
+                                "rx_final_od": build_rx_string(e_esf_od, e_cil_od, e_eje_od),
+                                "rx_final_oi": build_rx_string(e_esf_oi, e_cil_oi, e_eje_oi),
+                                "adicion": f"{e_add:+.2f}" if e_add > 0.0 else "",
+                                "dp": f"{e_dp_od}/{e_dp_oi}",
+                                "av_od": e_av_od, "av_oi": e_av_oi,
+                            }).eq("numero_factura", venta_e["numero_factura"]).execute()
+                            st.session_state.global_toast = f"Factura #{formatear_numero_factura_display(venta_e['numero_factura'])} actualizada."
+                            st.session_state.trigger_clear_editar = True
+                            st.rerun()
+
     with tab_reimprimir:
         st.markdown("<h4 style='color:#000000;'>🖨️ Reimprimir Documentos de una Factura</h4>", unsafe_allow_html=True)
         st.caption("Busca una factura anterior y descarga sus documentos con la fecha original de emisión.")
@@ -2245,30 +2376,50 @@ elif modulo == "🛍️ Óptica y Facturación":
                     "documento": pac_doc, "direccion": "", "celular": ""
                 }
 
-                # Buscar la historia clínica más cercana (anterior o igual) a fecha_venta
-                historias_r = supabase.table("historias_clinicas").select("*").eq(
-                    "paciente_documento", pac_doc
-                ).order("fecha", desc=True).execute().data or []
+                # La fórmula usada en ESTA venta específica ya se guarda
+                # directamente en ventas_facturacion desde que se creó (no
+                # depende de adivinar qué historia clínica corresponde por
+                # fecha). Solo para ventas anteriores a este cambio, que no
+                # tienen estos campos, se cae al comportamiento anterior:
+                # buscar la historia clínica más cercana (anterior o igual)
+                # a la fecha de venta.
+                if venta_r.get("rx_final_od") or venta_r.get("rx_final_oi"):
+                    hist_r = {
+                        "rx_final_od": venta_r.get("rx_final_od", ""),
+                        "rx_final_oi": venta_r.get("rx_final_oi", ""),
+                        "adicion": venta_r.get("adicion", ""),
+                        "dp": venta_r.get("dp", ""),
+                        "observaciones": f"ORIGEN: {venta_r.get('origen_rx', '')}".strip(": "),
+                    }
+                    detalles_rx_venta = {
+                        "av_od": venta_r.get("av_od", ""), "av_oi": venta_r.get("av_oi", ""),
+                        "av_cerca_od": venta_r.get("av_cerca_od", ""), "av_cerca_oi": venta_r.get("av_cerca_oi", ""),
+                    }
+                else:
+                    historias_r = supabase.table("historias_clinicas").select("*").eq(
+                        "paciente_documento", pac_doc
+                    ).order("fecha", desc=True).execute().data or []
 
-                hist_r = None
-                if historias_r and fecha_original:
-                    # La más reciente que sea anterior o igual a la fecha de la venta
-                    for h in historias_r:
-                        h_raw = h.get("fecha", "")
-                        try:
-                            if "T" in h_raw:
-                                h_dt = datetime.fromisoformat(h_raw.replace("Z", "+00:00")).replace(tzinfo=None)
-                            else:
-                                h_dt = datetime.strptime(h_raw[:10], "%Y-%m-%d")
-                            if h_dt <= fecha_original:
-                                hist_r = h
-                                break
-                        except Exception:
-                            continue
-                if not hist_r and historias_r:
-                    hist_r = historias_r[-1]  # Fallback: la más antigua disponible
-                if not hist_r:
-                    hist_r = {"rx_final_od": "", "rx_final_oi": "", "dp": "", "adicion": "", "observaciones": ""}
+                    hist_r = None
+                    if historias_r and fecha_original:
+                        # La más reciente que sea anterior o igual a la fecha de la venta
+                        for h in historias_r:
+                            h_raw = h.get("fecha", "")
+                            try:
+                                if "T" in h_raw:
+                                    h_dt = datetime.fromisoformat(h_raw.replace("Z", "+00:00")).replace(tzinfo=None)
+                                else:
+                                    h_dt = datetime.strptime(h_raw[:10], "%Y-%m-%d")
+                                if h_dt <= fecha_original:
+                                    hist_r = h
+                                    break
+                            except Exception:
+                                continue
+                    if not hist_r and historias_r:
+                        hist_r = historias_r[-1]  # Fallback: la más antigua disponible
+                    if not hist_r:
+                        hist_r = {"rx_final_od": "", "rx_final_oi": "", "dp": "", "adicion": "", "observaciones": ""}
+                    detalles_rx_venta = {}
 
                 st.markdown("---")
                 st.markdown("**Selecciona los documentos a descargar:**")
@@ -2345,11 +2496,18 @@ elif modulo == "🛍️ Óptica y Facturación":
                             dp_od_r = dp_parts[0].strip() if dp_parts else ""
                             dp_oi_r = dp_parts[1].strip() if len(dp_parts) > 1 else dp_od_r
                             add_r = hist_r.get("adicion", "") or ""
+                            # Si la venta trae AV real guardado, se usa; si no
+                            # (ventas anteriores a este cambio), se asume 20/20
+                            # como valor razonable por defecto.
                             detalles_rx_r = {
                                 "esf_od": esf_od_r, "cil_od": cil_od_r, "eje_od": eje_od_r,
                                 "esf_oi": esf_oi_r, "cil_oi": cil_oi_r, "eje_oi": eje_oi_r,
                                 "dp_od": dp_od_r, "dp_oi": dp_oi_r,
-                                "adicion": add_r, "av_od": "20/20", "av_oi": "20/20", "av_cerca_od": "", "av_cerca_oi": "",
+                                "adicion": add_r,
+                                "av_od": detalles_rx_venta.get("av_od") or "20/20",
+                                "av_oi": detalles_rx_venta.get("av_oi") or "20/20",
+                                "av_cerca_od": detalles_rx_venta.get("av_cerca_od", ""),
+                                "av_cerca_oi": detalles_rx_venta.get("av_cerca_oi", ""),
                                 "tipo_lente": "", "uso": "", "filtro": "", "prox_control": ""
                             }
                             pdf_p = FPDF(orientation="P", unit="mm", format="Letter")
