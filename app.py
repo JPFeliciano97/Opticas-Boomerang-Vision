@@ -1356,6 +1356,28 @@ all_mods = clinica_mods + comercial_mods + operaciones_mods + admin_mods
 if "current_module" not in st.session_state or st.session_state.current_module not in all_mods:
     st.session_state.current_module = all_mods[0] if all_mods else ""
 
+
+def _limpiar_busquedas_historial():
+    """
+    Limpia el estado de las búsquedas de 'Historial de un Paciente'
+    (Consultorio y Facturación) al cambiar de módulo. Sin esto, la
+    búsqueda anterior (texto + resultados) quedaba "pegada" la próxima
+    vez que se entraba a esas pantallas, incluso después de haber
+    trabajado en otra parte completamente distinta del sistema.
+    """
+    prefijos = ("hist_consultorio_", "hist_facturacion_")
+    for key in list(st.session_state.keys()):
+        if key.startswith(prefijos):
+            del st.session_state[key]
+
+
+def _cambiar_modulo(nuevo_modulo):
+    if nuevo_modulo != st.session_state.current_module:
+        _limpiar_busquedas_historial()
+    st.session_state.current_module = nuevo_modulo
+    st.rerun()
+
+
 with st.sidebar:
     st.markdown(get_sidebar_logo_html(), unsafe_allow_html=True)
     st.caption(f"👤 Sesión activa: **{st.session_state.user_info['nombre']}**")
@@ -1370,29 +1392,25 @@ with st.sidebar:
         st.markdown("### 🏥 Área Clínica")
         for m in clinica_mods:
             if st.button(m, use_container_width=True, type="primary" if st.session_state.current_module == m else "secondary"):
-                st.session_state.current_module = m
-                st.rerun()
+                _cambiar_modulo(m)
                 
     if comercial_mods:
         st.markdown("### 🏬 Área Comercial")
         for m in comercial_mods:
             if st.button(m, use_container_width=True, type="primary" if st.session_state.current_module == m else "secondary"):
-                st.session_state.current_module = m
-                st.rerun()
+                _cambiar_modulo(m)
                 
     if operaciones_mods:
         st.markdown("### ⚙️ Operaciones")
         for m in operaciones_mods:
             if st.button(m, use_container_width=True, type="primary" if st.session_state.current_module == m else "secondary"):
-                st.session_state.current_module = m
-                st.rerun()
+                _cambiar_modulo(m)
                 
     if admin_mods:
         st.markdown("### 📈 Administración")
         for m in admin_mods:
             if st.button(m, use_container_width=True, type="primary" if st.session_state.current_module == m else "secondary"):
-                st.session_state.current_module = m
-                st.rerun()
+                _cambiar_modulo(m)
                 
     st.markdown("---")
     # Alerta de stock crítico (productos en 0)
