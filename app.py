@@ -21,6 +21,28 @@ def now_co():
     """Retorna datetime actual en hora Colombia (GMT-5)."""
     return datetime.now(timezone(timedelta(hours=-5)))
 
+
+def hora_co(fecha_iso_str, formato="%H:%M"):
+    """
+    Extrae la hora de un timestamp ISO guardado en la BD, garantizando
+    que se muestre en hora Colombia sin importar en qué zona horaria
+    la haya devuelto Postgres/PostgREST. Postgres normaliza las
+    columnas timestamptz a UTC al leerlas de vuelta -- tomar el string
+    crudo con [11:16] asumiendo que sigue en hora Colombia mostraba la
+    hora equivocada (esto causó el reporte de gastos "guardados 4
+    horas tarde"). Nunca lanza excepción: ante formato irreconocible
+    devuelve "--:--".
+    """
+    if not fecha_iso_str:
+        return "--:--"
+    try:
+        dt = datetime.fromisoformat(str(fecha_iso_str).replace("Z", "+00:00"))
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(timezone(timedelta(hours=-5)))
+        return dt.strftime(formato)
+    except (ValueError, TypeError):
+        return "--:--"
+
 st.set_page_config(page_title="Boomerang Visión", layout="wide", page_icon="👓", initial_sidebar_state="expanded")
 
 # ============ CSS MEJORADO ============
@@ -1130,7 +1152,7 @@ def dibujar_media_carta(pdf, paciente, historia, venta, tipo_documento, logo_pat
     add_text = f" ADD: {add_str}" if add_str else ""
     alt_text = f" | ALTURA: {venta['altura_focal']}" if venta.get('altura_focal') else ""
     pdf.set_xy(10, 101)
-    pdf.cell(110, 5, f"DP: {historia.get('dp', '')}{add_text}{alt_text}", border="L,B,R", ln=1)
+    pdf.cell(110, 5, f"DP: {historia.get('dp') or ''}{add_text}{alt_text}", border="L,B,R", ln=1)
     
     totales = [("SUBTOTAL", venta['subtotal']), ("DESCUENTO", venta['descuento']), ("TOTAL", venta['total']), ("ABONO", venta['abono']), ("SALDO", venta['saldo'])]
     for i, (concepto, valor) in enumerate(totales):
@@ -1201,7 +1223,7 @@ def dibujar_orden_laboratorio(pdf, paciente, historia, venta, tipo_orden="", log
     pdf.cell(75, 6, texto_add, border=1); pdf.cell(35, 6, f"ALTURA: {alt_val}", border=1, ln=1, align="C")
     
     pdf.set_xy(10, 78); pdf.cell(85, 6, f"OI:     {format_rx_ui(historia.get('rx_final_oi', 'N/A'))}", border=1)
-    pdf.cell(75, 6, f"DP: {historia.get('dp', '')}", border=1); pdf.cell(35, 6, f"ALTURA: {alt_val}", border=1, ln=1, align="C")
+    pdf.cell(75, 6, f"DP: {historia.get('dp') or ''}", border=1); pdf.cell(35, 6, f"ALTURA: {alt_val}", border=1, ln=1, align="C")
     
     pdf.set_xy(10, 87); pdf.set_font("helvetica", "B", 18); pdf.multi_cell(110, 8, f"{venta['fecha_entrega'].upper()}", border=0)
     
@@ -1810,7 +1832,7 @@ elif modulo == "🛍️ Óptica y Facturación":
                             st.markdown(f"**Consulta ID #{h.get('id_consulta')} — Fecha:** {str(h.get('fecha', ''))[:10]}")
                             add_val = format_add(h.get('adicion'))
                             add_display = f" | **ADD:** {add_val}" if add_val else ""
-                            st.markdown(f"- **OD:** {format_rx_ui(h.get('rx_final_od', 'N/A'))} | **OI:** {format_rx_ui(h.get('rx_final_oi', 'N/A'))}{add_display} | **DP:** {h.get('dp', 'N/A')}")
+                            st.markdown(f"- **OD:** {format_rx_ui(h.get('rx_final_od', 'N/A'))} | **OI:** {format_rx_ui(h.get('rx_final_oi', 'N/A'))}{add_display} | **DP:** {h.get('dp') or 'N/A'}")
                             if h.get('observaciones'):
                                 st.markdown(f"- *Observaciones:* {h.get('observaciones')}")
                             st.divider()
@@ -2119,14 +2141,14 @@ elif modulo == "🛍️ Óptica y Facturación":
         hoy_str = now_co().strftime("%Y-%m-%d")
         ventas_menores_hoy = supabase.table("ventas_facturacion").select("*") \
             .like("numero_factura", "MEN-%") \
-            .gte("fecha_venta", f"{hoy_str}T00:00:00").lte("fecha_venta", f"{hoy_str}T23:59:59") \
+            .gte("fecha_venta", f"{hoy_str}T00:00:00-05:00").lte("fecha_venta", f"{hoy_str}T23:59:59-05:00") \
             .order("fecha_venta", desc=True).execute().data or []
 
         if ventas_menores_hoy:
             total_dia_menor = sum(v.get("total", 0) for v in ventas_menores_hoy)
             st.caption(f"**{len(ventas_menores_hoy)}** venta(s) menor(es) hoy · Total: **${format_currency_co(total_dia_menor)}**")
             for vm in ventas_menores_hoy:
-                hora = (vm.get("fecha_venta") or "")[11:16]
+                hora = hora_co(vm.get("fecha_venta"))
                 with st.container(border=True):
                     vc1, vc2, vc3 = st.columns([1, 3, 1])
                     vc1.markdown(f"**🕐 {hora}**")
@@ -2263,17 +2285,17 @@ elif modulo == "🛍️ Óptica y Facturación":
                         with st.form("form_editar_factura"):
                             st.markdown("##### Datos generales")
                             fe1, fe2 = st.columns(2)
-                            e_desc = fe1.text_input("Descripción", value=venta_e.get("descripcion", "")).upper()
+                            e_desc = fe1.text_input("Descripción", value=(venta_e.get("descripcion") or "")).upper()
                             e_metodo = fe2.selectbox("Método de Pago", ["EFECTIVO", "BOLD", "LLAVE", "NEQUI", "DAVIPLATA"],
                                                       index=["EFECTIVO", "BOLD", "LLAVE", "NEQUI", "DAVIPLATA"].index(venta_e.get("metodo_pago", "EFECTIVO")) if venta_e.get("metodo_pago") in ["EFECTIVO", "BOLD", "LLAVE", "NEQUI", "DAVIPLATA"] else 0)
 
                             fe3, fe4, fe5 = st.columns(3)
-                            e_total = fe3.number_input("Total ($)", min_value=0, step=1000, value=int(venta_e.get("total", 0)))
-                            e_abono = fe4.number_input("Abono ($)", min_value=0, step=1000, value=int(venta_e.get("abono", 0)))
+                            e_total = fe3.number_input("Total ($)", min_value=0, step=1000, value=int(venta_e.get("total") or 0))
+                            e_abono = fe4.number_input("Abono ($)", min_value=0, step=1000, value=int(venta_e.get("abono") or 0))
                             e_saldo_calc = max(0, e_total - e_abono)
                             fe5.metric("Saldo (calculado)", f"${format_currency_co(e_saldo_calc)}")
 
-                            e_entrega = st.text_input("Fecha/Hora Entrega", value=venta_e.get("fecha_entrega", "")).upper()
+                            e_entrega = st.text_input("Fecha/Hora Entrega", value=(venta_e.get("fecha_entrega") or "")).upper()
 
                             st.markdown("##### Fórmula (Rx)")
                             esf_od_prev, cil_od_prev, eje_od_prev = rx_string_a_numeros(venta_e.get("rx_final_od"))
@@ -2286,7 +2308,7 @@ elif modulo == "🛍️ Óptica y Facturación":
                             e_esf_od = eo1.number_input("Esfera OD", step=0.25, format="%.2f", value=esf_od_prev, key=f"e_esf_od_{venta_e['numero_factura']}")
                             e_cil_od = eo2.number_input("Cilindro OD", step=0.25, format="%.2f", value=cil_od_prev, key=f"e_cil_od_{venta_e['numero_factura']}")
                             e_eje_od = eo3.number_input("Eje OD", min_value=0, max_value=175, step=5, value=eje_od_prev, key=f"e_eje_od_{venta_e['numero_factura']}")
-                            e_av_od = eo4.text_input("AV OD", value=venta_e.get("av_od", "")).upper()
+                            e_av_od = eo4.text_input("AV OD", value=(venta_e.get("av_od") or "")).upper()
                             e_dp_od = eo5.text_input("DP OD", value=dp_od_prev.strip()).upper()
 
                             st.markdown("**OI**")
@@ -2294,7 +2316,7 @@ elif modulo == "🛍️ Óptica y Facturación":
                             e_esf_oi = ei1.number_input("Esfera OI", step=0.25, format="%.2f", value=esf_oi_prev, key=f"e_esf_oi_{venta_e['numero_factura']}")
                             e_cil_oi = ei2.number_input("Cilindro OI", step=0.25, format="%.2f", value=cil_oi_prev, key=f"e_cil_oi_{venta_e['numero_factura']}")
                             e_eje_oi = ei3.number_input("Eje OI", min_value=0, max_value=175, step=5, value=eje_oi_prev, key=f"e_eje_oi_{venta_e['numero_factura']}")
-                            e_av_oi = ei4.text_input("AV OI", value=venta_e.get("av_oi", "")).upper()
+                            e_av_oi = ei4.text_input("AV OI", value=(venta_e.get("av_oi") or "")).upper()
                             e_dp_oi = ei5.text_input("DP OI", value=dp_oi_prev.strip()).upper()
 
                             add_prev = 0.0
@@ -2552,9 +2574,9 @@ elif modulo == "📊 Cuadre de Caja Físico":
         ["💰 Resumen y Movimientos", "💸 Registrar Gasto de Caja", "📅 Gastos Mensuales"]
     )
 
-    ventas = supabase.table("ventas_facturacion").select("*").gte("fecha_venta", f"{fecha_str}T00:00:00").lte("fecha_venta", f"{fecha_str}T23:59:59").neq("estado", "ANULADA").execute().data or []
-    recaudos = supabase.table("pagos_saldos").select("*").gte("fecha_pago", f"{fecha_str}T00:00:00").lte("fecha_pago", f"{fecha_str}T23:59:59").execute().data or []
-    gastos_todos_dia = supabase.table("gastos_caja").select("*").gte("fecha_gasto", f"{fecha_str}T00:00:00").lte("fecha_gasto", f"{fecha_str}T23:59:59").execute().data or []
+    ventas = supabase.table("ventas_facturacion").select("*").gte("fecha_venta", f"{fecha_str}T00:00:00-05:00").lte("fecha_venta", f"{fecha_str}T23:59:59-05:00").neq("estado", "ANULADA").execute().data or []
+    recaudos = supabase.table("pagos_saldos").select("*").gte("fecha_pago", f"{fecha_str}T00:00:00-05:00").lte("fecha_pago", f"{fecha_str}T23:59:59-05:00").execute().data or []
+    gastos_todos_dia = supabase.table("gastos_caja").select("*").gte("fecha_gasto", f"{fecha_str}T00:00:00-05:00").lte("fecha_gasto", f"{fecha_str}T23:59:59-05:00").execute().data or []
     # El cuadre diario solo se cierra con gastos DIARIOS (operativos).
     # Los MENSUALES (nómina, arriendo, facturas de proveedores) no
     # distorsionan el cierre de caja del día -- se reflejan aparte, en
@@ -2591,11 +2613,11 @@ elif modulo == "📊 Cuadre de Caja Físico":
         
         movimientos = [{"Hora": "08:00", "Tipo": "BASE", "Detalle": "Apertura de Caja Inicial", "Monto": base_caja_inicial, "Método": "EFECTIVO"}]
         for v in ventas:
-            if v.get('abono', 0) > 0: movimientos.append({"Hora": v['fecha_venta'][11:16], "Tipo": "VENTA", "Detalle": f"Fac #{v['numero_factura']} - {v['titular_nombre']}", "Monto": v['abono'], "Método": v['metodo_pago']})
+            if v.get('abono', 0) > 0: movimientos.append({"Hora": hora_co(v['fecha_venta']), "Tipo": "VENTA", "Detalle": f"Fac #{v['numero_factura']} - {v['titular_nombre']}", "Monto": v['abono'], "Método": v['metodo_pago']})
         for r in recaudos:
-            movimientos.append({"Hora": r['fecha_pago'][11:16], "Tipo": "RECAUDO", "Detalle": f"Saldo Fac #{r['numero_factura']}", "Monto": r['monto_pagado'], "Método": r['metodo_pago']})
+            movimientos.append({"Hora": hora_co(r['fecha_pago']), "Tipo": "RECAUDO", "Detalle": f"Saldo Fac #{r['numero_factura']}", "Monto": r['monto_pagado'], "Método": r['metodo_pago']})
         for g in gastos:
-            movimientos.append({"Hora": g['fecha_gasto'][11:16], "Tipo": "GASTO", "Detalle": str(g['descripcion']).upper(), "Monto": -g['monto'], "Método": g['metodo_pago']})
+            movimientos.append({"Hora": hora_co(g['fecha_gasto']), "Tipo": "GASTO", "Detalle": str(g['descripcion']).upper(), "Monto": -g['monto'], "Método": g['metodo_pago']})
         
         if movimientos:
             df_mov = pd.DataFrame(movimientos).sort_values(by="Hora", ascending=False)
@@ -2637,6 +2659,43 @@ elif modulo == "📊 Cuadre de Caja Físico":
                 st.session_state.trigger_clear_gastos = True
                 st.rerun()
 
+        st.divider()
+        st.markdown("#### 🔄 Reclasificar Gastos Recientes")
+        st.caption("¿Registraste un gasto con el tipo equivocado? Cámbialo aquí "
+                   "sin necesidad de borrarlo y volver a crearlo.")
+        dias_reclasificar = st.slider("Ver gastos de los últimos N días:", 1, 30, 7, key="dias_reclasificar")
+        limite_reclasificar = (now_co() - timedelta(days=dias_reclasificar)).isoformat()
+        gastos_recientes = supabase.table("gastos_caja").select("*") \
+            .gte("fecha_gasto", limite_reclasificar).order("fecha_gasto", desc=True).execute().data or []
+
+        if gastos_recientes:
+            for idx, g in enumerate(gastos_recientes):
+                tipo_actual = str(g.get("tipo_gasto") or "DIARIO").upper()
+                with st.container(border=True):
+                    gc1, gc2, gc3 = st.columns([3, 1, 1])
+                    fecha_g = hora_co(g.get("fecha_gasto"), "%d/%m/%Y %H:%M")
+                    gc1.markdown(f"**{g.get('descripcion','')}** -- ${format_currency_co(g.get('monto',0))} "
+                                 f"· {fecha_g} · {'📅 Mensual' if tipo_actual == 'MENSUAL' else '🗓️ Diario'}")
+
+                    def _actualizar_tipo_gasto(gasto, nuevo_tipo):
+                        (supabase.table("gastos_caja").update({"tipo_gasto": nuevo_tipo})
+                         .eq("fecha_gasto", gasto["fecha_gasto"])
+                         .eq("descripcion", gasto["descripcion"])
+                         .eq("monto", gasto["monto"]).execute())
+
+                    if tipo_actual == "DIARIO":
+                        if gc3.button("➡️ Pasar a Mensual", key=f"a_mensual_{idx}", use_container_width=True):
+                            _actualizar_tipo_gasto(g, "MENSUAL")
+                            st.session_state.global_toast = f"'{g.get('descripcion','')}' ahora es un gasto mensual."
+                            st.rerun()
+                    else:
+                        if gc3.button("⬅️ Pasar a Diario", key=f"a_diario_{idx}", use_container_width=True):
+                            _actualizar_tipo_gasto(g, "DIARIO")
+                            st.session_state.global_toast = f"'{g.get('descripcion','')}' ahora es un gasto diario."
+                            st.rerun()
+        else:
+            st.info(f"No hay gastos registrados en los últimos {dias_reclasificar} día(s).")
+
     with tab_gastos_mensuales:
         st.markdown("### 📅 Balance de Gastos Mensuales")
         st.caption("Gastos grandes recurrentes (nómina, arriendo, pagos a proveedores) que no forman "
@@ -2647,10 +2706,10 @@ elif modulo == "📊 Cuadre de Caja Físico":
         mes_opciones = [(hoy_gm - pd.DateOffset(months=i)).strftime("%Y-%m") for i in range(meses_atras)]
         mes_sel_gm = st.selectbox("Mes a consultar:", mes_opciones, key="mes_gastos_mensuales")
 
-        inicio_mes = f"{mes_sel_gm}-01T00:00:00"
+        inicio_mes = f"{mes_sel_gm}-01T00:00:00-05:00"
         anio_gm, mes_num_gm = int(mes_sel_gm[:4]), int(mes_sel_gm[5:7])
         ultimo_dia = calendar.monthrange(anio_gm, mes_num_gm)[1]
-        fin_mes = f"{mes_sel_gm}-{ultimo_dia:02d}T23:59:59"
+        fin_mes = f"{mes_sel_gm}-{ultimo_dia:02d}T23:59:59-05:00"
 
         gastos_mes = supabase.table("gastos_caja").select("*") \
             .eq("tipo_gasto", "MENSUAL") \
