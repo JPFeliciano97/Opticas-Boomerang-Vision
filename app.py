@@ -5,6 +5,7 @@ import base64
 import io
 import urllib.parse
 import re
+import calendar
 import pandas as pd
 import altair as alt
 from dotenv import load_dotenv
@@ -1326,13 +1327,17 @@ def on_altura_focal_change():
     digits = "".join(c for c in st.session_state.altura_focal_input if c.isdigit())
     st.session_state.altura_focal_input = f"{digits} mm" if digits else ""
 
-for k in ["subtotal_input", "abono_input", "descuento_input", "altura_focal_input", "monto_rec_input", "monto_gasto_input", "p_compra_input", "p_venta_input", "p_compra_m", "p_venta_m"]:
+for k in ["subtotal_input", "abono_input", "descuento_input", "altura_focal_input", "monto_rec_input", "monto_gasto_input", "p_compra_input", "p_venta_input", "p_compra_m", "p_venta_m", "desc_gasto_input"]:
     if k not in st.session_state: st.session_state[k] = ""
 if "last_fac_search" not in st.session_state: st.session_state.last_fac_search = ""
 
 if "trigger_clear_doc" in st.session_state and st.session_state.trigger_clear_doc:
     for k in ["doc_input", "nom_input", "cel_input", "dir_input", "ocu_input", "edad_input", "mot_input", "ctrl_input", "dp_od_input", "dp_oi_input", "obs_input"]: st.session_state[k] = ""
     for k in ["esf_od", "cil_od", "eje_od", "esf_oi", "cil_oi", "eje_oi", "add_input"]: st.session_state[k] = 0.0 if "eje" not in k else 0
+    st.session_state.fecha_nac_input = datetime(1995, 1, 1)
+    # Por seguridad: el habeas data NUNCA debe quedar "encendido" para el
+    # siguiente paciente sin su confirmación verbal real.
+    st.session_state.habeas_check = False
     st.session_state.trigger_clear_doc = False
 
 if "trigger_clear_factura" in st.session_state and st.session_state.trigger_clear_factura:
@@ -1342,7 +1347,14 @@ if "trigger_clear_factura" in st.session_state and st.session_state.trigger_clea
 if "trigger_clear_recaudo" in st.session_state and st.session_state.trigger_clear_recaudo:
     st.session_state.monto_rec_input = ""
     st.session_state.last_fac_search = ""
+    st.session_state.fac_search_input = ""
     st.session_state.trigger_clear_recaudo = False
+
+if "trigger_clear_gastos" in st.session_state and st.session_state.trigger_clear_gastos:
+    st.session_state.desc_gasto_input = ""
+    st.session_state.monto_gasto_input = ""
+    st.session_state.metodo_gasto_input = "EFECTIVO"
+    st.session_state.trigger_clear_gastos = False
 
 if "global_toast" in st.session_state:
     st.toast(st.session_state.global_toast, icon=st.session_state.get("global_toast_icon", "✅"))
@@ -1556,7 +1568,7 @@ if modulo == "👨‍⚕️ Consultorio":
             celular = col3.text_input("Celular *", key="cel_input")
             direccion = col1.text_input("Dirección", key="dir_input")
             ocupacion = col2.text_input("Ocupación", key="ocu_input")
-            fecha_nacimiento = col3.date_input("Fecha Nacimiento", value=datetime(1995, 1, 1), min_value=datetime(1900, 1, 1), max_value=now_co().replace(tzinfo=None), format="DD/MM/YYYY")
+            fecha_nacimiento = col3.date_input("Fecha Nacimiento", value=datetime(1995, 1, 1), min_value=datetime(1900, 1, 1), max_value=now_co().replace(tzinfo=None), format="DD/MM/YYYY", key="fecha_nac_input")
             edad = col1.text_input("Edad", key="edad_input")
             
         col_mot, col_ctrl = st.columns([2, 1])
@@ -1712,6 +1724,8 @@ elif modulo == "🛍️ Óptica y Facturación":
                             "direccion": q_dir, "habeas_data": True, "habeas_data_fecha": now_co().isoformat()
                         }).execute()
                         st.success("¡Paciente guardado exitosamente!")
+                        for k in ["q_nom_nuevo", "q_cel_nuevo", "q_dir_nuevo"]:
+                            if k in st.session_state: del st.session_state[k]
                         st.rerun()
             else:
                 paciente = res_paciente.data[0]
@@ -2018,7 +2032,7 @@ elif modulo == "🛍️ Óptica y Facturación":
 
     with tab_recaudo:
         st.markdown("<h4 style='color: #000000;'>💵 Recaudar Saldo y Cambiar Estado a Entregado</h4>", unsafe_allow_html=True)
-        fac_search = st.text_input("Ingrese el N° de Factura o Cédula a buscar:").upper()
+        fac_search = st.text_input("Ingrese el N° de Factura o Cédula a buscar:", key="fac_search_input").upper()
         if fac_search:
             # Cubre tanto factura corta ("2385") como formato legado completo
             cond_factura = filtro_busqueda_factura(fac_search)
@@ -2097,6 +2111,7 @@ elif modulo == "🛍️ Óptica y Facturación":
                             supabase.table("ventas_facturacion").update({"estado": "ANULADA"}).eq("numero_factura", fac_a["numero_factura"]).execute()
                             st.session_state.global_toast = "Factura ANULADA exitosamente."
                             st.session_state.global_toast_icon = "🚨"
+                            st.session_state.input_anular = ""
                             st.rerun()
                     else:
                         st.info("Marca la casilla de confirmación para habilitar el botón de anulación.")
@@ -2302,13 +2317,27 @@ elif modulo == "📊 Cuadre de Caja Físico":
 
     fecha_str = fecha_consulta.strftime("%Y-%m-%d")
     
-    tab_resumen, tab_gastos = st.tabs(["💰 Resumen y Movimientos", "💸 Registrar Gasto de Caja"])
+    tab_resumen, tab_gastos, tab_gastos_mensuales = st.tabs(
+        ["💰 Resumen y Movimientos", "💸 Registrar Gasto de Caja", "📅 Gastos Mensuales"]
+    )
 
     ventas = supabase.table("ventas_facturacion").select("*").gte("fecha_venta", f"{fecha_str}T00:00:00").lte("fecha_venta", f"{fecha_str}T23:59:59").neq("estado", "ANULADA").execute().data or []
     recaudos = supabase.table("pagos_saldos").select("*").gte("fecha_pago", f"{fecha_str}T00:00:00").lte("fecha_pago", f"{fecha_str}T23:59:59").execute().data or []
-    gastos = supabase.table("gastos_caja").select("*").gte("fecha_gasto", f"{fecha_str}T00:00:00").lte("fecha_gasto", f"{fecha_str}T23:59:59").execute().data or []
+    gastos_todos_dia = supabase.table("gastos_caja").select("*").gte("fecha_gasto", f"{fecha_str}T00:00:00").lte("fecha_gasto", f"{fecha_str}T23:59:59").execute().data or []
+    # El cuadre diario solo se cierra con gastos DIARIOS (operativos).
+    # Los MENSUALES (nómina, arriendo, facturas de proveedores) no
+    # distorsionan el cierre de caja del día -- se reflejan aparte, en
+    # el balance mensual.
+    gastos = [g for g in gastos_todos_dia if str(g.get('tipo_gasto') or 'DIARIO').upper() == 'DIARIO']
+    gastos_mensuales_dia = [g for g in gastos_todos_dia if str(g.get('tipo_gasto') or 'DIARIO').upper() == 'MENSUAL']
 
     with tab_resumen:
+        if gastos_mensuales_dia:
+            total_men_dia = sum(g.get('monto', 0) for g in gastos_mensuales_dia)
+            st.caption(f"📅 Hoy también se registraron **{len(gastos_mensuales_dia)}** gasto(s) mensual(es) "
+                       f"por ${format_currency_co(total_men_dia)} -- no incluidos en este cuadre diario, "
+                       f"ver pestaña 'Gastos Mensuales'.")
+
         abono_efectivo = sum(v.get('abono', 0) for v in ventas if str(v.get('metodo_pago') or '').upper() == 'EFECTIVO')
         abono_bancos = sum(v.get('abono', 0) for v in ventas if str(v.get('metodo_pago') or '').upper() != 'EFECTIVO')
         
@@ -2351,18 +2380,82 @@ elif modulo == "📊 Cuadre de Caja Físico":
 
     with tab_gastos:
         st.markdown("### 💸 Registrar Salida de Dinero (Gasto)")
+        tipo_gasto_sel = st.radio(
+            "Tipo de gasto:",
+            ["🗓️ Diario (operativo)", "📅 Mensual (nómina, arriendo, facturas de proveedores...)"],
+            key="tipo_gasto_radio", horizontal=True,
+        )
+        es_mensual = tipo_gasto_sel.startswith("📅")
+        if es_mensual:
+            st.caption("Este gasto no se restará del cuadre de caja de hoy -- se reflejará en el "
+                       "balance del mes, en la pestaña 'Gastos Mensuales'.")
         col_g1, col_g2, col_g3 = st.columns([2, 1, 1])
-        with col_g1: desc_gasto = st.text_input("Concepto / Descripción del Gasto", placeholder="Ej: Pago mensajería laboratorio").upper()
+        with col_g1: desc_gasto = st.text_input("Concepto / Descripción del Gasto", placeholder="Ej: Pago mensajería laboratorio", key="desc_gasto_input").upper()
         with col_g2: monto_gasto = int(clean_numeric_string(st.text_input("Valor ($)", key="monto_gasto_input", on_change=on_monto_gasto_change)) or 0)
-        with col_g3: metodo_gasto = st.selectbox("Forma de Salida", ["EFECTIVO", "BOLD", "NEQUI", "DAVIPLATA"])
+        with col_g3: metodo_gasto = st.selectbox("Forma de Salida", ["EFECTIVO", "BOLD", "NEQUI", "DAVIPLATA"], key="metodo_gasto_input")
         
         if st.button("💾 Guardar Gasto de Caja", type="primary"):
             if not desc_gasto or monto_gasto <= 0: st.warning("⚠️ Ingresa una descripción y valor válidos.")
             else:
-                supabase.table("gastos_caja").insert({"descripcion": desc_gasto, "monto": monto_gasto, "metodo_pago": metodo_gasto, "fecha_gasto": now_co().isoformat()}).execute()
+                supabase.table("gastos_caja").insert({
+                    "descripcion": desc_gasto, "monto": monto_gasto, "metodo_pago": metodo_gasto,
+                    "fecha_gasto": now_co().isoformat(),
+                    "tipo_gasto": "MENSUAL" if es_mensual else "DIARIO",
+                }).execute()
                 st.session_state.global_toast = "Gasto registrado correctamente."
                 st.session_state.trigger_clear_gastos = True
                 st.rerun()
+
+    with tab_gastos_mensuales:
+        st.markdown("### 📅 Balance de Gastos Mensuales")
+        st.caption("Gastos grandes recurrentes (nómina, arriendo, pagos a proveedores) que no forman "
+                   "parte del cuadre de caja del día a día, comparados contra el ingreso del mes.")
+
+        hoy_gm = now_co()
+        meses_atras = st.slider("Meses hacia atrás a mostrar:", 1, 12, 6, key="meses_gastos_mensuales")
+        mes_opciones = [(hoy_gm - pd.DateOffset(months=i)).strftime("%Y-%m") for i in range(meses_atras)]
+        mes_sel_gm = st.selectbox("Mes a consultar:", mes_opciones, key="mes_gastos_mensuales")
+
+        inicio_mes = f"{mes_sel_gm}-01T00:00:00"
+        anio_gm, mes_num_gm = int(mes_sel_gm[:4]), int(mes_sel_gm[5:7])
+        ultimo_dia = calendar.monthrange(anio_gm, mes_num_gm)[1]
+        fin_mes = f"{mes_sel_gm}-{ultimo_dia:02d}T23:59:59"
+
+        gastos_mes = supabase.table("gastos_caja").select("*") \
+            .eq("tipo_gasto", "MENSUAL") \
+            .gte("fecha_gasto", inicio_mes).lte("fecha_gasto", fin_mes).execute().data or []
+        ventas_mes_gm = traer_todas_las_filas(
+            "ventas_facturacion",
+            filtros_fn=lambda q: q.neq("estado", "ANULADA").gte("fecha_venta", inicio_mes).lte("fecha_venta", fin_mes)
+        )
+        gastos_diarios_mes = supabase.table("gastos_caja").select("monto") \
+            .eq("tipo_gasto", "DIARIO") \
+            .gte("fecha_gasto", inicio_mes).lte("fecha_gasto", fin_mes).execute().data or []
+
+        total_ingresos_mes = sum(v.get("total", 0) for v in ventas_mes_gm)
+        total_gastos_mensuales = sum(g.get("monto", 0) for g in gastos_mes)
+        total_gastos_diarios_mes = sum(g.get("monto", 0) for g in gastos_diarios_mes)
+        balance_neto = total_ingresos_mes - total_gastos_mensuales - total_gastos_diarios_mes
+
+        bm1, bm2, bm3, bm4 = st.columns(4)
+        bm1.metric("💰 Ingresos del Mes", f"${format_currency_co(total_ingresos_mes)}")
+        bm2.metric("📅 Gastos Mensuales", f"${format_currency_co(total_gastos_mensuales)}")
+        bm3.metric("🗓️ Gastos Diarios (suma del mes)", f"${format_currency_co(total_gastos_diarios_mes)}")
+        bm4.metric("✅ Balance Neto del Mes", f"${format_currency_co(balance_neto)}")
+
+        st.divider()
+        if gastos_mes:
+            df_gm = pd.DataFrame(gastos_mes)[["fecha_gasto", "descripcion", "monto", "metodo_pago"]]
+            df_gm["fecha_gasto"] = df_gm["fecha_gasto"].str[:10]
+            df_gm = df_gm.sort_values("fecha_gasto", ascending=False)
+            st.dataframe(
+                df_gm.style.format({"monto": lambda x: f"${format_currency_co(x)}"}),
+                use_container_width=True, hide_index=True,
+                column_config={"fecha_gasto": "Fecha", "descripcion": "Concepto",
+                               "monto": "Valor", "metodo_pago": "Método"}
+            )
+        else:
+            st.info(f"No hay gastos mensuales registrados en {mes_sel_gm}.")
 
 # ------------------------------------------
 # MÓDULO 4: INVENTARIO BODEGA
@@ -2417,8 +2510,8 @@ elif modulo == "📦 Inventario":
                 inv_prov = col_m2.text_input("Proveedor", key="m_prov").upper()
                 
                 col_m3, col_m4 = st.columns(2)
-                inv_mat = col_m3.selectbox("Material", ["METALICA", "TITANIO", "ALUMINIO", "ACERO", "PLASTICO", "ACETATO", "TR 90"])
-                inv_cant = col_m4.number_input("Cantidad a Ingresar", min_value=1, step=1, value=1)
+                inv_mat = col_m3.selectbox("Material", ["METALICA", "TITANIO", "ALUMINIO", "ACERO", "PLASTICO", "ACETATO", "TR 90"], key="m_mat")
+                inv_cant = col_m4.number_input("Cantidad a Ingresar", min_value=1, step=1, value=1, key="m_cant")
                 
                 c_pc, c_pv = st.columns(2)
                 val_compra = int(clean_numeric_string(c_pc.text_input("Precio Compra Unitario $", key="p_compra_m", on_change=on_p_compra_m_change)) or 0)
@@ -2430,11 +2523,11 @@ elif modulo == "📦 Inventario":
                 
                 if inv_cant == 1:
                     cm1, cm2 = st.columns(2)
-                    m_ref = cm1.text_input("N° Referencia (Código) *").upper()
-                    m_color = cm2.text_input("Color *").upper()
+                    m_ref = cm1.text_input("N° Referencia (Código) *", key="m_ref_unico").upper()
+                    m_color = cm2.text_input("Color *", key="m_color_unico").upper()
                     monturas_data.append((m_ref, m_color))
                 else:
-                    base_ref = st.text_input("Referencia Base (Para autocompletar)", help="Ej: Si digitas '123', se autocompletará 123-1, 123-2, etc.").upper()
+                    base_ref = st.text_input("Referencia Base (Para autocompletar)", help="Ej: Si digitas '123', se autocompletará 123-1, 123-2, etc.", key="m_base_ref").upper()
                     st.caption("Modifica manualmente los colores y el número de referencia final si es necesario:")
                     for i in range(int(inv_cant)):
                         cm1, cm2 = st.columns(2)
@@ -2456,6 +2549,13 @@ elif modulo == "📦 Inventario":
                                     "fecha_ingreso": now_co().isoformat()
                                 }).execute()
                             st.session_state.global_toast = f"{inv_cant} montura(s) registrada(s) correctamente."
+                            for k in ["m_marca", "m_prov", "p_compra_m", "p_venta_m", "m_ref_unico",
+                                      "m_color_unico", "m_base_ref"]:
+                                if k in st.session_state: st.session_state[k] = ""
+                            for i in range(int(inv_cant)):
+                                for k in [f"ref_{i}", f"col_{i}"]:
+                                    if k in st.session_state: st.session_state[k] = ""
+                            st.session_state.m_cant = 1
                             st.rerun()
                         except Exception as e:
                             st.error(f"Error al guardar en base de datos: {e}")
@@ -2485,12 +2585,14 @@ elif modulo == "📦 Inventario":
                                 "fecha_ingreso": now_co().isoformat()
                             }).execute()
                             st.session_state.global_toast = f"Producto '{inv_codigo}' registrado."
+                            for k in ["inv_codigo", "inv_marca", "inv_desc", "inv_prov", "p_compra_input", "p_venta_input"]:
+                                st.session_state[k] = ""
                             st.rerun()
                         except Exception as e: 
                             st.error(f"Error: {e}")
 
     with tab_ajuste:
-        codigo_ajuste = st.text_input("Buscar por Código:").upper()
+        codigo_ajuste = st.text_input("Buscar por Código:", key="codigo_ajuste_input").upper()
         if codigo_ajuste:
             res_prod = supabase.table("inventario").select("*").eq("codigo", codigo_ajuste).execute()
             if res_prod.data:
@@ -2498,8 +2600,8 @@ elif modulo == "📦 Inventario":
                 stock = int(prod["cantidad"])
                 st.info(f"**{prod['marca']}** - {prod['descripcion']} | Stock: **{stock}**")
                 c1, c2, c3 = st.columns([1, 1, 2])
-                with c1: accion = st.radio("Acción:", ["Sumar (+)", "Restar (-)"])
-                with c2: cant_ajustar = st.number_input("Cantidad", min_value=1, step=1, value=1)
+                with c1: accion = st.radio("Acción:", ["Sumar (+)", "Restar (-)"], key="ajuste_accion")
+                with c2: cant_ajustar = st.number_input("Cantidad", min_value=1, step=1, value=1, key="ajuste_cantidad")
                 with c3:
                     st.write(""); st.write("")
                     if st.button("Actualizar Stock", type="primary", use_container_width=True):
@@ -2508,6 +2610,8 @@ elif modulo == "📦 Inventario":
                         else:
                             supabase.table("inventario").update({"cantidad": nuevo_stock}).eq("codigo", codigo_ajuste).execute()
                             st.session_state.global_toast = f"Stock actualizado a {nuevo_stock}."
+                            st.session_state.codigo_ajuste_input = ""
+                            st.session_state.ajuste_cantidad = 1
                             st.rerun()
 
 # ------------------------------------------
@@ -2520,12 +2624,13 @@ elif modulo == "🔬 Control de Trabajos":
     
     with tab_labs:
         st.markdown("### Configuración de Laboratorios Externos")
-        nuevo_lab = st.text_input("Agregar Nuevo Laboratorio:", placeholder="Ej: OPTILAB BOGOTÁ").upper()
+        nuevo_lab = st.text_input("Agregar Nuevo Laboratorio:", placeholder="Ej: OPTILAB BOGOTÁ", key="nuevo_lab_input").upper()
         if st.button("➕ Añadir Laboratorio", type="primary"):
             if nuevo_lab:
                 try:
                     supabase.table("laboratorios").insert({"nombre": nuevo_lab}).execute()
                     st.session_state.global_toast = "Laboratorio añadido correctamente."
+                    st.session_state.nuevo_lab_input = ""
                     st.rerun()
                 except Exception as e:
                     st.error("⚠️ Es posible que este laboratorio ya exista o falte crear la tabla en Supabase.")
