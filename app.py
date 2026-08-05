@@ -564,7 +564,258 @@ def normalizar_texto_busqueda(v):
     return re.sub(r"\s+", " ", s).strip()
 
 
+def _buscar_candidatos_historial(query_texto):
+    """
+    Busca por documento, nombre, celular o N° de factura/trabajo en las
+    tablas YA UNIFICADAS: pacientes, historias_clinicas (incluye legado
+    vía nombre_legado/celular_legado) y ventas_facturacion (incluye
+    legado vía titular_nombre/titular_doc/titular_tel, con numero_factura
+    prefijado "LEG-" para los históricos).
+    Devuelve un dict {clave_identidad: {documento, nombre, celular,
+    activo, n_legado}}.
+    """
+    q_upper = normalizar_texto_busqueda(query_texto)
+    q_digits = "".join(c for c in query_texto if c.isdigit())
+
+    pac_matches, hc_matches, vf_matches = [], [], []
+    error_busqueda = None
+    try:
+        filtros_pac = []
+        if q_digits:
+            filtros_pac += [f"documento.eq.{q_digits}", f"celular.eq.{q_digits}"]
+        if q_upper:
+            filtros_pac.append(f"nombre_completo.ilike.%{q_upper}%")
+        if filtros_pac:
+            pac_matches = supabase.table("pacientes").select("*") \
+                .or_(",".join(filtros_pac)).limit(20).execute().data
+
+        filtros_hc = []
+        if q_digits:
+            filtros_hc += [f"paciente_documento.eq.{q_digits}",
+                            f"celular_legado.eq.{q_digits}"]
+        if q_upper:
+            filtros_hc.append(f"nombre_legado.ilike.%{q_upper}%")
+        if filtros_hc:
+            hc_matches = supabase.table("historias_clinicas").select("*") \
+                .or_(",".join(filtros_hc)).limit(50).execute().data
+
+        filtros_vf = []
+        if q_digits:
+            filtros_vf += [f"paciente_documento.eq.{q_digits}",
+                            f"titular_doc.eq.{q_digits}",
+                            f"titular_tel.eq.{q_digits}",
+                            f"numero_factura.eq.{q_digits}",
+                            f"numero_factura.eq.LEG-{q_digits}"]
+        if q_upper:
+            filtros_vf.append(f"titular_nombre.ilike.%{q_upper}%")
+        if filtros_vf:
+            vf_matches = supabase.table("ventas_facturacion").select("*") \
+                .or_(",".join(filtros_vf)).limit(50).execute().data
+    except Exception as e:
+        error_busqueda = str(e)
+
+    identidades = {}
+
+    def _clave(doc, nombre):
+        doc_limpio = "".join(c for c in str(doc or "") if c.isdigit())
+        if doc_limpio:
+            return f"DOC:{doc_limpio}"
+        return f"NOM:{normalizar_texto_busqueda(nombre)}"
+
+    for p in pac_matches:
+        k = _clave(p.get("documento"), p.get("nombre_completo"))
+        identidades.setdefault(k, {"documento": p.get("documento"),
+                                    "nombre": p.get("nombre_completo"),
+                                    "celular": p.get("celular"),
+                                    "activo": False, "n_legado": 0})
+        identidades[k]["activo"] = True
+        identidades[k]["documento"] = p.get("documento") or identidades[k]["documento"]
+        identidades[k]["nombre"] = p.get("nombre_completo") or identidades[k]["nombre"]
+
+    for h in hc_matches:
+        nombre_h = h.get("nombre_legado") or ""
+        k = _clave(h.get("paciente_documento"), nombre_h)
+        identidades.setdefault(k, {"documento": h.get("paciente_documento"),
+                                    "nombre": nombre_h,
+                                    "celular": h.get("celular_legado"),
+                                    "activo": False, "n_legado": 0})
+        if h.get("origen") == "LEGADO":
+            identidades[k]["n_legado"] += 1
+
+    for v in vf_matches:
+        nombre_v = v.get("titular_nombre") or ""
+        k = _clave(v.get("paciente_documento") or v.get("titular_doc"), nombre_v)
+        identidades.setdefault(k, {"documento": v.get("paciente_documento") or v.get("titular_doc"),
+                                    "nombre": nombre_v,
+                                    "celular": v.get("titular_tel"),
+                                    "activo": False, "n_legado": 0})
+        if v.get("origen") == "LEGADO":
+            identidades[k]["n_legado"] += 1
+
+    return identidades, error_busqueda
+
+
+def _cargar_detalle_historial(doc_sel, nombre_sel):
+    """
+    Carga el historial completo (ficha activa + historias + ventas) para
+    una identidad ya resuelta, filtrando por documento si existe, o por
+    nombre exacto cuando la identidad no tiene documento vinculado.
+    """
+    if doc_sel:
+        pac_hist = supabase.table("pacientes").select("*").eq("documento", doc_sel).execute().data
+        hist_data = supabase.table("historias_clinicas").select("*").eq("paciente_documento", doc_sel).order("fecha", desc=True).execute().data
+        ventas_data = supabase.table("ventas_facturacion").select("*").eq("paciente_documento", doc_sel).order("fecha_venta", desc=True).execute().data
+    else:
+        pac_hist = []
+        hist_data = supabase.table("historias_clinicas").select("*").eq("nombre_legado", nombre_sel).order("fecha", desc=True).execute().data
+        ventas_data = supabase.table("ventas_facturacion").select("*").eq("titular_nombre", nombre_sel).order("fecha_venta", desc=True).execute().data
+    return pac_hist, hist_data, ventas_data
+
+
+def mostrar_buscador_historial(key_prefix):
+    """
+    Renderiza el buscador de historial completo (búsqueda multi-criterio
+    + selector de candidatos + detalle). Reutilizable desde cualquier
+    módulo -- key_prefix evita colisiones de session_state entre usos.
+    """
+    st.caption("Busca por cédula, nombre, celular o N° de factura/trabajo. Incluye "
+               "historias e información de venta activas, y también registros de "
+               "años anteriores migrados desde archivos antiguos, aunque no sean "
+               "una historia clínica o factura completa.")
+    col_h1, col_h2 = st.columns([3, 1])
+    with col_h1:
+        query_hist = st.text_input(
+            "Cédula, nombre, celular o N° de factura:", key=f"{key_prefix}_query"
+        ).strip()
+    with col_h2:
+        st.write(""); st.write("")
+        buscar_hist = st.button("Buscar", key=f"{key_prefix}_btn", use_container_width=True)
+
+    if buscar_hist and query_hist:
+        with st.spinner("Buscando..."):
+            identidades, error_busqueda = _buscar_candidatos_historial(query_hist)
+        if error_busqueda:
+            st.caption(f"⚠️ Ocurrió un problema al buscar ({error_busqueda}).")
+        st.session_state[f"{key_prefix}_candidatos"] = identidades
+        st.session_state[f"{key_prefix}_query_hecha"] = query_hist
+        st.session_state[f"{key_prefix}_sel"] = None
+
+    candidatos = st.session_state.get(f"{key_prefix}_candidatos")
+    if candidatos is None:
+        return
+
+    if len(candidatos) == 0:
+        st.error(f"No se encontró ningún registro para "
+                 f"“{st.session_state.get(f'{key_prefix}_query_hecha','')}”.")
+        return
+
+    sel_info = None
+    if len(candidatos) == 1:
+        sel_info = list(candidatos.values())[0]
+    else:
+        st.markdown(f"##### Se encontraron **{len(candidatos)}** coincidencias — selecciona una:")
+        for k, info in candidatos.items():
+            with st.container(border=True):
+                cc1, cc2, cc3 = st.columns([3, 2, 1])
+                etiqueta_activo = " · ✅ Paciente activo" if info["activo"] else ""
+                cc1.markdown(f"**{info['nombre'] or '—'}**{etiqueta_activo}")
+                cc2.markdown(f"Doc: `{info['documento'] or '—'}` · "
+                             f"Tel: `{info['celular'] or '—'}` · "
+                             f"{info['n_legado']} registro(s) legado")
+                if cc3.button("Ver", key=f"{key_prefix}_ver_{k}", use_container_width=True):
+                    st.session_state[f"{key_prefix}_sel"] = k
+                    st.rerun()
+        sel_key = st.session_state.get(f"{key_prefix}_sel")
+        sel_info = candidatos.get(sel_key) if sel_key else None
+
+    if not sel_info:
+        return
+
+    doc_sel = sel_info.get("documento")
+    nombre_sel = sel_info.get("nombre")
+
+    with st.spinner("Cargando historial completo..."):
+        pac_hist, hist_data, ventas_data = _cargar_detalle_historial(doc_sel, nombre_sel)
+
+    st.divider()
+
+    if pac_hist:
+        p = pac_hist[0]
+        with st.container(border=True):
+            c1, c2, c3 = st.columns(3)
+            c1.markdown(f"**👤 {str(p.get('nombre_completo','')).upper()}**")
+            c2.markdown(f"**📱** {p.get('celular','N/A')}")
+            c3.markdown(f"**🎂** {p.get('fecha_nacimiento','N/A')}")
+    else:
+        aviso = "no está registrado como paciente activo" if not doc_sel else \
+                "este documento no está registrado como paciente activo"
+        st.warning(f"⚠️ {nombre_sel or 'Este contacto'} {aviso}, "
+                   f"pero se encontraron registros históricos abajo.")
+
+    # --- Historias clínicas (actuales y legado, ya unificadas) ---
+    if hist_data:
+        st.markdown(f"##### 📋 {len(hist_data)} historia(s) clínica(s)")
+        for h in hist_data:
+            fecha_fmt = (h.get("fecha") or "")[:10]
+            try:
+                fecha_fmt = datetime.strptime(fecha_fmt, "%Y-%m-%d").strftime("%d/%m/%Y")
+            except Exception:
+                pass
+            es_legado = h.get("origen") == "LEGADO"
+            titulo_extra = " · 📜 LEGADO" if es_legado else ""
+            if h.get("pendiente_revisar") in (True, "true", "True"):
+                titulo_extra += " · ⚠️ PENDIENTE POR REVISAR"
+            with st.container(border=True):
+                hc1, hc2 = st.columns([1, 3])
+                hc1.markdown(f"**📅 {fecha_fmt}**{titulo_extra}")
+                hc2.markdown(f"**Motivo:** {h.get('motivo_consulta','—') or '—'}")
+                rx_od = h.get("rx_final_od", "")
+                rx_oi = h.get("rx_final_oi", "")
+                dp = h.get("dp", "")
+                add = h.get("adicion", "")
+                obs = h.get("observaciones", "")
+                if rx_od or rx_oi:
+                    st.markdown(f"**Rx OD:** `{rx_od}`  |  **Rx OI:** `{rx_oi}`" + (f"  |  **D.P.:** `{dp}`" if dp else "") + (f"  |  **Adición:** `{add}`" if add else ""))
+                if obs:
+                    st.caption(f"📝 {obs}")
+
+    # --- Ventas / trabajos (actuales y legado, ya unificadas) ---
+    if ventas_data:
+        st.markdown(f"##### 🛍️ {len(ventas_data)} venta(s) / trabajo(s)")
+        for v in ventas_data:
+            fecha_fmt = (v.get("fecha_venta") or "")[:10]
+            try:
+                fecha_fmt = datetime.strptime(fecha_fmt, "%Y-%m-%d").strftime("%d/%m/%Y")
+            except Exception:
+                pass
+            es_legado = v.get("origen") == "LEGADO"
+            etiqueta = f"🛠️ Fac. {v.get('numero_factura','—')} — {fecha_fmt}"
+            if es_legado:
+                etiqueta += " · 📜 LEGADO"
+            with st.expander(etiqueta):
+                st.markdown(f"**Detalle:** {v.get('descripcion','—')}")
+                info_extra = []
+                if v.get("total"):
+                    try:
+                        info_extra.append(f"**Total:** ${format_currency_co(int(float(v['total'])))}")
+                    except Exception:
+                        pass
+                if v.get("estado_lab"):
+                    info_extra.append(f"**Estado:** {v['estado_lab']}")
+                if v.get("laboratorio"):
+                    info_extra.append(f"**Laboratorio:** {v['laboratorio']}")
+                if info_extra:
+                    st.markdown(" · ".join(info_extra))
+                if es_legado:
+                    st.caption("⚠️ Registro histórico migrado: se asume saldado (sin desglose "
+                               "de abonos originales). No participa del cuadre de caja actual.")
+
+    if not hist_data and not ventas_data and not pac_hist:
+        st.info("No hay historias ni ventas asociadas a este contacto todavía.")
+
+
 def format_currency_co(val):
+
     if val is None or val == "": return ""
     if isinstance(val, (int, float)): val = int(val)
     val_str = str(val).strip()
@@ -596,11 +847,12 @@ def convert_df_to_excel(df, sheet_name="Reporte"):
     with pd.ExcelWriter(output, engine='openpyxl') as writer: df.to_excel(writer, index=False, sheet_name=sheet_name)
     return output.getvalue()
 
-def styled_header(text, icon=""):
+def styled_header(text, icon="", badge_html=""):
     st.markdown(f"""
         <div style="display:flex; align-items:center; justify-content:space-between;
                     border-bottom: 2px solid #f5c2c2; padding-bottom:10px; margin-bottom:20px;">
             <h3 style='font-weight:700; margin:0; color:#000000;'>{icon} {text}</h3>
+            {badge_html}
         </div>
     """, unsafe_allow_html=True)
 
@@ -1049,7 +1301,46 @@ modulo = st.session_state.current_module
 # MÓDULO 1: CONSULTORIO (Pestañas Limpias)
 # ------------------------------------------
 if modulo == "👨‍⚕️ Consultorio":
-    styled_header("Recepción y Clínica", "👨‍⚕️")
+    try:
+        pendientes_revisar = supabase.table("historias_clinicas").select(
+            "paciente_documento,nombre_legado,celular_legado,fecha,motivo_consulta"
+        ).eq("pendiente_revisar", True).order("fecha", desc=True).execute().data
+    except Exception:
+        pendientes_revisar = []
+
+    n_pendientes = len(pendientes_revisar)
+    badge = ""
+    if n_pendientes > 0:
+        badge = (f'<span style="background:#fff3e0; color:#ef6c00; padding:5px 14px; '
+                 f'border-radius:20px; font-weight:700; font-size:0.85em;">'
+                 f'⚠️ {n_pendientes} pendiente(s) por revisar</span>')
+    styled_header("Recepción y Clínica", "👨‍⚕️", badge)
+
+    if n_pendientes > 0:
+        with st.expander(f"⚠️ {n_pendientes} historia(s) clínica(s) pendiente(s) por revisar", expanded=False):
+            st.caption("Visitas recientes migradas del histórico que no traían fórmula registrada. "
+                       "Se resuelven solas cuando el paciente vuelve y se le crea una historia nueva "
+                       "con fórmula, o puedes marcarlas como revisadas manualmente.")
+            for i, pend in enumerate(pendientes_revisar):
+                with st.container(border=True):
+                    pc1, pc2 = st.columns([4, 1])
+                    nombre_p = pend.get("nombre_legado") or "(sin nombre)"
+                    doc_p = pend.get("paciente_documento") or "sin documento"
+                    fecha_p = (pend.get("fecha") or "")[:10]
+                    pc1.markdown(f"**{nombre_p}** · Doc: `{doc_p}` · {fecha_p}")
+                    pc1.caption(pend.get("motivo_consulta") or "Sin motivo registrado")
+                    if pc2.button("Marcar revisada", key=f"marcar_rev_{i}", use_container_width=True):
+                        try:
+                            q = supabase.table("historias_clinicas").update({"pendiente_revisar": False})
+                            if pend.get("paciente_documento"):
+                                q = q.eq("paciente_documento", pend["paciente_documento"]).eq("fecha", pend["fecha"])
+                            else:
+                                q = q.eq("nombre_legado", pend.get("nombre_legado")).eq("fecha", pend["fecha"])
+                            q.execute()
+                            st.toast("Marcada como revisada.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"No se pudo actualizar: {e}")
     
     tab_adm, tab_ref, tab_cierre, tab_hist = st.tabs(["📋 1. Admisión Paciente", "👁️ 2. Refracción (Rx)", "📝 3. Diagnóstico y Cierre", "📂 4. Historial"])
     
@@ -1066,7 +1357,44 @@ if modulo == "👨‍⚕️ Consultorio":
                     st.session_state.cel_input = p.get("celular", ""); st.session_state.dir_input = p.get("direccion", "")
                     st.session_state.ocu_input = p.get("ocupacion", ""); st.session_state.edad_input = p.get("edad", "")
                     st.toast("✅ Paciente cargado.")
-                else: st.warning("No encontrado.")
+                    st.session_state.doc_autofill_preview = None
+                else:
+                    # No está como paciente activo: buscamos en historial
+                    # unificado (historias_clinicas y ventas_facturacion,
+                    # que ya incluyen los registros migrados del histórico)
+                    # por si hay algo que valga la pena mostrar antes de
+                    # asumir que es un paciente totalmente nuevo.
+                    try:
+                        hc_prev = supabase.table("historias_clinicas").select("*") \
+                            .eq("paciente_documento", doc_autofill).order("fecha", desc=True).execute().data
+                        vf_prev = supabase.table("ventas_facturacion").select("*") \
+                            .eq("paciente_documento", doc_autofill).order("fecha_venta", desc=True).execute().data
+                    except Exception:
+                        hc_prev, vf_prev = [], []
+
+                    if hc_prev or vf_prev:
+                        nombre_prev = ""
+                        cel_prev = ""
+                        if hc_prev and hc_prev[0].get("nombre_legado"):
+                            nombre_prev = hc_prev[0]["nombre_legado"]
+                            cel_prev = hc_prev[0].get("celular_legado", "")
+                        elif vf_prev and vf_prev[0].get("titular_nombre"):
+                            nombre_prev = vf_prev[0]["titular_nombre"]
+                            cel_prev = vf_prev[0].get("titular_tel", "")
+                        if nombre_prev:
+                            st.session_state.nom_input = nombre_prev
+                        if cel_prev:
+                            st.session_state.cel_input = cel_prev
+                        st.session_state.doc_input = doc_autofill
+                        st.session_state.doc_autofill_preview = {
+                            "n_historias": len(hc_prev), "n_ventas": len(vf_prev),
+                        }
+                        st.info(f"📜 No está registrado como paciente activo, pero encontramos "
+                                f"{len(hc_prev)} historia(s) y {len(vf_prev)} venta(s) en el histórico. "
+                                f"Nombre y celular sugeridos abajo — verifícalos y completa el registro.")
+                    else:
+                        st.session_state.doc_autofill_preview = None
+                        st.warning("No encontrado, ni activo ni en el histórico.")
 
         with st.container(border=True):
             col1, col2, col3 = st.columns(3)
@@ -1132,277 +1460,31 @@ if modulo == "👨‍⚕️ Consultorio":
                 except Exception: supabase.table("pacientes").upsert({"documento": doc_up, "nombre_completo": nom_up, "celular": cel_up, "ocupacion": str(ocupacion).upper(), "direccion": str(direccion).upper(), "fecha_nacimiento": fecha_nacimiento.strftime("%Y-%m-%d"), "habeas_data": True, "habeas_data_fecha": now_co().isoformat()}).execute()
 
                 supabase.table("historias_clinicas").insert({"paciente_documento": doc_up, "motivo_consulta": str(motivo).upper(), "rx_final_od": rx_od_final, "rx_final_oi": rx_oi_final, "dp": dp_combined, "ultimo_control": str(ultimo_control).upper(), "observaciones": str(obs).upper(), "adicion": f"{adicion:+.2f}" if adicion > 0.0 else "", "fecha": now_co().isoformat()}).execute()
+
+                # El paciente acaba de ser reatendido con una historia real:
+                # se resuelven sus pendientes de revisión anteriores, si tenía.
+                try:
+                    supabase.table("historias_clinicas").update({"pendiente_revisar": False}) \
+                        .eq("paciente_documento", doc_up).eq("pendiente_revisar", True).execute()
+                except Exception:
+                    pass
+
                 st.session_state.global_toast = f"Historia de {nom_up} guardada."
                 st.session_state.trigger_clear_doc = True
                 st.rerun()
 
     with tab_hist:
         st.markdown("#### 🔍 Buscar Historial de un Paciente")
-        st.caption("Busca por cédula, nombre, celular o N° de factura/trabajo. Incluye "
-                   "historias activas y registros de años anteriores migrados desde "
-                   "archivos antiguos, aunque no sean una historia clínica completa.")
-        col_h1, col_h2 = st.columns([3, 1])
-        with col_h1:
-            query_hist = st.text_input(
-                "Cédula, nombre, celular o N° de factura:", key="query_hist_input"
-            ).strip()
-        with col_h2:
-            st.write(""); st.write("")
-            buscar_hist = st.button("Buscar", key="btn_buscar_hist", use_container_width=True)
-
-        if buscar_hist and query_hist:
-            q_upper = normalizar_texto_busqueda(query_hist)
-            q_digits = "".join(c for c in query_hist if c.isdigit())
-
-            with st.spinner("Buscando..."):
-                pac_matches, hhc_matches, ht_matches = [], [], []
-                error_legado = None
-
-                # --- pacientes activos ---
-                filtros_pac = []
-                if q_digits:
-                    filtros_pac += [f"documento.eq.{q_digits}", f"celular.eq.{q_digits}"]
-                if q_upper:
-                    filtros_pac.append(f"nombre_completo.ilike.%{q_upper}%")
-                if filtros_pac:
-                    pac_matches = supabase.table("pacientes").select("*") \
-                        .or_(",".join(filtros_pac)).limit(20).execute().data
-
-                # --- historial legado ---
-                try:
-                    filtros_hhc = []
-                    if q_digits:
-                        filtros_hhc += [f"paciente_documento.eq.{q_digits}",
-                                         f"celular_legado.eq.{q_digits}"]
-                    if q_upper:
-                        filtros_hhc.append(f"paciente_nombre_legado.ilike.%{q_upper}%")
-                    if filtros_hhc:
-                        hhc_matches = supabase.table("historico_historias_clinicas").select("*") \
-                            .or_(",".join(filtros_hhc)).limit(50).execute().data
-
-                    filtros_ht = []
-                    if q_digits:
-                        filtros_ht += [f"paciente_documento.eq.{q_digits}",
-                                        f"celular_legado.eq.{q_digits}",
-                                        f"numero_trabajo.eq.{q_digits}"]
-                    if q_upper:
-                        filtros_ht.append(f"paciente_nombre_legado.ilike.%{q_upper}%")
-                    if filtros_ht:
-                        ht_matches = supabase.table("historico_trabajos").select("*") \
-                            .or_(",".join(filtros_ht)).limit(50).execute().data
-                except Exception as e:
-                    error_legado = str(e)
-
-            if error_legado:
-                st.caption(f"⚠️ No se pudo consultar el historial legado ({error_legado}). "
-                           f"Verifica que las tablas históricas existan y que RLS esté "
-                           f"desactivado (ver 02_diagnostico_rls.sql).")
-
-            # --- Consolidar en identidades únicas (documento si existe, si no nombre) ---
-            identidades = {}
-
-            def _clave(doc, nombre):
-                doc_limpio = "".join(c for c in str(doc or "") if c.isdigit())
-                if doc_limpio:
-                    return f"DOC:{doc_limpio}"
-                return f"NOM:{normalizar_texto_busqueda(nombre)}"
-
-            for p in pac_matches:
-                k = _clave(p.get("documento"), p.get("nombre_completo"))
-                identidades.setdefault(k, {
-                    "documento": p.get("documento"), "nombre": p.get("nombre_completo"),
-                    "celular": p.get("celular"), "activo": False, "n_legado": 0,
-                })
-                identidades[k]["activo"] = True
-                identidades[k]["documento"] = p.get("documento") or identidades[k]["documento"]
-                identidades[k]["nombre"] = p.get("nombre_completo") or identidades[k]["nombre"]
-
-            for h in hhc_matches:
-                k = _clave(h.get("paciente_documento"), h.get("paciente_nombre_legado"))
-                identidades.setdefault(k, {
-                    "documento": h.get("paciente_documento"),
-                    "nombre": h.get("paciente_nombre_legado"),
-                    "celular": h.get("celular_legado"), "activo": False, "n_legado": 0,
-                })
-                identidades[k]["n_legado"] += 1
-
-            for t in ht_matches:
-                k = _clave(t.get("paciente_documento"), t.get("paciente_nombre_legado"))
-                identidades.setdefault(k, {
-                    "documento": t.get("paciente_documento"),
-                    "nombre": t.get("paciente_nombre_legado"),
-                    "celular": t.get("celular_legado"), "activo": False, "n_legado": 0,
-                })
-                identidades[k]["n_legado"] += 1
-
-            st.session_state.hist_candidatos = identidades
-            st.session_state.hist_query_realizada = query_hist
-            st.session_state.hist_identidad_sel = None
-
-        # ================= Mostrar candidatos o detalle =================
-        candidatos = st.session_state.get("hist_candidatos")
-        if candidatos is not None:
-            if len(candidatos) == 0:
-                st.error(f"No se encontró ningún registro para "
-                         f"“{st.session_state.get('hist_query_realizada','')}”.")
-            elif len(candidatos) == 1:
-                sel_key, sel_info = list(candidatos.items())[0]
-            else:
-                st.markdown(f"##### Se encontraron **{len(candidatos)}** coincidencias — selecciona una:")
-                for k, info in candidatos.items():
-                    with st.container(border=True):
-                        cc1, cc2, cc3 = st.columns([3, 2, 1])
-                        etiqueta_activo = " · ✅ Paciente activo" if info["activo"] else ""
-                        cc1.markdown(f"**{info['nombre'] or '—'}**{etiqueta_activo}")
-                        cc2.markdown(f"Doc: `{info['documento'] or '—'}` · "
-                                     f"Tel: `{info['celular'] or '—'}` · "
-                                     f"{info['n_legado']} registro(s) legado")
-                        if cc3.button("Ver", key=f"ver_cand_{k}", use_container_width=True):
-                            st.session_state.hist_identidad_sel = k
-                            st.rerun()
-                sel_key = st.session_state.get("hist_identidad_sel")
-                sel_info = candidatos.get(sel_key) if sel_key else None
-
-            if len(candidatos) == 1 or st.session_state.get("hist_identidad_sel"):
-                if sel_info:
-                    doc_sel = sel_info.get("documento")
-                    nombre_sel = sel_info.get("nombre")
-
-                    with st.spinner("Cargando historial completo..."):
-                        if doc_sel:
-                            pac_hist = supabase.table("pacientes").select("*").eq("documento", doc_sel).execute().data
-                            hist_data = supabase.table("historias_clinicas").select("*").eq("paciente_documento", doc_sel).order("fecha", desc=True).limit(10).execute().data
-                        else:
-                            pac_hist, hist_data = [], []
-
-                        legado_hc, legado_trab = [], []
-                        try:
-                            if doc_sel:
-                                legado_hc = supabase.table("historico_historias_clinicas").select("*").eq("paciente_documento", doc_sel).order("fecha", desc=True).execute().data
-                                legado_trab = supabase.table("historico_trabajos").select("*").eq("paciente_documento", doc_sel).order("fecha", desc=True).execute().data
-                            else:
-                                # Identidad sin documento: se re-busca por nombre exacto
-                                legado_hc = supabase.table("historico_historias_clinicas").select("*").eq("paciente_nombre_legado", nombre_sel).order("fecha", desc=True).execute().data
-                                legado_trab = supabase.table("historico_trabajos").select("*").eq("paciente_nombre_legado", nombre_sel).order("fecha", desc=True).execute().data
-                        except Exception as e:
-                            st.caption(f"⚠️ No se pudo consultar el historial legado ({e}).")
-
-                    st.divider()
-
-                    # --- Ficha del paciente activo ---
-                    if pac_hist:
-                        p = pac_hist[0]
-                        with st.container(border=True):
-                            c1, c2, c3 = st.columns(3)
-                            c1.markdown(f"**👤 {str(p.get('nombre_completo','')).upper()}**")
-                            c2.markdown(f"**📱** {p.get('celular','N/A')}")
-                            c3.markdown(f"**🎂** {p.get('fecha_nacimiento','N/A')}")
-                    else:
-                        aviso = "no está registrado como paciente activo" if not doc_sel else \
-                                "este documento no está registrado como paciente activo"
-                        st.warning(f"⚠️ {nombre_sel or 'Este contacto'} {aviso}, "
-                                   f"pero se encontraron registros históricos abajo.")
-
-                    # --- Historias clínicas modernas (activas) ---
-                    if hist_data:
-                        st.markdown(f"##### 📋 Últimas {len(hist_data)} consulta(s) registradas en el sistema actual")
-                        for h in hist_data:
-                            fecha_fmt = h.get("fecha", "")[:10]
-                            try:
-                                fecha_fmt = datetime.strptime(fecha_fmt, "%Y-%m-%d").strftime("%d/%m/%Y")
-                            except Exception:
-                                pass
-                            with st.container(border=True):
-                                hc1, hc2 = st.columns([1, 3])
-                                hc1.markdown(f"**📅 {fecha_fmt}**")
-                                hc2.markdown(f"**Motivo:** {h.get('motivo_consulta','—')}")
-                                rx_od = h.get("rx_final_od", "")
-                                rx_oi = h.get("rx_final_oi", "")
-                                dp = h.get("dp", "")
-                                add = h.get("adicion", "")
-                                obs = h.get("observaciones", "")
-                                if rx_od or rx_oi:
-                                    st.markdown(f"**Rx OD:** `{rx_od}`  |  **Rx OI:** `{rx_oi}`" + (f"  |  **D.P.:** `{dp}`" if dp else "") + (f"  |  **Adición:** `{add}`" if add else ""))
-                                if obs:
-                                    st.caption(f"📝 {obs}")
-
-                    # --- Historial legado (archivos antiguos migrados) ---
-                    total_legado = len(legado_hc) + len(legado_trab)
-                    if total_legado > 0:
-                        st.markdown(f"##### 📜 Historial Legado ({total_legado} registro(s) de archivos antiguos)")
-                        st.caption("Migrado desde registros previos al sistema actual. La información "
-                                   "puede estar incompleta.")
-
-                        eventos = []
-                        for h in legado_hc:
-                            eventos.append(("🩺 Historia clínica (legado)", h.get("fecha",""), h))
-                        for t in legado_trab:
-                            eventos.append(("🛠️ Trabajo / venta (legado)", t.get("fecha",""), t))
-                        eventos.sort(key=lambda x: x[1] or "", reverse=True)
-
-                        for etiqueta, fecha, reg in eventos:
-                            fecha_fmt = fecha[:10] if fecha else "Fecha desconocida"
-                            try:
-                                fecha_fmt = datetime.strptime(fecha_fmt, "%Y-%m-%d").strftime("%d/%m/%Y")
-                            except Exception:
-                                pass
-
-                            titulo_extra = ""
-                            if reg.get("pendiente_revisar") in (True, "true", "True"):
-                                titulo_extra = " · ⚠️ PENDIENTE POR REVISAR"
-
-                            with st.expander(f"{etiqueta} — {fecha_fmt}{titulo_extra}"):
-                                rx_od = reg.get("rx_final_od", "")
-                                rx_oi = reg.get("rx_final_oi", "")
-                                add = reg.get("adicion", "")
-                                if rx_od or rx_oi:
-                                    st.markdown(f"**Rx OD:** `{rx_od or '—'}`  |  **Rx OI:** `{rx_oi or '—'}`"
-                                                + (f"  |  **Adición:** `{add}`" if add else ""))
-                                elif reg.get("formula_original"):
-                                    st.caption(f"Fórmula original (sin separar OD/OI): {reg.get('formula_original')}")
-
-                                motivo = reg.get("motivo_consulta", "")
-                                if motivo:
-                                    st.markdown(f"**Motivo / detalle:** {motivo}")
-
-                                if reg.get("numero_trabajo"):
-                                    st.caption(f"N° de trabajo/factura: {reg['numero_trabajo']}")
-
-                                # Campos propios de historico_trabajos
-                                if "estado" in reg:
-                                    info_extra = []
-                                    if reg.get("tipo_lente"):
-                                        info_extra.append(f"**Tipo:** {reg['tipo_lente']}")
-                                    if reg.get("laboratorio_o_proveedor"):
-                                        info_extra.append(f"**Laboratorio:** {reg['laboratorio_o_proveedor']}")
-                                    if reg.get("estado"):
-                                        info_extra.append(f"**Estado:** {reg['estado']}")
-                                    if reg.get("valor"):
-                                        try:
-                                            info_extra.append(f"**Valor:** ${format_currency_co(int(float(reg['valor'])))}")
-                                        except Exception:
-                                            pass
-                                    if info_extra:
-                                        st.markdown(" · ".join(info_extra))
-
-                                # Campos propios de historico_historias_clinicas
-                                if reg.get("observaciones"):
-                                    st.caption(f"📝 {reg['observaciones']}")
-                                if reg.get("ocupacion") or reg.get("direccion"):
-                                    st.caption(f"{reg.get('ocupacion','')}  {reg.get('direccion','')}".strip())
-
-                                if reg.get("formula_ambigua") in (True, "true", "True"):
-                                    st.caption("⚠️ La fórmula original no pudo separarse automáticamente "
-                                               "en OD/OI; revisa el texto completo arriba.")
-        elif buscar_hist and not doc_hist:
-            st.warning("Escribe la cédula del paciente antes de buscar.")
+        mostrar_buscador_historial("hist_consultorio")
 
 # ------------------------------------------
 # MÓDULO 2: FACTURACIÓN Y WIZARD REESTRUCTURADO
 # ------------------------------------------
 elif modulo == "🛍️ Óptica y Facturación":
     styled_header("Facturación y Ventas", "🛍️")
-    tab_venta, tab_recaudo, tab_anular, tab_reimprimir = st.tabs(["🛒 Nueva Venta", "💵 Recaudar Saldo", "🚫 Anular", "🖨️ Reimprimir"])
+    tab_venta, tab_recaudo, tab_anular, tab_reimprimir, tab_hist_fact = st.tabs(
+        ["🛒 Nueva Venta", "💵 Recaudar Saldo", "🚫 Anular", "🖨️ Reimprimir", "📜 Historial"]
+    )
     
     with tab_venta:
         search_doc = st.text_input("🔍 Buscar Cédula del Paciente:", key="search_opt").upper()
@@ -1939,6 +2021,10 @@ elif modulo == "🛍️ Óptica y Facturación":
 
                 if not hist_r.get("rx_final_od") and not hist_r.get("rx_final_oi"):
                     st.warning("⚠️ No se encontró historia clínica con Rx para este paciente. La orden de laboratorio y prescripción irán sin datos de fórmula.")
+
+    with tab_hist_fact:
+        st.markdown("#### 🔍 Buscar Historial de un Paciente")
+        mostrar_buscador_historial("hist_facturacion")
 
 
 # ------------------------------------------
