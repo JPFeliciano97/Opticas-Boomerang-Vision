@@ -553,6 +553,46 @@ def clean_numeric_string(val_str):
     if not val: return ""
     return "".join(c for c in val if c.isdigit())
 
+def formatear_numero_factura_display(numero_factura):
+    """
+    Solo para VISUALIZACIÓN: convierte 'LEG-TR02385' -> '2385' y
+    'LEG-2670' -> '2670'. Preserva sufijos de desambiguación
+    ('LEG-2347-B' -> '2347-B'). Las facturas reales (sin prefijo
+    'LEG-') se muestran tal cual. El valor original completo se sigue
+    usando internamente para keys de widgets y operaciones en BD.
+    """
+    nf = str(numero_factura or "")
+    if not nf.startswith("LEG-"):
+        return nf
+    resto = nf[4:]
+    if resto.startswith("TR"):
+        resto = resto[2:]
+    partes = resto.split("-", 1)
+    numero = partes[0].lstrip("0") or "0"
+    sufijo = f"-{partes[1]}" if len(partes) > 1 else ""
+    return f"{numero}{sufijo}"
+
+
+def filtro_busqueda_factura(termino):
+    """
+    Construye la parte 'numero_factura.eq...' de un filtro .or_() que
+    encuentra una factura sin importar si el usuario escribió el
+    número corto ('2385') o el formato completo. Cubre las dos
+    variantes de prefijo legado que existen en la BD:
+      - 'LEG-{numero_trabajo}'      (cuando el Excel sí traía número)
+      - 'LEG-TR{contador:05d}'      (cuando no traía número)
+    Devuelve una lista de condiciones para unir con coma en .or_().
+    """
+    t = str(termino or "").strip().upper()
+    if not t:
+        return []
+    condiciones = [f"numero_factura.eq.{t}"]
+    if t.isdigit():
+        condiciones.append(f"numero_factura.eq.LEG-{t}")
+        condiciones.append(f"numero_factura.eq.LEG-TR{t.zfill(5)}")
+    return condiciones
+
+
 def normalizar_texto_busqueda(v):
     """Mayúsculas, sin tildes, espacios colapsados -- para agrupar identidades."""
     if not v:
@@ -603,9 +643,8 @@ def _buscar_candidatos_historial(query_texto):
         if q_digits:
             filtros_vf += [f"paciente_documento.eq.{q_digits}",
                             f"titular_doc.eq.{q_digits}",
-                            f"titular_tel.eq.{q_digits}",
-                            f"numero_factura.eq.{q_digits}",
-                            f"numero_factura.eq.LEG-{q_digits}"]
+                            f"titular_tel.eq.{q_digits}"]
+            filtros_vf += filtro_busqueda_factura(q_digits)
         if q_upper:
             filtros_vf.append(f"titular_nombre.ilike.%{q_upper}%")
         if filtros_vf:
@@ -789,7 +828,7 @@ def mostrar_buscador_historial(key_prefix):
             except Exception:
                 pass
             es_legado = v.get("origen") == "LEGADO"
-            etiqueta = f"🛠️ Fac. {v.get('numero_factura','—')} — {fecha_fmt}"
+            etiqueta = f"🛠️ Fac. {formatear_numero_factura_display(v.get('numero_factura','—'))} — {fecha_fmt}"
             if es_legado:
                 etiqueta += " · 📜 LEGADO"
             with st.expander(etiqueta):
@@ -1566,9 +1605,20 @@ elif modulo == "🛍️ Óptica y Facturación":
                 st.divider()
 
                 try:
-                    res_max = supabase.table("ventas_facturacion").select("numero_factura").order("numero_factura", desc=True).limit(1).execute()
-                    sugerido = int(res_max.data[0]["numero_factura"]) + 1 if res_max.data else 5342
-                except: sugerido = 5342
+                    # numero_factura es texto y las 5.097 facturas legado usan
+                    # prefijo "LEG-", así que ordenar por texto no sirve para
+                    # encontrar el máximo real (alfabéticamente "LEG-..." queda
+                    # por encima de cualquier número). Se filtran las legado y
+                    # se calcula el máximo numérico en Python.
+                    candidatos_num = supabase.table("ventas_facturacion").select("numero_factura") \
+                        .not_.like("numero_factura", "LEG-%").execute().data or []
+                    numeros_reales = [int(c["numero_factura"]) for c in candidatos_num
+                                      if str(c.get("numero_factura", "")).strip().isdigit()]
+                    BASE_FACTURACION = 5422  # última factura del sistema anterior a esta migración
+                    sugerido = max(numeros_reales, default=BASE_FACTURACION)
+                    sugerido = max(sugerido, BASE_FACTURACION) + 1
+                except Exception:
+                    sugerido = 5423
                 
                 num_factura = st.text_input("N° de Factura", value=str(sugerido))
                 
@@ -1768,18 +1818,21 @@ elif modulo == "🛍️ Óptica y Facturación":
         st.markdown("<h4 style='color: #000000;'>💵 Recaudar Saldo y Cambiar Estado a Entregado</h4>", unsafe_allow_html=True)
         fac_search = st.text_input("Ingrese el N° de Factura o Cédula a buscar:").upper()
         if fac_search:
+            # Cubre tanto factura corta ("2385") como formato legado completo
+            cond_factura = filtro_busqueda_factura(fac_search)
+            filtro_or = ",".join(cond_factura + [f"paciente_documento.eq.{fac_search}"])
             # Primero buscamos la factura SIN filtrar por saldo, para detectar si ya está pagada
-            res_cualquier = supabase.table("ventas_facturacion").select("*").or_(f"numero_factura.eq.{fac_search},paciente_documento.eq.{fac_search}").neq("estado", "ANULADA").order("fecha_venta", desc=True).limit(1).execute()
-            res_saldo = supabase.table("ventas_facturacion").select("*").or_(f"numero_factura.eq.{fac_search},paciente_documento.eq.{fac_search}").gt("saldo", 0).neq("estado", "ANULADA").execute()
+            res_cualquier = supabase.table("ventas_facturacion").select("*").or_(filtro_or).neq("estado", "ANULADA").order("fecha_venta", desc=True).limit(1).execute()
+            res_saldo = supabase.table("ventas_facturacion").select("*").or_(filtro_or).gt("saldo", 0).neq("estado", "ANULADA").execute()
 
             if res_cualquier.data and not res_saldo.data:
                 # Factura encontrada pero saldo = 0 → ya está pagada
                 fac_pagada = res_cualquier.data[0]
-                st.success(f"✅ La Factura N° **{fac_pagada['numero_factura']}** de **{fac_pagada['titular_nombre']}** ya se encuentra **cancelada en su totalidad** (Total: ${format_currency_co(int(fac_pagada.get('total', 0)))}). No tiene saldo pendiente.")
+                st.success(f"✅ La Factura N° **{formatear_numero_factura_display(fac_pagada['numero_factura'])}** de **{fac_pagada['titular_nombre']}** ya se encuentra **cancelada en su totalidad** (Total: ${format_currency_co(int(fac_pagada.get('total', 0)))}). No tiene saldo pendiente.")
             elif res_saldo.data:
                 fac_pen = res_saldo.data[0]
                 saldo_actual_int = int(fac_pen['saldo'])
-                st.info(f"📌 Factura N° **{fac_pen['numero_factura']}** | Paciente: **{fac_pen['titular_nombre']}** | Estado Actual: `{fac_pen.get('estado_lab', 'Pendiente')}`")
+                st.info(f"📌 Factura N° **{formatear_numero_factura_display(fac_pen['numero_factura'])}** | Paciente: **{fac_pen['titular_nombre']}** | Estado Actual: `{fac_pen.get('estado_lab', 'Pendiente')}`")
                 st.warning(f"**Saldo Pendiente Actual:** ${format_currency_co(saldo_actual_int)}")
                 
                 if st.session_state.last_fac_search != fac_pen['numero_factura']:
@@ -1826,12 +1879,13 @@ elif modulo == "🛍️ Óptica y Facturación":
         st.markdown("<h4 style='color: #000000;'>🚫 Anulación de Facturas</h4>", unsafe_allow_html=True)
         num_anular = st.text_input("Ingrese el N° de Factura a Anular:", key="input_anular").upper()
         if num_anular:
-            res_anular = supabase.table("ventas_facturacion").select("*").eq("numero_factura", num_anular).execute()
+            cond_anular = filtro_busqueda_factura(num_anular)
+            res_anular = supabase.table("ventas_facturacion").select("*").or_(",".join(cond_anular)).limit(1).execute()
             if res_anular.data:
                 fac_a = res_anular.data[0]
                 if fac_a.get("estado") == "ANULADA": st.error("⚠️ Esta factura ya se encuentra ANULADA.")
                 else:
-                    st.warning(f"⚠️ ¿Confirmas la anulación de la Factura N° **{fac_a['numero_factura']}** de **{fac_a['titular_nombre']}** por valor de **${format_currency_co(fac_a['total'])}**?")
+                    st.warning(f"⚠️ ¿Confirmas la anulación de la Factura N° **{formatear_numero_factura_display(fac_a['numero_factura'])}** de **{fac_a['titular_nombre']}** por valor de **${format_currency_co(fac_a['total'])}**?")
                     confirmar_anulacion = st.checkbox(
                         "Entiendo que esta acción es **irreversible** y deseo anular la factura.",
                         key=f"chk_anular_{fac_a['numero_factura']}"
@@ -1855,8 +1909,10 @@ elif modulo == "🛍️ Óptica y Facturación":
 
         if reimp_search:
             with st.spinner("Buscando factura..."):
+                cond_reimp = filtro_busqueda_factura(reimp_search)
+                filtro_or_reimp = ",".join(cond_reimp + [f"paciente_documento.eq.{reimp_search}"])
                 res_reimp = supabase.table("ventas_facturacion").select("*").or_(
-                    f"numero_factura.eq.{reimp_search},paciente_documento.eq.{reimp_search}"
+                    filtro_or_reimp
                 ).neq("estado", "ANULADA").order("fecha_venta", desc=True).limit(1).execute()
 
             if not res_reimp.data:
@@ -1883,7 +1939,7 @@ elif modulo == "🛍️ Óptica y Facturación":
                 # Resumen de la factura encontrada
                 with st.container(border=True):
                     rc1, rc2, rc3 = st.columns(3)
-                    rc1.markdown(f"**Fac N°:** {venta_r['numero_factura']}")
+                    rc1.markdown(f"**Fac N°:** {formatear_numero_factura_display(venta_r['numero_factura'])}")
                     rc2.markdown(f"**Fecha original:** {fecha_display}")
                     rc3.markdown(f"**Estado:** `{venta_r.get('estado_lab', '—')}`")
                     rc1.markdown(f"**Titular:** {venta_r['titular_nombre']}")
@@ -2287,13 +2343,33 @@ elif modulo == "🔬 Control de Trabajos":
         if filtro_estado != "Todos los Activos": query_lab = query_lab.eq("estado_lab", filtro_estado)
         if search_fac_lab: query_lab = query_lab.eq("numero_factura", search_fac_lab)
             
-        trabajos = query_lab.order("fecha_venta", desc=True).execute().data or []
+        trabajos_todos = query_lab.order("fecha_venta", desc=True).execute().data or []
         opciones_labs = ["NO ASIGNADO"] + [l['nombre'] for l in (supabase.table("laboratorios").select("nombre").execute().data or [])]
-        
+
+        # Paginación: 15 por página para no colapsar la carga con miles
+        # de trabajos históricos migrados.
+        POR_PAGINA_TRAB = 15
+        total_trab = len(trabajos_todos)
+        total_pags_trab = max(1, (total_trab + POR_PAGINA_TRAB - 1) // POR_PAGINA_TRAB)
+        st.session_state.setdefault("trab_pagina", 1)
+        if search_fac_lab or filtro_estado:
+            # Si cambian los filtros de búsqueda, reiniciar a la página 1
+            filtros_actuales = (search_fac_lab, filtro_estado)
+            if st.session_state.get("trab_filtros_prev") != filtros_actuales:
+                st.session_state.trab_pagina = 1
+                st.session_state.trab_filtros_prev = filtros_actuales
+        pag_trab = min(st.session_state.trab_pagina, total_pags_trab)
+        inicio_trab = (pag_trab - 1) * POR_PAGINA_TRAB
+        trabajos = trabajos_todos[inicio_trab:inicio_trab + POR_PAGINA_TRAB]
+
+        if trabajos_todos:
+            st.caption(f"**{total_trab}** trabajo(s) · Página **{pag_trab}** de **{total_pags_trab}**")
+
         if trabajos:
             for t in trabajos:
                 est_act = t.get("estado_lab", "Pendiente de enviar")
                 fac_id = t['numero_factura']
+                fac_id_display = formatear_numero_factura_display(fac_id)
 
                 if est_act == "Pendiente de enviar":
                     border_color = "#E61B23"; card_bg = "#fff8f8"; badge_bg = "#ffebee"; badge_fg = "#c62828"
@@ -2369,7 +2445,7 @@ elif modulo == "🔬 Control de Trabajos":
 
                     c1, c2, c3 = st.columns([2, 2, 2])
                     with c1:
-                        st.markdown(f"<span style='font-size:1.3em; font-weight:900; color:#000;'>Fac N° {fac_id}</span>", unsafe_allow_html=True)
+                        st.markdown(f"<span style='font-size:1.3em; font-weight:900; color:#000;'>Fac N° {fac_id_display}</span>", unsafe_allow_html=True)
                         st.markdown(f"**Titular:** {t['titular_nombre']}")
                         st.markdown(f"**Detalle:** {t['descripcion']}")
                     with c2:
@@ -2390,7 +2466,7 @@ elif modulo == "🔬 Control de Trabajos":
                         nuevo_lab_sel = st.selectbox("Laboratorio Externo:", opciones_labs, index=idx_lab, key=f"lab_{fac_id}")
 
                         if nuevo_est != est_act or nuevo_lab_sel != lab_act:
-                            if st.button(f"💾 Guardar #{fac_id}", key=f"btn_est_{fac_id}", type="primary"):
+                            if st.button(f"💾 Guardar #{fac_id_display}", key=f"btn_est_{fac_id}", type="primary"):
                                 supabase.table("ventas_facturacion").update({"estado_lab": nuevo_est, "laboratorio": nuevo_lab_sel if nuevo_lab_sel != "NO ASIGNADO" else None}).eq("numero_factura", fac_id).execute()
                                 st.session_state.global_toast = f"Trabajo actualizado a: {nuevo_est}"
                                 st.rerun()
@@ -2467,6 +2543,18 @@ elif modulo == "🔬 Control de Trabajos":
                                 '</div>'
                             )
                             st.markdown(wa_html, unsafe_allow_html=True)
+
+            if total_pags_trab > 1:
+                nt1, nt2, nt3, nt4, nt5 = st.columns([1, 1, 2, 1, 1])
+                if nt1.button("⏮ Primera", key="trab_first", disabled=(pag_trab == 1), use_container_width=True):
+                    st.session_state.trab_pagina = 1; st.rerun()
+                if nt2.button("◀ Anterior", key="trab_prev", disabled=(pag_trab == 1), use_container_width=True):
+                    st.session_state.trab_pagina = pag_trab - 1; st.rerun()
+                nt3.markdown(f"<div style='text-align:center;padding-top:8px;'>{pag_trab} / {total_pags_trab}</div>", unsafe_allow_html=True)
+                if nt4.button("Siguiente ▶", key="trab_next", disabled=(pag_trab == total_pags_trab), use_container_width=True):
+                    st.session_state.trab_pagina = pag_trab + 1; st.rerun()
+                if nt5.button("Última ⏭", key="trab_last", disabled=(pag_trab == total_pags_trab), use_container_width=True):
+                    st.session_state.trab_pagina = total_pags_trab; st.rerun()
         else:
             st.info("No hay trabajos registrados con esos filtros.")
 
@@ -2493,18 +2581,59 @@ elif modulo == "📅 CRM y Fidelización":
 
     with tab_anual:
         with st.spinner("Cargando historial de pacientes..."):
-            historias_todas = supabase.table("historias_clinicas").select("paciente_documento,fecha").execute().data or []
-        pacientes_para_llamar = []
+            historias_todas = supabase.table("historias_clinicas").select(
+                "paciente_documento,nombre_legado,celular_legado,fecha"
+            ).execute().data or []
+            # Se trae UNA sola vez, como índice, en vez de consultar pacientes
+            # individualmente por cada historia (evita el patrón N+1: con
+            # miles de historias migradas, eso podía disparar cientos de
+            # consultas innecesarias y, además, siempre fallaba mientras
+            # pacientes esté vacía).
+            pacientes_idx = {
+                p["documento"]: p
+                for p in (supabase.table("pacientes").select("documento,nombre_completo,celular").execute().data or [])
+            }
+
+        # Última visita por documento (una historia puede repetirse por paciente)
+        ultima_visita = {}
         for h in historias_todas:
+            doc = h.get("paciente_documento")
+            if not doc:
+                continue
             f_str = h.get("fecha")
-            if f_str:
-                try:
-                    f_dt = datetime.fromisoformat(f_str.replace("Z", "+00:00")).date() if "T" in f_str else datetime.strptime(f_str[:10], "%Y-%m-%d").date()
-                    if 330 <= (hoy.date() - f_dt).days <= 400:
-                        p_info = supabase.table("pacientes").select("*").eq("documento", h.get("paciente_documento")).execute().data
-                        if p_info:
-                            pacientes_para_llamar.append({"Documento": p_info[0].get("documento"), "Nombre": p_info[0].get("nombre_completo"), "Celular": p_info[0].get("celular"), "Ultima_Consulta": f_dt.strftime("%d/%m/%Y")})
-                except: pass
+            if not f_str:
+                continue
+            try:
+                f_dt = datetime.fromisoformat(f_str.replace("Z", "+00:00")).date() if "T" in f_str else datetime.strptime(f_str[:10], "%Y-%m-%d").date()
+            except Exception:
+                continue
+            actual = ultima_visita.get(doc)
+            if not actual or f_dt > actual["fecha"]:
+                ultima_visita[doc] = {
+                    "fecha": f_dt,
+                    "nombre_legado": h.get("nombre_legado"),
+                    "celular_legado": h.get("celular_legado"),
+                }
+
+        pacientes_para_llamar = []
+        for doc, info in ultima_visita.items():
+            if not (330 <= (hoy.date() - info["fecha"]).days <= 400):
+                continue
+            p_activo = pacientes_idx.get(doc)
+            # Se prioriza el dato del paciente activo (más probable que esté
+            # actualizado); si no existe, se usa el nombre/celular legado
+            # de la propia historia migrada.
+            nombre = (p_activo or {}).get("nombre_completo") or info.get("nombre_legado") or ""
+            celular = (p_activo or {}).get("celular") or info.get("celular_legado") or ""
+            if not nombre:
+                continue
+            pacientes_para_llamar.append({
+                "Documento": doc, "Nombre": nombre, "Celular": celular,
+                "Ultima_Consulta": info["fecha"].strftime("%d/%m/%Y"),
+                "Activo": p_activo is not None,
+            })
+        pacientes_para_llamar.sort(key=lambda x: x["Ultima_Consulta"])
+
         if pacientes_para_llamar:
             st.info(f"Se encontraron **{len(pacientes_para_llamar)}** pacientes para control anual.")
             for item in pacientes_para_llamar:
@@ -2512,9 +2641,14 @@ elif modulo == "📅 CRM y Fidelización":
                 msg_final = st.session_state.tpl_anual.replace("[NOMBRE]", nombre_corto)
                 with st.container(border=True):
                     c1, c2, c3 = st.columns([3, 2, 2])
-                    c1.markdown(f"**👤 {str(item['Nombre']).upper()}**\n\nCédula: {item['Documento']} | Última visita: {item['Ultima_Consulta']}")
-                    c2.markdown(f"📱 Cel: `{item['Celular']}`")
-                    c3.link_button("💬 Enviar WhatsApp", get_whatsapp_link(item['Celular'], msg_final), use_container_width=True)
+                    etiqueta_legado = "" if item["Activo"] else "  ·  📜 solo en histórico"
+                    c1.markdown(f"**👤 {str(item['Nombre']).upper()}**{etiqueta_legado}\n\nCédula: {item['Documento']} | Última visita: {item['Ultima_Consulta']}")
+                    c2.markdown(f"📱 Cel: `{item['Celular'] or '—'}`")
+                    if normalizar_texto_busqueda(item['Celular']) and item['Celular']:
+                        c3.link_button("💬 Enviar WhatsApp", get_whatsapp_link(item['Celular'], msg_final), use_container_width=True)
+                    else:
+                        c3.button("💬 Enviar WhatsApp", disabled=True, use_container_width=True,
+                                  key=f"wa_off_anual_{item['Documento']}", help="Sin celular registrado")
         else: st.info("No hay pacientes cumpliendo un año de su última consulta.")
 
     with tab_cumple:
@@ -2701,9 +2835,11 @@ elif modulo == "📈 Analítica y Estadísticas":
             st.divider()
             c1, c2 = st.columns(2)
             with c1:
-                st.markdown("**📅 Tendencia de Ventas (Mensual)**")
-                chart_tendencia = alt.Chart(df_dash.groupby('mes_anio')['total'].sum().reset_index()).mark_bar(width=25).encode(
-                    x=alt.X('mes_anio:N', title='Mes'),
+                st.markdown("**📅 Tendencia de Ventas (Últimos 12 meses)**")
+                fecha_limite_tendencia = df_dash['fecha_venta'].max() - pd.DateOffset(months=11)
+                df_tendencia = df_dash[df_dash['fecha_venta'] >= fecha_limite_tendencia]
+                chart_tendencia = alt.Chart(df_tendencia.groupby('mes_anio')['total'].sum().reset_index()).mark_bar(width=25).encode(
+                    x=alt.X('mes_anio:N', title='Mes', sort=None),
                     y=alt.Y('total:Q', title='Total ($)')
                 ).properties(height=280)
                 st.altair_chart(chart_tendencia, use_container_width=True)
