@@ -593,6 +593,33 @@ def filtro_busqueda_factura(termino):
     return condiciones
 
 
+def traer_todas_las_filas(tabla, filtros_fn=None, orden_col=None, orden_desc=True, columnas="*"):
+    """
+    Trae TODAS las filas de una tabla, sin importar el límite de 1000
+    filas por request que aplica por defecto la API de Supabase.
+    Pagina en bloques de 1000 usando .range() hasta agotar los datos.
+
+    filtros_fn: función opcional que recibe la query y le aplica
+    filtros (.eq(), .neq(), etc.) antes de paginar.
+    columnas: string de columnas para .select(), por defecto todas.
+    """
+    BLOQUE = 1000
+    todas = []
+    inicio = 0
+    while True:
+        q = supabase.table(tabla).select(columnas)
+        if filtros_fn:
+            q = filtros_fn(q)
+        if orden_col:
+            q = q.order(orden_col, desc=orden_desc)
+        bloque = q.range(inicio, inicio + BLOQUE - 1).execute().data or []
+        todas.extend(bloque)
+        if len(bloque) < BLOQUE:
+            break
+        inicio += BLOQUE
+    return todas
+
+
 def normalizar_texto_busqueda(v):
     """Mayúsculas, sin tildes, espacios colapsados -- para agrupar identidades."""
     if not v:
@@ -2339,11 +2366,17 @@ elif modulo == "🔬 Control de Trabajos":
         search_fac_lab = col_b1.text_input("🔍 Buscar por N° Factura:").upper()
         filtro_estado = col_b2.selectbox("Filtrar trabajos por estado:", ["Todos los Activos", "Pendiente de enviar", "En Laboratorio", "Recibido en Óptica", "Entregado"])
         
-        query_lab = supabase.table("ventas_facturacion").select("*").neq("estado", "ANULADA")
-        if filtro_estado != "Todos los Activos": query_lab = query_lab.eq("estado_lab", filtro_estado)
-        if search_fac_lab: query_lab = query_lab.eq("numero_factura", search_fac_lab)
-            
-        trabajos_todos = query_lab.order("fecha_venta", desc=True).execute().data or []
+        def _filtros_trabajos(q):
+            q = q.neq("estado", "ANULADA")
+            if filtro_estado != "Todos los Activos":
+                q = q.eq("estado_lab", filtro_estado)
+            if search_fac_lab:
+                q = q.eq("numero_factura", search_fac_lab)
+            return q
+
+        trabajos_todos = traer_todas_las_filas(
+            "ventas_facturacion", filtros_fn=_filtros_trabajos,
+            orden_col="fecha_venta", orden_desc=True)
         opciones_labs = ["NO ASIGNADO"] + [l['nombre'] for l in (supabase.table("laboratorios").select("nombre").execute().data or [])]
 
         # Paginación: 15 por página para no colapsar la carga con miles
@@ -2581,9 +2614,9 @@ elif modulo == "📅 CRM y Fidelización":
 
     with tab_anual:
         with st.spinner("Cargando historial de pacientes..."):
-            historias_todas = supabase.table("historias_clinicas").select(
-                "paciente_documento,nombre_legado,celular_legado,fecha"
-            ).execute().data or []
+            historias_todas = traer_todas_las_filas(
+                "historias_clinicas",
+                columnas="paciente_documento,nombre_legado,celular_legado,fecha")
             # Se trae UNA sola vez, como índice, en vez de consultar pacientes
             # individualmente por cada historia (evita el patrón N+1: con
             # miles de historias migradas, eso podía disparar cientos de
@@ -2591,7 +2624,7 @@ elif modulo == "📅 CRM y Fidelización":
             # pacientes esté vacía).
             pacientes_idx = {
                 p["documento"]: p
-                for p in (supabase.table("pacientes").select("documento,nombre_completo,celular").execute().data or [])
+                for p in traer_todas_las_filas("pacientes", columnas="documento,nombre_completo,celular")
             }
 
         # Última visita por documento (una historia puede repetirse por paciente)
@@ -2653,7 +2686,7 @@ elif modulo == "📅 CRM y Fidelización":
 
     with tab_cumple:
         with st.spinner("Cargando directorio..."):
-            todos_pacientes = supabase.table("pacientes").select("*").execute().data or []
+            todos_pacientes = traer_todas_las_filas("pacientes")
         cumpleañeros = []
         for p in todos_pacientes:
             fnac = p.get("fecha_nacimiento")
@@ -2743,7 +2776,10 @@ elif modulo == "📅 CRM y Fidelización":
 elif modulo == "📈 Analítica y Estadísticas":
     styled_header("Dashboard Analítico y Respaldo General", "📈")
     
-    ventas_db = supabase.table("ventas_facturacion").select("*").neq("estado", "ANULADA").execute().data or []
+    ventas_db = traer_todas_las_filas(
+        "ventas_facturacion",
+        filtros_fn=lambda q: q.neq("estado", "ANULADA"),
+        orden_col="fecha_venta", orden_desc=True)
     hoy_an = now_co()
     mes_actual = hoy_an.strftime("%Y-%m")
     ventas_mes = [v for v in ventas_db if str(v.get("fecha_venta","")).startswith(mes_actual)]
@@ -2875,19 +2911,19 @@ elif modulo == "📈 Analítica y Estadísticas":
         if st.button("📥 Generar Respaldo Completo en Excel", type="primary"):
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                p_data = supabase.table("pacientes").select("*").execute().data
+                p_data = traer_todas_las_filas("pacientes")
                 if p_data: pd.DataFrame(p_data).to_excel(writer, index=False, sheet_name="Pacientes")
                 
-                h_data = supabase.table("historias_clinicas").select("*").execute().data
+                h_data = traer_todas_las_filas("historias_clinicas")
                 if h_data: pd.DataFrame(h_data).to_excel(writer, index=False, sheet_name="HistoriasClinicas")
                 
-                v_data = supabase.table("ventas_facturacion").select("*").execute().data
+                v_data = traer_todas_las_filas("ventas_facturacion")
                 if v_data: pd.DataFrame(v_data).to_excel(writer, index=False, sheet_name="VentasFacturacion")
                 
-                i_data = supabase.table("inventario").select("*").execute().data
+                i_data = traer_todas_las_filas("inventario")
                 if i_data: pd.DataFrame(i_data).to_excel(writer, index=False, sheet_name="Inventario")
                 
-                g_data = supabase.table("gastos_caja").select("*").execute().data
+                g_data = traer_todas_las_filas("gastos_caja")
                 if g_data: pd.DataFrame(g_data).to_excel(writer, index=False, sheet_name="GastosCaja")
             
             excel_bytes = output.getvalue()
