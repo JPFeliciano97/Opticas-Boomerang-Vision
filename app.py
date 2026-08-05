@@ -1038,6 +1038,11 @@ def parse_for_grid(rx_str):
     if not rx_str or rx_str == "N/A": return "NEUTRO", "", ""
     if "X" not in rx_str.upper(): return rx_str.upper(), "", ""
     parts = rx_str.upper().replace('X', ' ').split()
+    if len(parts) < 3:
+        # Texto que contiene 'X' pero no sigue el formato "esf cil Xeje"
+        # (puede pasar con Fórmula Externa, que es texto libre). Se
+        # muestra tal cual en vez de intentar forzarlo a la cuadrícula.
+        return rx_str.upper(), "", ""
     esf = "NEUTRO" if parts[0] in ['N', 'NEUTRO'] else parts[0].upper()
     cil = parts[1]; eje = parts[2].upper()
     return esf, cil, eje
@@ -1197,6 +1202,9 @@ def dibujar_prescripcion_clinica(pdf, paciente, historia, detalles_rx, logo_path
     
     pdf.set_xy(120, 15); pdf.set_font("helvetica", "B", 16)
     pdf.cell(85, 8, "PRESCRIPCION OPTICA", align="C", ln=1)
+    if str(historia.get('observaciones', '')).upper() == "FÓRMULA EXTERNA":
+        pdf.set_xy(120, 23); pdf.set_font("helvetica", "BI", 9); pdf.set_text_color(180, 0, 0)
+        pdf.cell(85, 5, "*** FÓRMULA EXTERNA ***", align="C", ln=1); pdf.set_text_color(0, 0, 0)
     
     pdf.ln(5); y_start = 28
     pdf.set_xy(10, y_start); pdf.set_font("helvetica", "I", 8)
@@ -1632,6 +1640,27 @@ elif modulo == "🛍️ Óptica y Facturación":
     )
     
     with tab_venta:
+        # Confirmación de la última venta guardada: se muestra ARRIBA del
+        # formulario (ya vacío) en vez de dejar el PDF embebido bloqueando
+        # la pantalla indefinidamente. Los bytes viven en session_state
+        # porque tras el rerun que limpia el formulario, ya no hay forma
+        # de regenerarlos a partir de campos que quedaron en blanco.
+        ultima = st.session_state.get("ultima_venta_pdfs")
+        if ultima:
+            with st.container(border=True):
+                uc1, uc2 = st.columns([5, 1])
+                uc1.success(f"✅ Venta registrada — Factura #{ultima['numero_factura']}")
+                if uc2.button("✕", key="cerrar_ultima_venta", help="Ocultar este aviso"):
+                    del st.session_state["ultima_venta_pdfs"]
+                    st.rerun()
+                st.download_button(
+                    "📥 Descargar Facturación (incluye orden de laboratorio)",
+                    data=ultima["pdf_bytes"],
+                    file_name=f"Facturacion_{ultima['numero_factura']}.pdf",
+                    mime="application/pdf", use_container_width=True,
+                    key="dl_ultima_factura")
+            st.divider()
+
         search_doc = st.text_input("🔍 Buscar Cédula del Paciente:", key="search_opt").upper()
         if search_doc:
             res_paciente = supabase.table("pacientes").select("*").eq("documento", search_doc).execute()
@@ -1884,26 +1913,17 @@ elif modulo == "🛍️ Óptica y Facturación":
                         
                         pdf_bytes = bytes(pdf.output())
                         st.session_state.global_toast = f"Venta registrada. Factura #{num_factura}"
-                        st.download_button(
-                            label="📥 Descargar Facturación",
-                            data=pdf_bytes,
-                            file_name=f"Facturacion_{num_factura}.pdf",
-                            mime="application/pdf"
-                        )
-                        b64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
-                        st.markdown(
-                            f"""
-                            <iframe src="data:application/pdf;base64,{b64_pdf}" 
-                                    width="100%" height="600px" 
-                                    style="border: none;"
-                                    sandbox="allow-scripts allow-same-origin">
-                                <p style="color:#000000;">Tu navegador no puede mostrar el PDF. 
-                                <a href="data:application/pdf;base64,{b64_pdf}" download="Facturacion_{num_factura}.pdf">Descárgalo aquí</a>.</p>
-                            </iframe>
-                            """,
-                            unsafe_allow_html=True
-                        )
+                        # Se guarda el PDF y se limpia TODO el formulario (volviendo
+                        # a la pantalla inicial de Nueva Venta) en vez de dejarlo
+                        # embebido en pantalla indefinidamente. La búsqueda de
+                        # cédula es la que controla si se muestra el resto del
+                        # formulario -- limpiarla oculta todo lo demás de una vez.
+                        st.session_state.ultima_venta_pdfs = {
+                            "numero_factura": num_factura, "pdf_bytes": pdf_bytes,
+                        }
+                        st.session_state.search_opt = ""
                         st.session_state.trigger_clear_factura = True
+                        st.rerun()
 
                 if btn_generar_rx:
                     pdf_rx = FPDF(orientation="P", unit="mm", format="Letter")
@@ -1923,7 +1943,7 @@ elif modulo == "🛍️ Óptica y Facturación":
                         <iframe src="data:application/pdf;base64,{b64_rx}" 
                                 width="100%" height="600px" 
                                 style="border: none;"
-                                sandbox="allow-scripts allow-same-origin">
+                                sandbox="allow-scripts allow-same-origin allow-modals">
                             <p style="color:#000000;">Tu navegador no puede mostrar el PDF. 
                             <a href="data:application/pdf;base64,{b64_rx}" download="Receta_{paciente['documento']}.pdf">Descárgalo aquí</a>.</p>
                         </iframe>
@@ -2217,6 +2237,9 @@ elif modulo == "🛍️ Óptica y Facturación":
                     with st.container(border=True):
                         st.markdown("**📋 Prescripción Clínica**")
                         st.caption("Receta del optómetra")
+                        if str(hist_r.get('observaciones', '')).upper() == "FÓRMULA EXTERNA":
+                            st.info("📄 Esta venta usó una **fórmula externa** (traída por el paciente). "
+                                    "La prescripción lo indica claramente en observaciones.")
                         try:
                             # Reconstruir detalles_rx desde la historia clínica
                             rx_od_r = hist_r.get("rx_final_od", "") or ""
