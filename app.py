@@ -553,6 +553,29 @@ def clean_numeric_string(val_str):
     if not val: return ""
     return "".join(c for c in val if c.isdigit())
 
+def valor_numerico_factura(numero_factura):
+    """
+    Extrae el valor numérico de un numero_factura para ORDENAR, sin
+    importar si es real ('5422') o legado ('LEG-2385', 'LEG-TR00001').
+    Como TRABAJOS.xlsx y REGISTRO_DIARIO.xlsx comparten la misma
+    numeración secuencial del negocio, ordenar por este valor da un
+    orden cronológico confiable -- más confiable que fecha_venta como
+    texto, que puede tener inconsistencias de formato entre orígenes.
+    """
+    nf = str(numero_factura or "")
+    if nf.startswith("LEG-"):
+        resto = nf[4:]
+        if resto.startswith("TR"):
+            resto = resto[2:]
+        resto = resto.split("-", 1)[0]  # quita sufijo de desambiguación (-B, -C...)
+    else:
+        resto = nf
+    try:
+        return int(resto)
+    except ValueError:
+        return -1  # no interpretable: al final
+
+
 def formatear_numero_factura_display(numero_factura):
     """
     Solo para VISUALIZACIÓN: convierte 'LEG-TR02385' -> '2385' y
@@ -745,11 +768,15 @@ def _cargar_detalle_historial(doc_sel, nombre_sel):
     if doc_sel:
         pac_hist = supabase.table("pacientes").select("*").eq("documento", doc_sel).execute().data
         hist_data = supabase.table("historias_clinicas").select("*").eq("paciente_documento", doc_sel).order("fecha", desc=True).execute().data
-        ventas_data = supabase.table("ventas_facturacion").select("*").eq("paciente_documento", doc_sel).order("fecha_venta", desc=True).execute().data
+        ventas_data = supabase.table("ventas_facturacion").select("*").eq("paciente_documento", doc_sel).execute().data
     else:
         pac_hist = []
         hist_data = supabase.table("historias_clinicas").select("*").eq("nombre_legado", nombre_sel).order("fecha", desc=True).execute().data
-        ventas_data = supabase.table("ventas_facturacion").select("*").eq("titular_nombre", nombre_sel).order("fecha_venta", desc=True).execute().data
+        ventas_data = supabase.table("ventas_facturacion").select("*").eq("titular_nombre", nombre_sel).execute().data
+    # Orden por número de factura real, no por fecha_venta como texto
+    # (mismo criterio que Control de Trabajos, ver valor_numerico_factura).
+    if ventas_data:
+        ventas_data = sorted(ventas_data, key=lambda v: valor_numerico_factura(v.get("numero_factura")), reverse=True)
     return pac_hist, hist_data, ventas_data
 
 
@@ -794,20 +821,31 @@ def mostrar_buscador_historial(key_prefix):
     if len(candidatos) == 1:
         sel_info = list(candidatos.values())[0]
     else:
-        st.markdown(f"##### Se encontraron **{len(candidatos)}** coincidencias — selecciona una:")
-        for k, info in candidatos.items():
-            with st.container(border=True):
-                cc1, cc2, cc3 = st.columns([3, 2, 1])
-                etiqueta_activo = " · ✅ Paciente activo" if info["activo"] else ""
-                cc1.markdown(f"**{info['nombre'] or '—'}**{etiqueta_activo}")
-                cc2.markdown(f"Doc: `{info['documento'] or '—'}` · "
-                             f"Tel: `{info['celular'] or '—'}` · "
-                             f"{info['n_legado']} registro(s) legado")
-                if cc3.button("Ver", key=f"{key_prefix}_ver_{k}", use_container_width=True):
-                    st.session_state[f"{key_prefix}_sel"] = k
-                    st.rerun()
         sel_key = st.session_state.get(f"{key_prefix}_sel")
-        sel_info = candidatos.get(sel_key) if sel_key else None
+        if sel_key and sel_key in candidatos:
+            # Ya hay una selección: se oculta la lista larga para que el
+            # detalle aparezca inmediatamente, sin tener que hacer scroll
+            # a través de todos los demás candidatos.
+            sel_info = candidatos[sel_key]
+            if st.button("🔙 Ver los demás resultados", key=f"{key_prefix}_volver"):
+                st.session_state[f"{key_prefix}_sel"] = None
+                st.rerun()
+            st.caption(f"Mostrando: **{sel_info['nombre'] or '—'}** "
+                       f"(de {len(candidatos)} coincidencias para "
+                       f"“{st.session_state.get(f'{key_prefix}_query_hecha','')}”)")
+        else:
+            st.markdown(f"##### Se encontraron **{len(candidatos)}** coincidencias — selecciona una:")
+            for k, info in candidatos.items():
+                with st.container(border=True):
+                    cc1, cc2, cc3 = st.columns([3, 2, 1])
+                    etiqueta_activo = " · ✅ Paciente activo" if info["activo"] else ""
+                    cc1.markdown(f"**{info['nombre'] or '—'}**{etiqueta_activo}")
+                    cc2.markdown(f"Doc: `{info['documento'] or '—'}` · "
+                                 f"Tel: `{info['celular'] or '—'}` · "
+                                 f"{info['n_legado']} registro(s) legado")
+                    if cc3.button("Ver", key=f"{key_prefix}_ver_{k}", use_container_width=True):
+                        st.session_state[f"{key_prefix}_sel"] = k
+                        st.rerun()
 
     if not sel_info:
         return
@@ -2390,8 +2428,13 @@ elif modulo == "🔬 Control de Trabajos":
             return q
 
         trabajos_todos = traer_todas_las_filas(
-            "ventas_facturacion", filtros_fn=_filtros_trabajos,
-            orden_col="fecha_venta", orden_desc=True)
+            "ventas_facturacion", filtros_fn=_filtros_trabajos)
+        # Se ordena en Python por el valor numérico real de la factura
+        # (no por fecha_venta como texto, que puede tener inconsistencias
+        # de formato entre facturas nuevas y migradas). Como TRABAJOS.xlsx
+        # y REGISTRO_DIARIO.xlsx comparten la misma numeración secuencial
+        # del negocio, esto da un orden cronológico confiable.
+        trabajos_todos.sort(key=lambda t: valor_numerico_factura(t.get("numero_factura")), reverse=True)
         opciones_labs = ["NO ASIGNADO"] + [l['nombre'] for l in (supabase.table("laboratorios").select("nombre").execute().data or [])]
 
         # Paginación: 15 por página para no colapsar la carga con miles
@@ -2831,7 +2874,16 @@ elif modulo == "📈 Analítica y Estadísticas":
         total_cartera_pendiente = df_dash['saldo'].sum()
         
         modo_analitica = st.radio("Modo de Visualización:", ["Resumen Global", "Filtrar por Mes Específico", "Comparativa Multimes"], horizontal=True)
-        meses_disponibles = sorted(df_dash['mes_anio'].unique(), reverse=True)
+        # Salvaguarda: excluir meses futuros del selector. La causa real
+        # de fechas futuras que aparecían aquí (año 2027 por error de
+        # tecleo en el Excel original) ya se corrigió en el dato migrado,
+        # pero este filtro protege contra cualquier otra fecha corrupta
+        # que se cuele -- una venta jamás puede ser de un mes que no ha
+        # llegado todavía.
+        mes_actual_str = hoy_an.strftime("%Y-%m")
+        meses_disponibles = sorted(
+            (m for m in df_dash['mes_anio'].unique() if m <= mes_actual_str),
+            reverse=True)
         
         if modo_analitica == "Filtrar por Mes Específico":
             mes_sel = st.selectbox("Selecciona el mes a analizar:", meses_disponibles)
@@ -2900,8 +2952,15 @@ elif modulo == "📈 Analítica y Estadísticas":
             c1, c2 = st.columns(2)
             with c1:
                 st.markdown("**📅 Tendencia de Ventas (Últimos 12 meses)**")
-                fecha_limite_tendencia = df_dash['fecha_venta'].max() - pd.DateOffset(months=11)
-                df_tendencia = df_dash[df_dash['fecha_venta'] >= fecha_limite_tendencia]
+                # Se usa la fecha REAL de hoy como referencia, no el máximo
+                # de fecha_venta -- si algún dato tuviera una fecha corrupta
+                # a futuro, .max() desplazaría todo el gráfico hacia
+                # adelante (esto causó exactamente el bug reportado).
+                fecha_limite_tendencia = hoy_an - pd.DateOffset(months=11)
+                df_tendencia = df_dash[
+                    (df_dash['fecha_venta'] >= fecha_limite_tendencia) &
+                    (df_dash['fecha_venta'] <= hoy_an)
+                ]
                 chart_tendencia = alt.Chart(df_tendencia.groupby('mes_anio')['total'].sum().reset_index()).mark_bar(width=25).encode(
                     x=alt.X('mes_anio:N', title='Mes', sort=None),
                     y=alt.Y('total:Q', title='Total ($)')
