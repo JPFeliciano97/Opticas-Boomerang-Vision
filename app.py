@@ -1775,10 +1775,17 @@ elif modulo == "🛍️ Óptica y Facturación":
     st.markdown("""
         <style>
         /* Empuja "Reimprimir" y "Historial" al borde derecho de la barra.
-           El selector combinado (6to hijo Y 2do desde el final) solo es
-           cierto cuando hay exactamente 7 pestañas -- así no afecta las
-           demás barras de pestañas del sistema (que tienen 2, 3 o 4). */
-        div[data-baseweb="tab-list"] button:nth-child(6):nth-last-child(2) {
+           El atributo real de cada pestaña individual en Streamlit es
+           [data-baseweb="tab"] (confirmado en la documentación/comunidad
+           de Streamlit) -- usar "button" genérico no coincidía con nada,
+           por eso el intento anterior no tuvo efecto. El selector
+           combinado (6to hijo Y 2do desde el final) solo es cierto cuando
+           hay exactamente 7 pestañas, así no afecta las demás barras del
+           sistema (que tienen 2, 3 o 4).*/
+        .stTabs [data-baseweb="tab-list"] {
+            display: flex;
+        }
+        .stTabs [data-baseweb="tab-list"] [data-baseweb="tab"]:nth-child(6):nth-last-child(2) {
             margin-left: auto;
         }
         </style>
