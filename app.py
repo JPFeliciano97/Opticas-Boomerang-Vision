@@ -650,14 +650,19 @@ def filtro_busqueda_factura(termino):
 def _fecha_gasto_seguro(fecha_str):
     """
     Parsea fecha_gasto (formato ISO8601, mezcla de precisiones entre
-    gastos nuevos y migrados) a 'YYYY-MM'. Nunca lanza excepción:
-    devuelve None ante un valor vacío o corrupto en vez de tumbar
-    la página completa de Analítica.
+    gastos nuevos y migrados) a 'YYYY-MM' EN HORA COLOMBIA. Postgres
+    normaliza timestamptz a UTC al devolverlo -- sin esta conversión,
+    un gasto registrado de noche cerca de fin de mes podía agruparse
+    en el mes siguiente por error. Nunca lanza excepción: devuelve
+    None ante un valor vacío o corrupto en vez de tumbar Analítica.
     """
     if not fecha_str:
         return None
     try:
-        return datetime.fromisoformat(str(fecha_str).replace("Z", "+00:00")).strftime('%Y-%m')
+        dt = datetime.fromisoformat(str(fecha_str).replace("Z", "+00:00"))
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(timezone(timedelta(hours=-5)))
+        return dt.strftime('%Y-%m')
     except (ValueError, TypeError):
         return None
 
@@ -1131,7 +1136,7 @@ def dibujar_media_carta(pdf, paciente, historia, venta, tipo_documento, logo_pat
     pdf.set_font("helvetica", "", 9)
     pdf.cell(55, 6, "FACTURA", border=1, align="R")
     pdf.set_font("helvetica", "B", 10)
-    pdf.cell(55, 6, f"No. {venta['numero_factura']}", border=1, ln=1, align="C")
+    pdf.cell(55, 6, f"No. {formatear_numero_factura_display(venta['numero_factura'])}", border=1, ln=1, align="C")
     
     pdf.set_font("helvetica", "", 8.5); pdf.set_xy(10, 46)
     pdf.cell(20, 6, "NOMBRE:", border=1); pdf.set_font("helvetica", "B", 8.5)
@@ -1198,7 +1203,7 @@ def dibujar_media_carta(pdf, paciente, historia, venta, tipo_documento, logo_pat
 
 def dibujar_orden_laboratorio(pdf, paciente, historia, venta, tipo_orden="", logo_path="logo.png", fecha_impresion=None):
     pdf.rect(10, 10, 80, 18); pdf.set_font("helvetica", "B", 34); pdf.set_xy(10, 10)
-    pdf.cell(80, 18, f"{venta['numero_factura']}", border=0, align="C")
+    pdf.cell(80, 18, f"{formatear_numero_factura_display(venta['numero_factura'])}", border=0, align="C")
     
     if os.path.exists(logo_path): pdf.image(logo_path, x=95, y=10, w=52)
         
@@ -1786,7 +1791,7 @@ elif modulo == "🛍️ Óptica y Facturación":
         if ultima:
             with st.container(border=True):
                 uc1, uc2 = st.columns([5, 1])
-                uc1.success(f"✅ Venta registrada — Factura #{ultima['numero_factura']}")
+                uc1.success(f"✅ Venta registrada — Factura #{formatear_numero_factura_display(ultima['numero_factura'])}")
                 if uc2.button("✕", key="cerrar_ultima_venta", help="Ocultar este aviso"):
                     del st.session_state["ultima_venta_pdfs"]
                     st.rerun()
@@ -2654,7 +2659,7 @@ elif modulo == "📊 Cuadre de Caja Físico":
                 detalle_venta = v.get('descripcion', '') if es_venta_menor else f"Fac #{formatear_numero_factura_display(v['numero_factura'])} - {v['titular_nombre']}"
                 movimientos.append({"Hora": hora_co(v['fecha_venta']), "Tipo": "VENTA", "Detalle": detalle_venta, "Monto": v['abono'], "Método": v['metodo_pago']})
         for r in recaudos:
-            movimientos.append({"Hora": hora_co(r['fecha_pago']), "Tipo": "RECAUDO", "Detalle": f"Saldo Fac #{r['numero_factura']}", "Monto": r['monto_pagado'], "Método": r['metodo_pago']})
+            movimientos.append({"Hora": hora_co(r['fecha_pago']), "Tipo": "RECAUDO", "Detalle": f"Saldo Fac #{formatear_numero_factura_display(r['numero_factura'])}", "Monto": r['monto_pagado'], "Método": r['metodo_pago']})
         for g in gastos:
             movimientos.append({"Hora": hora_co(g['fecha_gasto']), "Tipo": "GASTO", "Detalle": str(g['descripcion']).upper(), "Monto": -g['monto'], "Método": g['metodo_pago']})
         
@@ -2794,7 +2799,7 @@ elif modulo == "📦 Inventario":
     tab_catalogo, tab_ingreso, tab_ajuste = st.tabs(["📋 Catálogo y Stock", "➕ Registrar Producto", "🔄 Ajuste Rápido"])
     
     with tab_catalogo:
-        inventario = supabase.table("inventario").select("*").order("marca").execute().data or []
+        inventario = traer_todas_las_filas("inventario", orden_col="marca", orden_desc=False)
         if inventario:
             tabla_inv = []
             inv_total = 0
@@ -2958,7 +2963,7 @@ elif modulo == "🔬 Control de Trabajos":
                     st.error("⚠️ Es posible que este laboratorio ya exista o falte crear la tabla en Supabase.")
         
         st.divider()
-        labs_db = supabase.table("laboratorios").select("*").execute().data or []
+        labs_db = traer_todas_las_filas("laboratorios")
         if labs_db:
             st.markdown("**Laboratorios Registrados:**")
             for l in labs_db:
@@ -3433,7 +3438,11 @@ elif modulo == "📈 Analítica y Estadísticas":
         orden_col="fecha_venta", orden_desc=True)
     hoy_an = now_co()
     mes_actual = hoy_an.strftime("%Y-%m")
-    ventas_mes = [v for v in ventas_db if str(v.get("fecha_venta","")).startswith(mes_actual)]
+    # Se compara el mes en hora Colombia real (no el string crudo que
+    # devuelve Postgres, normalizado a UTC) -- una venta de las 8pm del
+    # 31 de julio en Colombia podía aparecer como "agosto" al comparar
+    # el string tal cual llega de la base de datos.
+    ventas_mes = [v for v in ventas_db if hora_co(v.get("fecha_venta"), "%Y-%m") == mes_actual]
     total_mes = sum(int(v.get("total",0)) for v in ventas_mes)
     recaudado_mes = sum(int(v.get("abono",0)) for v in ventas_mes)
     pendiente_mes = total_mes - recaudado_mes
@@ -3444,7 +3453,7 @@ elif modulo == "📈 Analítica y Estadísticas":
     km3.metric("✅ Recaudado",          f"${format_currency_co(recaudado_mes)}")
     km4.metric("⏳ Por recaudar",       f"${format_currency_co(pendiente_mes)}")
     st.markdown("---")
-    gastos_db = supabase.table("gastos_caja").select("*").execute().data or []
+    gastos_db = traer_todas_las_filas("gastos_caja")
     
     if ventas_db:
         df_dash = pd.DataFrame(ventas_db)
@@ -3456,12 +3465,18 @@ elif modulo == "📈 Analítica y Estadísticas":
         # aunque ambos sean ISO8601 perfectamente válidos. 'coerce' además
         # evita que una fecha vacía/corrupta tumbe todo el módulo.
         df_dash['fecha_venta'] = pd.to_datetime(
-            df_dash['fecha_venta'], format='ISO8601', errors='coerce')
+            df_dash['fecha_venta'], format='ISO8601', errors='coerce', utc=True)
         filas_antes = len(df_dash)
         df_dash = df_dash.dropna(subset=['fecha_venta'])
         if len(df_dash) < filas_antes:
             st.caption(f"⚠️ Se omitieron {filas_antes - len(df_dash)} registro(s) "
                        f"con fecha inválida en el análisis.")
+        # Se convierte explícitamente a hora Colombia antes de extraer
+        # mes/día: Postgres normaliza timestamptz a UTC al devolverlo, así
+        # que sin esta conversión, ventas de la noche cerca de fin de mes
+        # o fin de día podían agruparse en el mes/día siguiente por error
+        # (el mismo problema que ya se corrigió en Cuadre de Caja).
+        df_dash['fecha_venta'] = df_dash['fecha_venta'].dt.tz_convert(timezone(timedelta(hours=-5)))
         df_dash['mes_anio'] = df_dash['fecha_venta'].dt.strftime('%Y-%m')
         
         total_cartera_pendiente = df_dash['saldo'].sum()
