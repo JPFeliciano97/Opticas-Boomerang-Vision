@@ -1028,6 +1028,24 @@ def parse_dp_individual(dp_str):
         return parts[0].strip(), parts[1].strip()
     return dp_str, "N/A"
 
+
+def calcular_dp_combinada(dp_od, dp_oi):
+    """
+    Calcula la DP total de lejos (suma de DP OD + DP OI) y la DP de
+    cerca (la de lejos menos 2mm, por la convergencia natural de los
+    ojos al enfocar de cerca). Devuelve 'cerca/lejos' (ej: '60/62'
+    para DP OD=31, DP OI=31), o '' si los valores no son numéricos.
+    """
+    try:
+        od = float(str(dp_od).strip())
+        oi = float(str(dp_oi).strip())
+        lejos = od + oi
+        cerca = lejos - 2
+        fmt = lambda v: f"{v:.0f}" if v == int(v) else f"{v:.1f}"
+        return f"{fmt(cerca)}/{fmt(lejos)}"
+    except (ValueError, TypeError):
+        return ""
+
 def get_cerca_rx(rx_str, adicion_val):
     if not rx_str or rx_str == "N/A": return "N/A"
     try:
@@ -1151,8 +1169,11 @@ def dibujar_media_carta(pdf, paciente, historia, venta, tipo_documento, logo_pat
     add_str = format_add(historia.get('adicion'))
     add_text = f" ADD: {add_str}" if add_str else ""
     alt_text = f" | ALTURA: {venta['altura_focal']}" if venta.get('altura_focal') else ""
+    dp_od_fc, dp_oi_fc = parse_dp_individual(historia.get('dp'))
+    dp_calculada_fc = calcular_dp_combinada(dp_od_fc, dp_oi_fc)
+    dp_texto_fc = f"DP: {dp_calculada_fc}" if dp_calculada_fc else f"DP: {historia.get('dp') or ''}"
     pdf.set_xy(10, 101)
-    pdf.cell(110, 5, f"DP: {historia.get('dp') or ''}{add_text}{alt_text}", border="L,B,R", ln=1)
+    pdf.cell(110, 5, f"{dp_texto_fc}{add_text}{alt_text}", border="L,B,R", ln=1)
     
     totales = [("SUBTOTAL", venta['subtotal']), ("DESCUENTO", venta['descuento']), ("TOTAL", venta['total']), ("ABONO", venta['abono']), ("SALDO", venta['saldo'])]
     for i, (concepto, valor) in enumerate(totales):
@@ -1223,7 +1244,10 @@ def dibujar_orden_laboratorio(pdf, paciente, historia, venta, tipo_orden="", log
     pdf.cell(75, 6, texto_add, border=1); pdf.cell(35, 6, f"ALTURA: {alt_val}", border=1, ln=1, align="C")
     
     pdf.set_xy(10, 78); pdf.cell(85, 6, f"OI:     {format_rx_ui(historia.get('rx_final_oi', 'N/A'))}", border=1)
-    pdf.cell(75, 6, f"DP: {historia.get('dp') or ''}", border=1); pdf.cell(35, 6, f"ALTURA: {alt_val}", border=1, ln=1, align="C")
+    dp_od_ol, dp_oi_ol = parse_dp_individual(historia.get('dp'))
+    dp_calculada_ol = calcular_dp_combinada(dp_od_ol, dp_oi_ol)
+    dp_texto_ol = dp_calculada_ol if dp_calculada_ol else (historia.get('dp') or '')
+    pdf.cell(75, 6, f"DP: {dp_texto_ol}", border=1); pdf.cell(35, 6, f"ALTURA: {alt_val}", border=1, ln=1, align="C")
     
     pdf.set_xy(10, 87); pdf.set_font("helvetica", "B", 18); pdf.multi_cell(110, 8, f"{venta['fecha_entrega'].upper()}", border=0)
     
@@ -1310,7 +1334,16 @@ def dibujar_prescripcion_clinica(pdf, paciente, historia, detalles_rx, logo_path
     pdf.cell(30, 6, cerca_esf, border=1, align="C"); pdf.cell(30, 6, "", border=1, align="C")
     pdf.cell(20, 6, "", border=1, align="C"); pdf.cell(30, 6, "", border=1, align="C")
     pdf.cell(40, 6, av_cerca_oi.upper() if add_str else "", border=1, align="C", ln=1)
-    
+
+    # DP total calculada (suma OD+OI para lejos, menos 2mm para cerca),
+    # además de los valores individuales por ojo de la cuadrícula arriba
+    # (que el laboratorio sigue necesitando para centrar cada lente).
+    dp_calculada_rx = calcular_dp_combinada(dp_od, dp_oi)
+    if dp_calculada_rx:
+        pdf.set_x(10); pdf.set_font("helvetica", "B", 9)
+        pdf.cell(175, 6, f"DP TOTAL (Cerca/Lejos): {dp_calculada_rx}", border=1, align="C", ln=1)
+        pdf.set_font("helvetica", "", 9)
+
     y6 = pdf.get_y(); pdf.set_x(10)
     pdf.cell(35, 6, "CONTROL:", border=1); pdf.cell(60, 6, detalles_rx.get('prox_control', '').upper(), border=1)
     pdf.cell(25, 6, "VIGENCIA:", border=1); pdf.cell(75, 6, "30 DIAS", border=1, ln=1)
@@ -1739,6 +1772,17 @@ if modulo == "👨‍⚕️ Consultorio":
 # ------------------------------------------
 elif modulo == "🛍️ Óptica y Facturación":
     styled_header("Facturación y Ventas", "🛍️")
+    st.markdown("""
+        <style>
+        /* Empuja "Reimprimir" y "Historial" al borde derecho de la barra.
+           El selector combinado (6to hijo Y 2do desde el final) solo es
+           cierto cuando hay exactamente 7 pestañas -- así no afecta las
+           demás barras de pestañas del sistema (que tienen 2, 3 o 4). */
+        div[data-baseweb="tab-list"] button:nth-child(6):nth-last-child(2) {
+            margin-left: auto;
+        }
+        </style>
+    """, unsafe_allow_html=True)
     tab_venta, tab_menor, tab_recaudo, tab_anular, tab_editar, tab_reimprimir, tab_hist_fact = st.tabs(
         ["🛒 Nueva Venta", "🧦 Venta Menor", "💵 Recaudar Saldo", "🚫 Anular", "✏️ Editar Reciente", "🖨️ Reimprimir", "📜 Historial"]
     )
