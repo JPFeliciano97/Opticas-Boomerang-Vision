@@ -705,6 +705,18 @@ def normalizar_texto_busqueda(v):
     return re.sub(r"\s+", " ", s).strip()
 
 
+def _sanitizar_para_filtro_postgrest(texto):
+    """
+    Quita caracteres que PostgREST interpreta como separadores especiales
+    dentro del mini-lenguaje de .or_() (coma, paréntesis) antes de
+    interpolar texto de búsqueda del usuario en un filtro. Sin esto, un
+    nombre con coma o paréntesis podía romper el parseo del filtro
+    completo (la búsqueda fallaba silenciosamente, capturada solo por
+    el try/except general).
+    """
+    return re.sub(r"[,()]", " ", str(texto or "")).strip()
+
+
 def _buscar_candidatos_historial(query_texto):
     """
     Busca por documento, nombre, celular o N° de factura/trabajo en las
@@ -715,7 +727,7 @@ def _buscar_candidatos_historial(query_texto):
     Devuelve un dict {clave_identidad: {documento, nombre, celular,
     activo, n_legado}}.
     """
-    q_upper = normalizar_texto_busqueda(query_texto)
+    q_upper = _sanitizar_para_filtro_postgrest(normalizar_texto_busqueda(query_texto))
     q_digits = "".join(c for c in query_texto if c.isdigit())
 
     pac_matches, hc_matches, vf_matches = [], [], []
@@ -970,18 +982,30 @@ def mostrar_buscador_historial(key_prefix):
 
 
 def format_currency_co(val):
-
+    """
+    Formatea un número como moneda colombiana: separador de miles con
+    punto, consistente en cualquier magnitud (nunca apóstrofe -- el
+    código anterior alternaba entre punto y apóstrofe cada 6 dígitos,
+    dando resultados como "1'234.567" o "1.234'567.890" para cifras
+    sobre el millón, que no es el formato colombiano estándar y podía
+    confundirse con notación de otros países). También preserva el
+    signo negativo: antes, un valor negativo (ej. una "Ganancia Neta"
+    en pérdida) se mostraba idéntico al positivo, sin ningún indicador
+    de que en realidad era una pérdida.
+    """
     if val is None or val == "": return ""
     if isinstance(val, (int, float)): val = int(val)
     val_str = str(val).strip()
     if val_str.endswith(".0"): val_str = val_str[:-2]
+    es_negativo = val_str.strip().startswith("-")
     digits = clean_numeric_string(val_str)
     if not digits: return ""
     rev = digits[::-1]; res = ""
     for i, char in enumerate(rev):
-        if i > 0 and i % 3 == 0: res += "'" if i % 6 == 0 else "."
+        if i > 0 and i % 3 == 0: res += "."
         res += char
-    return res[::-1]
+    resultado = res[::-1]
+    return f"-{resultado}" if es_negativo else resultado
 
 def format_add(add_val):
     if not add_val: return ""
@@ -1750,9 +1774,24 @@ if modulo == "👨‍⚕️ Consultorio":
                 if cel_digits.startswith("57") and len(cel_digits) == 12:
                     cel_digits = cel_digits[2:]
                 cel_up = cel_digits if cel_digits else str(celular).upper()
-                
-                try: supabase.table("pacientes").upsert({"documento": doc_up, "nombre_completo": nom_up, "celular": cel_up, "ocupacion": str(ocupacion).upper(), "direccion": str(direccion).upper(), "edad": str(edad).upper(), "fecha_nacimiento": fecha_nacimiento.strftime("%Y-%m-%d"), "habeas_data": True, "habeas_data_fecha": now_co().isoformat()}).execute()
-                except Exception: supabase.table("pacientes").upsert({"documento": doc_up, "nombre_completo": nom_up, "celular": cel_up, "ocupacion": str(ocupacion).upper(), "direccion": str(direccion).upper(), "fecha_nacimiento": fecha_nacimiento.strftime("%Y-%m-%d"), "habeas_data": True, "habeas_data_fecha": now_co().isoformat()}).execute()
+
+                # La fecha del Habeas Data debe ser la del consentimiento
+                # ORIGINAL, no la de la visita más reciente -- si el
+                # paciente ya lo había autorizado antes, se preserva esa
+                # fecha real en vez de sobrescribirla cada vez que vuelve
+                # (perder esa fecha sería un problema real de cumplimiento:
+                # el sistema debe poder demostrar CUÁNDO se dio el
+                # consentimiento, no solo que existe).
+                fecha_habeas_final = now_co().isoformat()
+                try:
+                    pac_existente = supabase.table("pacientes").select("habeas_data,habeas_data_fecha").eq("documento", doc_up).execute().data
+                    if pac_existente and pac_existente[0].get("habeas_data") and pac_existente[0].get("habeas_data_fecha"):
+                        fecha_habeas_final = pac_existente[0]["habeas_data_fecha"]
+                except Exception:
+                    pass
+
+                try: supabase.table("pacientes").upsert({"documento": doc_up, "nombre_completo": nom_up, "celular": cel_up, "ocupacion": str(ocupacion).upper(), "direccion": str(direccion).upper(), "edad": str(edad).upper(), "fecha_nacimiento": fecha_nacimiento.strftime("%Y-%m-%d"), "habeas_data": True, "habeas_data_fecha": fecha_habeas_final}).execute()
+                except Exception: supabase.table("pacientes").upsert({"documento": doc_up, "nombre_completo": nom_up, "celular": cel_up, "ocupacion": str(ocupacion).upper(), "direccion": str(direccion).upper(), "fecha_nacimiento": fecha_nacimiento.strftime("%Y-%m-%d"), "habeas_data": True, "habeas_data_fecha": fecha_habeas_final}).execute()
 
                 supabase.table("historias_clinicas").insert({"paciente_documento": doc_up, "motivo_consulta": str(motivo).upper(), "rx_final_od": rx_od_final, "rx_final_oi": rx_oi_final, "dp": dp_combined, "ultimo_control": str(ultimo_control).upper(), "observaciones": str(obs).upper(), "adicion": f"{adicion:+.2f}" if adicion > 0.0 else "", "fecha": now_co().isoformat()}).execute()
 
@@ -1898,9 +1937,15 @@ elif modulo == "🛍️ Óptica y Facturación":
                     # prefijo "LEG-", así que ordenar por texto no sirve para
                     # encontrar el máximo real (alfabéticamente "LEG-..." queda
                     # por encima de cualquier número). Se filtran las legado y
-                    # se calcula el máximo numérico en Python.
-                    candidatos_num = supabase.table("ventas_facturacion").select("numero_factura") \
-                        .not_.like("numero_factura", "LEG-%").execute().data or []
+                    # se calcula el máximo numérico en Python. Se pagina
+                    # completo (no solo los primeros 1000) para que el número
+                    # sugerido siga siendo correcto cuando el negocio acumule
+                    # más de 1000 facturas reales.
+                    candidatos_num = traer_todas_las_filas(
+                        "ventas_facturacion",
+                        filtros_fn=lambda q: q.not_.like("numero_factura", "LEG-%"),
+                        columnas="numero_factura",
+                    )
                     numeros_reales = [int(c["numero_factura"]) for c in candidatos_num
                                       if str(c.get("numero_factura", "")).strip().isdigit()]
                     BASE_FACTURACION = 5422  # última factura del sistema anterior a esta migración
@@ -2044,6 +2089,11 @@ elif modulo == "🛍️ Óptica y Facturación":
                 if btn_generar_paquete:
                     if not desc_producto or sub_val == 0 or not titular_nombre or not titular_doc:
                         st.warning("⚠️ Debes rellenar la descripción, el subtotal y los datos del titular válidos.")
+                    elif desc_calc > sub_val:
+                        st.warning("⚠️ El descuento no puede ser mayor que el subtotal.")
+                    elif abono_val > tot_neto:
+                        st.warning(f"⚠️ El abono (${format_currency_co(abono_val)}) no puede ser mayor que el total "
+                                   f"a pagar (${format_currency_co(tot_neto)}). Revisa los valores.")
                     else:
                         venta_data = {
                             "numero_factura": num_factura, "titular_nombre": titular_nombre, "titular_doc": titular_doc, "titular_tel": titular_tel,
@@ -2066,6 +2116,7 @@ elif modulo == "🛍️ Óptica y Facturación":
                                 "av_od": detalles_rx.get("av_od", ""), "av_oi": detalles_rx.get("av_oi", ""),
                                 "av_cerca_od": detalles_rx.get("av_cerca_od", ""), "av_cerca_oi": detalles_rx.get("av_cerca_oi", ""),
                                 "origen_rx": origen_rx,
+                                "montura_codigo": selected_frame_code if (origen_montura == "Montura de Vitrina" and selected_frame_code) else None,
                             }).execute()
                             
                             if origen_montura == "Montura de Vitrina" and selected_frame_code:
@@ -2273,8 +2324,32 @@ elif modulo == "🛍️ Óptica y Facturación":
                     )
                     if confirmar_anulacion:
                         if st.button("🚨 CONFIRMAR ANULACIÓN DE FACTURA", type="primary"):
-                            supabase.table("ventas_facturacion").update({"estado": "ANULADA"}).eq("numero_factura", fac_a["numero_factura"]).execute()
-                            st.session_state.global_toast = "Factura ANULADA exitosamente."
+                            # saldo=0 al anular (por robustez: una factura anulada
+                            # nunca debe poder aparecer como "pendiente de cobro"
+                            # en ningún reporte, incluso si alguno olvidara filtrar
+                            # por estado). abono se preserva como registro
+                            # histórico de lo que sí se alcanzó a pagar.
+                            supabase.table("ventas_facturacion").update({"estado": "ANULADA", "saldo": 0}).eq("numero_factura", fac_a["numero_factura"]).execute()
+                            # Si la factura tenía una montura de vitrina, se
+                            # restaura el stock descontado en la venta -- si no,
+                            # el inventario del sistema queda desincronizado de
+                            # la realidad física (la montura nunca salió de la
+                            # tienda, pero el sistema la seguía contando como
+                            # vendida).
+                            montura_venta = fac_a.get("montura_codigo")
+                            if montura_venta:
+                                try:
+                                    frame_data = supabase.table("inventario").select("cantidad").eq("codigo", montura_venta).execute().data
+                                    if frame_data:
+                                        supabase.table("inventario").update({"cantidad": frame_data[0]["cantidad"] + 1}).eq("codigo", montura_venta).execute()
+                                    case_data = supabase.table("inventario").select("cantidad").eq("codigo", "ESTUCHE-GENERICO").execute().data
+                                    if case_data:
+                                        supabase.table("inventario").update({"cantidad": case_data[0]["cantidad"] + 1}).eq("codigo", "ESTUCHE-GENERICO").execute()
+                                    st.session_state.global_toast = f"Factura ANULADA. Stock de la montura {montura_venta} restaurado."
+                                except Exception:
+                                    st.session_state.global_toast = "Factura ANULADA. No se pudo restaurar el stock automáticamente -- revísalo manualmente."
+                            else:
+                                st.session_state.global_toast = "Factura ANULADA exitosamente."
                             st.session_state.global_toast_icon = "🚨"
                             st.session_state.trigger_clear_anular = True
                             st.rerun()
@@ -2367,20 +2442,24 @@ elif modulo == "🛍️ Óptica y Facturación":
                             guardar_edicion = st.form_submit_button("💾 Guardar Cambios", type="primary", use_container_width=True)
 
                         if guardar_edicion:
-                            supabase.table("ventas_facturacion").update({
-                                "descripcion": e_desc, "metodo_pago": e_metodo,
-                                "total": int(e_total), "subtotal": int(e_total),
-                                "abono": int(e_abono), "saldo": int(e_saldo_calc),
-                                "fecha_entrega": e_entrega,
-                                "rx_final_od": build_rx_string(e_esf_od, e_cil_od, e_eje_od),
-                                "rx_final_oi": build_rx_string(e_esf_oi, e_cil_oi, e_eje_oi),
-                                "adicion": f"{e_add:+.2f}" if e_add > 0.0 else "",
-                                "dp": f"{e_dp_od}/{e_dp_oi}",
-                                "av_od": e_av_od, "av_oi": e_av_oi,
-                            }).eq("numero_factura", venta_e["numero_factura"]).execute()
-                            st.session_state.global_toast = f"Factura #{formatear_numero_factura_display(venta_e['numero_factura'])} actualizada."
-                            st.session_state.trigger_clear_editar = True
-                            st.rerun()
+                            if e_abono > e_total:
+                                st.error(f"⚠️ El abono (${format_currency_co(int(e_abono))}) no puede ser mayor que el "
+                                         f"total (${format_currency_co(int(e_total))}). Corrige los valores y guarda de nuevo.")
+                            else:
+                                supabase.table("ventas_facturacion").update({
+                                    "descripcion": e_desc, "metodo_pago": e_metodo,
+                                    "total": int(e_total), "subtotal": int(e_total),
+                                    "abono": int(e_abono), "saldo": int(e_saldo_calc),
+                                    "fecha_entrega": e_entrega,
+                                    "rx_final_od": build_rx_string(e_esf_od, e_cil_od, e_eje_od),
+                                    "rx_final_oi": build_rx_string(e_esf_oi, e_cil_oi, e_eje_oi),
+                                    "adicion": f"{e_add:+.2f}" if e_add > 0.0 else "",
+                                    "dp": f"{e_dp_od}/{e_dp_oi}",
+                                    "av_od": e_av_od, "av_oi": e_av_oi,
+                                }).eq("numero_factura", venta_e["numero_factura"]).execute()
+                                st.session_state.global_toast = f"Factura #{formatear_numero_factura_display(venta_e['numero_factura'])} actualizada."
+                                st.session_state.trigger_clear_editar = True
+                                st.rerun()
 
     with tab_reimprimir:
         st.markdown("<h4 style='color:#000000;'>🖨️ Reimprimir Documentos de una Factura</h4>", unsafe_allow_html=True)
@@ -2599,12 +2678,36 @@ elif modulo == "🛍️ Óptica y Facturación":
 # ------------------------------------------
 elif modulo == "📊 Cuadre de Caja Físico":
     styled_header("Cuadre de Caja Físico e Historial Diario", "📊")
-    
+
+    # La base inicial de caja es un valor estable día a día para el
+    # negocio -- se persiste en 'configuracion' (misma tabla que las
+    # plantillas de WhatsApp) para no tener que reingresarla cada vez
+    # que se visita este módulo, en vez de resetear siempre a $50.000.
+    if "base_caja_guardada" not in st.session_state:
+        try:
+            cfg_base = supabase.table("configuracion").select("valor").eq("clave", "base_caja_inicial").execute().data
+            st.session_state.base_caja_guardada = int(cfg_base[0]["valor"]) if cfg_base else 50000
+        except Exception:
+            st.session_state.base_caja_guardada = 50000
+
+    def _guardar_base_caja():
+        try:
+            supabase.table("configuracion").upsert({
+                "clave": "base_caja_inicial", "valor": str(st.session_state.base_caja_input)
+            }).execute()
+            st.session_state.base_caja_guardada = st.session_state.base_caja_input
+        except Exception:
+            pass
+
     col_fc1, col_fc2 = st.columns([2, 1])
     with col_fc1:
         fecha_consulta = st.date_input("Selecciona la fecha a consultar:", now_co().date(), format="DD/MM/YYYY")
     with col_fc2:
-        base_caja_inicial = st.number_input("Base Inicial en Gaveta ($)", min_value=0, value=50000, step=10000)
+        base_caja_inicial = st.number_input(
+            "Base Inicial en Gaveta ($)", min_value=0,
+            value=st.session_state.base_caja_guardada, step=10000,
+            key="base_caja_input", on_change=_guardar_base_caja,
+        )
 
     fecha_str = fecha_consulta.strftime("%Y-%m-%d")
     
@@ -2870,24 +2973,40 @@ elif modulo == "📦 Inventario":
                         monturas_data.append((m_ref, m_color))
                 
                 if st.button("💾 Guardar Montura(s)", type="primary", use_container_width=True):
+                    codigos_lote = [r for r, c in monturas_data]
+                    codigos_repetidos = {r for r in codigos_lote if codigos_lote.count(r) > 1}
                     if not inv_marca or any(not r or not c for r, c in monturas_data):
                         st.error("⚠️ Marca, Referencia y Color son obligatorios para todas las monturas listadas.")
+                    elif codigos_repetidos:
+                        st.error(f"⚠️ Hay referencias repetidas en esta lista: {', '.join(codigos_repetidos)}. "
+                                 f"Cada montura necesita un código único.")
                     else:
-                        try:
-                            for r, c in monturas_data:
-                                desc_final = f"MONTURA {inv_mat} - COLOR {c}"
-                                supabase.table("inventario").insert({
-                                    "codigo": r, "categoria": "Montura", "marca": inv_marca, 
-                                    "descripcion": desc_final, "proveedor": inv_prov, 
-                                    "cantidad": 1, "precio_compra": val_compra, "precio_venta": val_venta, 
-                                    "fecha_ingreso": now_co().isoformat()
-                                }).execute()
-                            st.session_state.global_toast = f"{inv_cant} montura(s) registrada(s) correctamente."
-                            st.session_state.ultima_cant_monturas = int(inv_cant)
-                            st.session_state.trigger_clear_montura = True
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Error al guardar en base de datos: {e}")
+                        # Se verifica ANTES de insertar cuáles códigos ya existen
+                        # en el inventario -- de lo contrario, si una montura a
+                        # mitad de la lista fallaba por código duplicado, el
+                        # insert se detenía ahí dejando un estado parcial (unas
+                        # sí guardadas, otras no) sin explicar claramente por qué.
+                        existentes = supabase.table("inventario").select("codigo").in_("codigo", codigos_lote).execute().data or []
+                        codigos_existentes = {e["codigo"] for e in existentes}
+                        if codigos_existentes:
+                            st.error(f"⚠️ Ya existe(n) en el inventario: {', '.join(codigos_existentes)}. "
+                                     f"Usa una referencia distinta o edita el producto existente.")
+                        else:
+                            try:
+                                for r, c in monturas_data:
+                                    desc_final = f"MONTURA {inv_mat} - COLOR {c}"
+                                    supabase.table("inventario").insert({
+                                        "codigo": r, "categoria": "Montura", "marca": inv_marca, 
+                                        "descripcion": desc_final, "proveedor": inv_prov, 
+                                        "cantidad": 1, "precio_compra": val_compra, "precio_venta": val_venta, 
+                                        "fecha_ingreso": now_co().isoformat()
+                                    }).execute()
+                                st.session_state.global_toast = f"{inv_cant} montura(s) registrada(s) correctamente."
+                                st.session_state.ultima_cant_monturas = int(inv_cant)
+                                st.session_state.trigger_clear_montura = True
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error al guardar en base de datos: {e}")
             else:
                 col_i1, col_i2 = st.columns(2)
                 with col_i1:
@@ -2906,18 +3025,26 @@ elif modulo == "📦 Inventario":
                     if not inv_codigo or not inv_marca or not inv_desc: 
                         st.error("⚠️ Código, Marca y Descripción son obligatorios.")
                     else:
-                        try:
-                            supabase.table("inventario").insert({
-                                "codigo": inv_codigo, "categoria": inv_categoria, "marca": inv_marca, 
-                                "descripcion": inv_desc, "proveedor": inv_prov, "cantidad": inv_cant, 
-                                "precio_compra": val_compra, "precio_venta": val_venta, 
-                                "fecha_ingreso": now_co().isoformat()
-                            }).execute()
-                            st.session_state.global_toast = f"Producto '{inv_codigo}' registrado."
-                            st.session_state.trigger_clear_producto = True
-                            st.rerun()
-                        except Exception as e: 
-                            st.error(f"Error: {e}")
+                        # Se verifica ANTES de insertar si el código ya existe,
+                        # para dar un mensaje claro en vez del error técnico de
+                        # la base de datos ("duplicate key value...").
+                        ya_existe = supabase.table("inventario").select("codigo").eq("codigo", inv_codigo).execute().data
+                        if ya_existe:
+                            st.error(f"⚠️ Ya existe un producto con el código '{inv_codigo}'. "
+                                     f"Usa otro código, o ajusta el stock existente desde 'Ajuste Rápido'.")
+                        else:
+                            try:
+                                supabase.table("inventario").insert({
+                                    "codigo": inv_codigo, "categoria": inv_categoria, "marca": inv_marca, 
+                                    "descripcion": inv_desc, "proveedor": inv_prov, "cantidad": inv_cant, 
+                                    "precio_compra": val_compra, "precio_venta": val_venta, 
+                                    "fecha_ingreso": now_co().isoformat()
+                                }).execute()
+                                st.session_state.global_toast = f"Producto '{inv_codigo}' registrado."
+                                st.session_state.trigger_clear_producto = True
+                                st.rerun()
+                            except Exception as e: 
+                                st.error(f"Error: {e}")
 
     with tab_ajuste:
         codigo_ajuste = st.text_input("Buscar por Código:", key="codigo_ajuste_input").upper()
