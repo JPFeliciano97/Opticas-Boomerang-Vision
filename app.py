@@ -1772,29 +1772,35 @@ if modulo == "👨‍⚕️ Consultorio":
 # ------------------------------------------
 elif modulo == "🛍️ Óptica y Facturación":
     styled_header("Facturación y Ventas", "🛍️")
-    st.markdown("""
-        <style>
-        /* Empuja "Reimprimir" y "Historial" al borde derecho de la barra.
-           El atributo real de cada pestaña individual en Streamlit es
-           [data-baseweb="tab"] (confirmado en la documentación/comunidad
-           de Streamlit) -- usar "button" genérico no coincidía con nada,
-           por eso el intento anterior no tuvo efecto. El selector
-           combinado (6to hijo Y 2do desde el final) solo es cierto cuando
-           hay exactamente 7 pestañas, así no afecta las demás barras del
-           sistema (que tienen 2, 3 o 4).*/
-        .stTabs [data-baseweb="tab-list"] {
-            display: flex;
-        }
-        .stTabs [data-baseweb="tab-list"] [data-baseweb="tab"]:nth-child(6):nth-last-child(2) {
-            margin-left: auto;
-        }
-        </style>
-    """, unsafe_allow_html=True)
-    tab_venta, tab_menor, tab_recaudo, tab_anular, tab_editar, tab_reimprimir, tab_hist_fact = st.tabs(
-        ["🛒 Nueva Venta", "🧦 Venta Menor", "💵 Recaudar Saldo", "🚫 Anular", "✏️ Editar Reciente", "🖨️ Reimprimir", "📜 Historial"]
-    )
-    
-    with tab_venta:
+
+    # Reemplaza st.tabs() por una barra de botones en columnas: los dos
+    # intentos anteriores con CSS sobre las clases internas de Streamlit
+    # no funcionaron (no hay forma de inspeccionar el HTML real que
+    # genera para confirmar la causa). Con columnas, el ancho de cada
+    # grupo está directamente bajo control -- separación garantizada,
+    # no depende de adivinar la estructura interna de Streamlit.
+    SECCIONES_FACT = ["🛒 Nueva Venta", "🧦 Venta Menor", "💵 Recaudar Saldo",
+                       "🚫 Anular", "✏️ Editar Reciente"]
+    SECCIONES_FACT_DER = ["🖨️ Reimprimir", "📜 Historial"]
+    if "seccion_facturacion" not in st.session_state or st.session_state.seccion_facturacion not in (SECCIONES_FACT + SECCIONES_FACT_DER):
+        st.session_state.seccion_facturacion = SECCIONES_FACT[0]
+
+    cols_nav = st.columns([1] * len(SECCIONES_FACT) + [1.6] + [1] * len(SECCIONES_FACT_DER))
+    for i, etiqueta in enumerate(SECCIONES_FACT):
+        with cols_nav[i]:
+            if st.button(etiqueta, key=f"navfact_{etiqueta}", use_container_width=True,
+                         type="primary" if st.session_state.seccion_facturacion == etiqueta else "secondary"):
+                st.session_state.seccion_facturacion = etiqueta
+                st.rerun()
+    for j, etiqueta in enumerate(SECCIONES_FACT_DER):
+        with cols_nav[len(SECCIONES_FACT) + 1 + j]:
+            if st.button(etiqueta, key=f"navfact_{etiqueta}", use_container_width=True,
+                         type="primary" if st.session_state.seccion_facturacion == etiqueta else "secondary"):
+                st.session_state.seccion_facturacion = etiqueta
+                st.rerun()
+    st.divider()
+
+    if st.session_state.seccion_facturacion == "🛒 Nueva Venta":
         # Confirmación de la última venta guardada: se muestra ARRIBA del
         # formulario (ya vacío) en vez de dejar el PDF embebido bloqueando
         # la pantalla indefinidamente. Los bytes viven en session_state
@@ -2143,7 +2149,7 @@ elif modulo == "🛍️ Óptica y Facturación":
                         unsafe_allow_html=True
                     )
 
-    with tab_menor:
+    elif st.session_state.seccion_facturacion == "🧦 Venta Menor":
         st.markdown("<h4 style='color: #000000;'>🧦 Registrar Venta Menor</h4>", unsafe_allow_html=True)
         st.caption("Para artículos sueltos que no requieren una factura completa: "
                    "cordones, líquidos de limpieza, tornillos, plaquetas, etc. "
@@ -2208,7 +2214,7 @@ elif modulo == "🛍️ Óptica y Facturación":
         else:
             st.info("Todavía no hay ventas menores registradas hoy.")
 
-    with tab_recaudo:
+    elif st.session_state.seccion_facturacion == "💵 Recaudar Saldo":
         st.markdown("<h4 style='color: #000000;'>💵 Recaudar Saldo y Cambiar Estado a Entregado</h4>", unsafe_allow_html=True)
         fac_search = st.text_input("Ingrese el N° de Factura o Cédula a buscar:", key="fac_search_input").upper()
         if fac_search:
@@ -2269,7 +2275,7 @@ elif modulo == "🛍️ Óptica y Facturación":
             else:
                 st.warning("⚠️ No se encontraron facturas para ese número de factura o cédula.")
 
-    with tab_anular:
+    elif st.session_state.seccion_facturacion == "🚫 Anular":
         st.markdown("<h4 style='color: #000000;'>🚫 Anulación de Facturas</h4>", unsafe_allow_html=True)
         num_anular = st.text_input("Ingrese el N° de Factura a Anular:", key="input_anular").upper()
         if num_anular:
@@ -2296,7 +2302,7 @@ elif modulo == "🛍️ Óptica y Facturación":
             else:
                 st.error("No existe ninguna factura con ese número.")
 
-    with tab_editar:
+    elif st.session_state.seccion_facturacion == "✏️ Editar Reciente":
         st.markdown("<h4 style='color: #000000;'>✏️ Editar Factura Reciente</h4>", unsafe_allow_html=True)
         st.caption("Solo se pueden editar facturas creadas en las **últimas 24 horas** -- "
                    "pasado ese plazo, usa Anular y crea una nueva si hace falta corregir algo, "
@@ -2395,7 +2401,7 @@ elif modulo == "🛍️ Óptica y Facturación":
                             st.session_state.trigger_clear_editar = True
                             st.rerun()
 
-    with tab_reimprimir:
+    elif st.session_state.seccion_facturacion == "🖨️ Reimprimir":
         st.markdown("<h4 style='color:#000000;'>🖨️ Reimprimir Documentos de una Factura</h4>", unsafe_allow_html=True)
         st.caption("Busca una factura anterior y descarga sus documentos con la fecha original de emisión.")
 
@@ -2602,7 +2608,7 @@ elif modulo == "🛍️ Óptica y Facturación":
                 if not hist_r.get("rx_final_od") and not hist_r.get("rx_final_oi"):
                     st.warning("⚠️ No se encontró historia clínica con Rx para este paciente. La orden de laboratorio y prescripción irán sin datos de fórmula.")
 
-    with tab_hist_fact:
+    elif st.session_state.seccion_facturacion == "📜 Historial":
         st.markdown("#### 🔍 Buscar Historial de un Paciente")
         mostrar_buscador_historial("hist_facturacion")
 
