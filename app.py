@@ -1773,31 +1773,66 @@ if modulo == "👨‍⚕️ Consultorio":
 elif modulo == "🛍️ Óptica y Facturación":
     styled_header("Facturación y Ventas", "🛍️")
 
-    # Reemplaza st.tabs() por una barra de botones en columnas: los dos
-    # intentos anteriores con CSS sobre las clases internas de Streamlit
-    # no funcionaron (no hay forma de inspeccionar el HTML real que
-    # genera para confirmar la causa). Con columnas, el ancho de cada
-    # grupo está directamente bajo control -- separación garantizada,
-    # no depende de adivinar la estructura interna de Streamlit.
+    # Reemplaza st.tabs() por una barra de botones en columnas -- la
+    # posición (empujar Reimprimir/Historial a la derecha) ya se
+    # confirmó funcionando. Ahora se le da apariencia de pestaña plana
+    # (sin fondo ni borde de botón) usando el selector CSS confirmado
+    # y documentado de Streamlit para contenedores con key:
+    # .st-key-<key> -- a diferencia de los intentos anteriores, que
+    # apuntaban a clases internas de Streamlit sin documentar.
     SECCIONES_FACT = ["🛒 Nueva Venta", "🧦 Venta Menor", "💵 Recaudar Saldo",
                        "🚫 Anular", "✏️ Editar Reciente"]
     SECCIONES_FACT_DER = ["🖨️ Reimprimir", "📜 Historial"]
+    KEYS_FACT = {
+        "🛒 Nueva Venta": "nueva_venta", "🧦 Venta Menor": "venta_menor",
+        "💵 Recaudar Saldo": "recaudar_saldo", "🚫 Anular": "anular",
+        "✏️ Editar Reciente": "editar_reciente", "🖨️ Reimprimir": "reimprimir",
+        "📜 Historial": "historial",
+    }
     if "seccion_facturacion" not in st.session_state or st.session_state.seccion_facturacion not in (SECCIONES_FACT + SECCIONES_FACT_DER):
         st.session_state.seccion_facturacion = SECCIONES_FACT[0]
 
-    cols_nav = st.columns([1] * len(SECCIONES_FACT) + [1.6] + [1] * len(SECCIONES_FACT_DER))
-    for i, etiqueta in enumerate(SECCIONES_FACT):
-        with cols_nav[i]:
-            if st.button(etiqueta, key=f"navfact_{etiqueta}", use_container_width=True,
-                         type="primary" if st.session_state.seccion_facturacion == etiqueta else "secondary"):
-                st.session_state.seccion_facturacion = etiqueta
-                st.rerun()
-    for j, etiqueta in enumerate(SECCIONES_FACT_DER):
-        with cols_nav[len(SECCIONES_FACT) + 1 + j]:
-            if st.button(etiqueta, key=f"navfact_{etiqueta}", use_container_width=True,
-                         type="primary" if st.session_state.seccion_facturacion == etiqueta else "secondary"):
-                st.session_state.seccion_facturacion = etiqueta
-                st.rerun()
+    st.markdown("""
+        <style>
+        .st-key-nav_facturacion button {
+            background-color: transparent;
+            border: none;
+            border-radius: 0;
+            box-shadow: none;
+            color: #31333F;
+            font-weight: 400;
+            padding-bottom: 10px;
+            border-bottom: 3px solid transparent;
+        }
+        .st-key-nav_facturacion button:hover {
+            color: #e57373;
+            background-color: transparent;
+        }
+        .st-key-nav_facturacion button p {
+            font-size: 1rem;
+        }
+        .st-key-nav_facturacion [kind="primary"] {
+            color: #e57373 !important;
+            font-weight: 700;
+            border-bottom: 3px solid #e57373 !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+    with st.container(key="nav_facturacion"):
+        cols_nav = st.columns([1] * len(SECCIONES_FACT) + [1.6] + [1] * len(SECCIONES_FACT_DER))
+        for i, etiqueta in enumerate(SECCIONES_FACT):
+            with cols_nav[i]:
+                if st.button(etiqueta, key=f"navfact_{KEYS_FACT[etiqueta]}", use_container_width=True,
+                             type="primary" if st.session_state.seccion_facturacion == etiqueta else "secondary"):
+                    st.session_state.seccion_facturacion = etiqueta
+                    st.rerun()
+        for j, etiqueta in enumerate(SECCIONES_FACT_DER):
+            with cols_nav[len(SECCIONES_FACT) + 1 + j]:
+                if st.button(etiqueta, key=f"navfact_{KEYS_FACT[etiqueta]}", use_container_width=True,
+                             type="primary" if st.session_state.seccion_facturacion == etiqueta else "secondary"):
+                    st.session_state.seccion_facturacion = etiqueta
+                    st.rerun()
     st.divider()
 
     if st.session_state.seccion_facturacion == "🛒 Nueva Venta":
