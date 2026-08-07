@@ -1140,6 +1140,15 @@ def rx_string_a_numeros(rx_str):
     try:
         s = str(rx_str).upper().replace('X', ' ').replace('°', '')
         parts = s.split()
+        # "NEUTRO" como primer token es el placeholder de esfera=0 (lo usa
+        # build_rx_string cuando la esfera es cero pero SÍ hay cilindro/eje,
+        # ej: "NEUTRO -3.75 x 160°"). Antes, intentar convertir "NEUTRO" a
+        # float lanzaba una excepción que descartaba TODO el resultado
+        # (incluyendo cilindro y eje, que sí eran válidos) y devolvía ceros
+        # -- por eso al reabrir para editar, esos dos campos aparecían en
+        # blanco aunque sí estaban guardados correctamente en la BD.
+        if parts and parts[0] == "NEUTRO":
+            parts[0] = "0"
         if len(parts) == 1:
             return float(parts[0]), 0.0, 0
         if len(parts) >= 3:
@@ -1512,10 +1521,36 @@ def get_sidebar_logo_html():
 # =====================================================================
 # 6. CALLBACKS DE INTERFAZ
 # =====================================================================
-def force_negative_cyl_od():
-    if st.session_state.cil_od > 0: st.session_state.cil_od = -abs(st.session_state.cil_od)
-def force_negative_cyl_oi():
-    if st.session_state.cil_oi > 0: st.session_state.cil_oi = -abs(st.session_state.cil_oi)
+def force_negative_cyl(key):
+    """
+    El cilindro en optometría siempre se expresa en notación negativa
+    -- si el operador digita un valor positivo por error de tecleo (o
+    porque está acostumbrado a la notación positiva de otro sistema),
+    se corrige automáticamente al signo negativo. Genérica por key para
+    poder usarse en los distintos campos de cilindro del sistema
+    (Consultorio, Nueva Venta, Editar Historia, Editar Factura), que
+    tienen nombres de key distintos y a veces dinámicos.
+    """
+    if st.session_state.get(key, 0) > 0:
+        st.session_state[key] = -abs(st.session_state[key])
+
+
+def wrap_eje(key):
+    """
+    El eje del cilindro es un ángulo circular: 0° y 180° son el mismo
+    eje físico, así que el rango útil real es 0-175° en pasos de 5°.
+    Streamlit deshabilita el botón "-" nativo cuando el valor está en
+    min_value -- para que ese botón permita "dar la vuelta" de 0 a 175
+    (en vez de quedar inutilizable en el extremo), el widget se
+    configura con un margen de un paso fuera del rango real
+    (min=-5, max=180) y este callback corrige el valor "envolviéndolo"
+    al otro extremo apenas se sale del rango 0-175.
+    """
+    v = st.session_state.get(key, 0)
+    if v < 0:
+        st.session_state[key] = 175
+    elif v > 175:
+        st.session_state[key] = 0
 
 def on_subtotal_change(): st.session_state.subtotal_input = format_currency_co(st.session_state.subtotal_input)
 def on_abono_change(): st.session_state.abono_input = format_currency_co(st.session_state.abono_input)
@@ -1991,17 +2026,17 @@ if modulo == "👨‍⚕️ Consultorio":
             st.markdown("**Ojo Derecho (OD)**")
             c1, c2, c3, sp, c4 = st.columns([2, 2, 2, 0.5, 2])
             esfera_od = c1.number_input("Esfera OD", step=0.25, format="%.2f", key="esf_od")
-            cilindro_od = c2.number_input("Cilindro OD", step=0.25, format="%.2f", key="cil_od", on_change=force_negative_cyl_od)
+            cilindro_od = c2.number_input("Cilindro OD", step=0.25, format="%.2f", key="cil_od", on_change=force_negative_cyl, args=("cil_od",))
             # Eje OD: paso 5, rango 0-175
-            eje_od = c3.number_input("Eje OD", min_value=0, max_value=175, step=5, key="eje_od")
+            eje_od = c3.number_input("Eje OD", min_value=-5, max_value=180, step=5, key="eje_od", on_change=wrap_eje, args=("eje_od",))
             dp_od = c4.text_input("D.P. OD (mm)", key="dp_od_input")
 
             st.markdown("**Ojo Izquierdo (OI)**")
             c5, c6, c7, sp2, c8 = st.columns([2, 2, 2, 0.5, 2])
             esfera_oi = c5.number_input("Esfera OI", step=0.25, format="%.2f", key="esf_oi")
-            cilindro_oi = c6.number_input("Cilindro OI", step=0.25, format="%.2f", key="cil_oi", on_change=force_negative_cyl_oi)
+            cilindro_oi = c6.number_input("Cilindro OI", step=0.25, format="%.2f", key="cil_oi", on_change=force_negative_cyl, args=("cil_oi",))
             # Eje OI: paso 5, rango 0-175
-            eje_oi = c7.number_input("Eje OI", min_value=0, max_value=175, step=5, key="eje_oi")
+            eje_oi = c7.number_input("Eje OI", min_value=-5, max_value=180, step=5, key="eje_oi", on_change=wrap_eje, args=("eje_oi",))
             dp_oi = c8.text_input("D.P. OI (mm)", key="dp_oi_input")
             
             # Adición en columna más estrecha
@@ -2141,15 +2176,15 @@ if modulo == "👨‍⚕️ Consultorio":
                     st.markdown("**OD**")
                     hh1, hh2, hh3, hh4 = st.columns(4)
                     eh_esf_od = hh1.number_input("Esfera OD", step=0.25, format="%.2f", value=heh_esf_od, key=f"eh_esf_od_{hist_e.get('id')}")
-                    eh_cil_od = hh2.number_input("Cilindro OD", step=0.25, format="%.2f", value=heh_cil_od, key=f"eh_cil_od_{hist_e.get('id')}")
-                    eh_eje_od = hh3.number_input("Eje OD", min_value=0, max_value=175, step=5, value=heh_eje_od, key=f"eh_eje_od_{hist_e.get('id')}")
+                    eh_cil_od = hh2.number_input("Cilindro OD", step=0.25, format="%.2f", value=heh_cil_od, key=f"eh_cil_od_{hist_e.get('id')}", on_change=force_negative_cyl, args=(f"eh_cil_od_{hist_e.get('id')}",))
+                    eh_eje_od = hh3.number_input("Eje OD", min_value=-5, max_value=180, step=5, value=heh_eje_od, key=f"eh_eje_od_{hist_e.get('id')}", on_change=wrap_eje, args=(f"eh_eje_od_{hist_e.get('id')}",))
                     eh_dp_od = hh4.text_input("DP OD", value=dp_od_prev_h.strip()).upper()
 
                     st.markdown("**OI**")
                     hh5, hh6, hh7, hh8 = st.columns(4)
                     eh_esf_oi = hh5.number_input("Esfera OI", step=0.25, format="%.2f", value=heh_esf_oi, key=f"eh_esf_oi_{hist_e.get('id')}")
-                    eh_cil_oi = hh6.number_input("Cilindro OI", step=0.25, format="%.2f", value=heh_cil_oi, key=f"eh_cil_oi_{hist_e.get('id')}")
-                    eh_eje_oi = hh7.number_input("Eje OI", min_value=0, max_value=175, step=5, value=heh_eje_oi, key=f"eh_eje_oi_{hist_e.get('id')}")
+                    eh_cil_oi = hh6.number_input("Cilindro OI", step=0.25, format="%.2f", value=heh_cil_oi, key=f"eh_cil_oi_{hist_e.get('id')}", on_change=force_negative_cyl, args=(f"eh_cil_oi_{hist_e.get('id')}",))
+                    eh_eje_oi = hh7.number_input("Eje OI", min_value=-5, max_value=180, step=5, value=heh_eje_oi, key=f"eh_eje_oi_{hist_e.get('id')}", on_change=wrap_eje, args=(f"eh_eje_oi_{hist_e.get('id')}",))
                     eh_dp_oi = hh8.text_input("DP OI", value=dp_oi_prev_h.strip()).upper()
 
                     eh_add_prev = 0.0
@@ -2353,16 +2388,16 @@ elif modulo == "🛍️ Óptica y Facturación":
                     st.markdown("**Ojo Derecho (OD)**")
                     ext1, ext2, ext3, ext4, ext5 = st.columns(5)
                     esf_od_ext = ext1.number_input("Esfera OD", step=0.25, format="%.2f", key="esf_od_ext")
-                    cil_od_ext = ext2.number_input("Cilindro OD", step=0.25, format="%.2f", key="cil_od_ext")
-                    eje_od_ext = ext3.number_input("Eje OD", min_value=0, max_value=175, step=5, key="eje_od_ext")
+                    cil_od_ext = ext2.number_input("Cilindro OD", step=0.25, format="%.2f", key="cil_od_ext", on_change=force_negative_cyl, args=("cil_od_ext",))
+                    eje_od_ext = ext3.number_input("Eje OD", min_value=-5, max_value=180, step=5, key="eje_od_ext", on_change=wrap_eje, args=("eje_od_ext",))
                     av_od_ext = ext4.text_input("AV OD", key="av_od_ext").upper()
                     dp_od_ext = ext5.text_input("DP OD (mm)", key="dp_od_ext").upper()
 
                     st.markdown("**Ojo Izquierdo (OI)**")
                     ext6, ext7, ext8, ext9, ext10 = st.columns(5)
                     esf_oi_ext = ext6.number_input("Esfera OI", step=0.25, format="%.2f", key="esf_oi_ext")
-                    cil_oi_ext = ext7.number_input("Cilindro OI", step=0.25, format="%.2f", key="cil_oi_ext")
-                    eje_oi_ext = ext8.number_input("Eje OI", min_value=0, max_value=175, step=5, key="eje_oi_ext")
+                    cil_oi_ext = ext7.number_input("Cilindro OI", step=0.25, format="%.2f", key="cil_oi_ext", on_change=force_negative_cyl, args=("cil_oi_ext",))
+                    eje_oi_ext = ext8.number_input("Eje OI", min_value=-5, max_value=180, step=5, key="eje_oi_ext", on_change=wrap_eje, args=("eje_oi_ext",))
                     av_oi_ext = ext9.text_input("AV OI", key="av_oi_ext").upper()
                     dp_oi_ext = ext10.text_input("DP OI (mm)", key="dp_oi_ext").upper()
 
@@ -2888,16 +2923,16 @@ elif modulo == "🛍️ Óptica y Facturación":
                     st.markdown("**OD**")
                     eo1, eo2, eo3, eo4, eo5 = st.columns(5)
                     e_esf_od = eo1.number_input("Esfera OD", step=0.25, format="%.2f", value=esf_od_prev, key=f"e_esf_od_{venta_e['numero_factura']}")
-                    e_cil_od = eo2.number_input("Cilindro OD", step=0.25, format="%.2f", value=cil_od_prev, key=f"e_cil_od_{venta_e['numero_factura']}")
-                    e_eje_od = eo3.number_input("Eje OD", min_value=0, max_value=175, step=5, value=eje_od_prev, key=f"e_eje_od_{venta_e['numero_factura']}")
+                    e_cil_od = eo2.number_input("Cilindro OD", step=0.25, format="%.2f", value=cil_od_prev, key=f"e_cil_od_{venta_e['numero_factura']}", on_change=force_negative_cyl, args=(f"e_cil_od_{venta_e['numero_factura']}",))
+                    e_eje_od = eo3.number_input("Eje OD", min_value=-5, max_value=180, step=5, value=eje_od_prev, key=f"e_eje_od_{venta_e['numero_factura']}", on_change=wrap_eje, args=(f"e_eje_od_{venta_e['numero_factura']}",))
                     e_av_od = eo4.text_input("AV OD", value=(venta_e.get("av_od") or "")).upper()
                     e_dp_od = eo5.text_input("DP OD", value=dp_od_prev.strip()).upper()
 
                     st.markdown("**OI**")
                     ei1, ei2, ei3, ei4, ei5 = st.columns(5)
                     e_esf_oi = ei1.number_input("Esfera OI", step=0.25, format="%.2f", value=esf_oi_prev, key=f"e_esf_oi_{venta_e['numero_factura']}")
-                    e_cil_oi = ei2.number_input("Cilindro OI", step=0.25, format="%.2f", value=cil_oi_prev, key=f"e_cil_oi_{venta_e['numero_factura']}")
-                    e_eje_oi = ei3.number_input("Eje OI", min_value=0, max_value=175, step=5, value=eje_oi_prev, key=f"e_eje_oi_{venta_e['numero_factura']}")
+                    e_cil_oi = ei2.number_input("Cilindro OI", step=0.25, format="%.2f", value=cil_oi_prev, key=f"e_cil_oi_{venta_e['numero_factura']}", on_change=force_negative_cyl, args=(f"e_cil_oi_{venta_e['numero_factura']}",))
+                    e_eje_oi = ei3.number_input("Eje OI", min_value=-5, max_value=180, step=5, value=eje_oi_prev, key=f"e_eje_oi_{venta_e['numero_factura']}", on_change=wrap_eje, args=(f"e_eje_oi_{venta_e['numero_factura']}",))
                     e_av_oi = ei4.text_input("AV OI", value=(venta_e.get("av_oi") or "")).upper()
                     e_dp_oi = ei5.text_input("DP OI", value=dp_oi_prev.strip()).upper()
 
