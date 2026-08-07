@@ -1631,6 +1631,14 @@ def _limpiar_busquedas_historial():
     # descarta ese estado -- si no, el aviso "Datos de X cargados"
     # quedaría pegado en la próxima visita a Consultorio.
     st.session_state.revisando_pendiente = None
+    # Mismo problema con las selecciones de "editar algo": si quedaban
+    # pegadas tras salir sin guardar, el aviso de "cambios sin guardar"
+    # se disparaba de nuevo en la SIGUIENTE visita, aunque todo estuviera
+    # vacío -- porque hay_cambios_sin_guardar() las detecta como
+    # "hay algo en curso" sin distinguir si es una sesión nueva.
+    st.session_state.editar_factura_sel = None
+    st.session_state.editar_historia_sel = None
+    st.session_state.expander_pendientes_abierto = True
 
 
 def hay_cambios_sin_guardar():
@@ -1664,11 +1672,25 @@ def hay_cambios_sin_guardar():
         return False
 
     if m == "🛍️ Óptica y Facturación":
-        if _txt("desc_producto_input") or _txt("subtotal_input") or _txt("abono_input"):
+        # El grupo de "Nueva Venta" solo cuenta si la búsqueda de
+        # paciente sigue activa (el asistente realmente está visible en
+        # pantalla) -- si search_opt está vacío, cualquier valor que
+        # quedara en subtotal_input/abono_input es de una búsqueda
+        # anterior ya cerrada, no un cambio real pendiente ahora mismo.
+        # desc_producto_input se excluye del chequeo por completo: ese
+        # campo siempre trae un texto sugerido por defecto en cuanto se
+        # encuentra un paciente, así que su sola presencia no dice nada
+        # sobre si la persona escribió algo intencionalmente.
+        if _txt("search_opt") and (_txt("subtotal_input") or _txt("abono_input")):
             return True
         if _txt("desc_menor_input"):
             return True
-        if _txt("monto_rec_input"):
+        # Mismo problema que desc_producto_input: monto_rec_input se
+        # auto-rellena con el saldo pendiente en cuanto se busca una
+        # factura en Recaudar Saldo. Si luego se borra la búsqueda sin
+        # guardar, el valor autorellenado queda pegado en session_state
+        # aunque el campo visible (fac_search_input) ya esté vacío.
+        if _txt("fac_search_input") and _txt("monto_rec_input"):
             return True
         # Hay una factura/venta menor seleccionada para editar
         if ss.get("editar_factura_sel") is not None:
@@ -1687,6 +1709,32 @@ def hay_cambios_sin_guardar():
     return False
 
 
+def _limpiar_campos_modulo_actual():
+    """
+    Limpia los campos "sucios" del módulo que se está abandonando al
+    confirmar "Salir sin guardar" -- sin esto, un valor a medio escribir
+    quedaba pegado en session_state, y la próxima vez que se visitara
+    ese módulo, el aviso de "cambios sin guardar" saltaba de nuevo con
+    la pantalla visualmente en blanco (el valor viejo seguía ahí, solo
+    invisible porque el campo que lo mostraba ya no estaba en pantalla).
+    """
+    m = st.session_state.get("current_module", "")
+    ss = st.session_state
+    if m == "👨‍⚕️ Consultorio":
+        for k in ["doc_input", "nom_input", "cel_input", "dir_input", "ocu_input", "mot_input", "obs_input"]:
+            ss[k] = ""
+        for k in ["esf_od", "cil_od", "esf_oi", "cil_oi", "add_input"]:
+            ss[k] = 0.0
+        ss["editar_historia_sel"] = None
+    elif m == "🛍️ Óptica y Facturación":
+        for k in ["subtotal_input", "abono_input", "desc_menor_input", "monto_rec_input"]:
+            ss[k] = ""
+        ss["editar_factura_sel"] = None
+    elif m == "📦 Inventario":
+        for k in ["inv_codigo", "inv_marca", "inv_desc", "m_marca", "codigo_ajuste_input", "codigo_editar_prod_input"]:
+            ss[k] = ""
+
+
 @st.dialog("⚠️ Cambios sin guardar")
 def _confirmar_salida_sin_guardar():
     # El destino se lee de session_state (no como parámetro de función):
@@ -1698,6 +1746,7 @@ def _confirmar_salida_sin_guardar():
     c1, c2 = st.columns(2)
     if c1.button("🚪 Salir sin guardar", use_container_width=True):
         destino = st.session_state.get("modulo_destino_pendiente")
+        _limpiar_campos_modulo_actual()
         _limpiar_busquedas_historial()
         st.session_state.current_module = destino
         st.session_state.modulo_destino_pendiente = None
@@ -1802,7 +1851,8 @@ if modulo == "👨‍⚕️ Consultorio":
     styled_header("Recepción y Clínica", "👨‍⚕️", badge)
 
     if n_pendientes > 0:
-        with st.expander(f"⚠️ {n_pendientes} historia(s) clínica(s) pendiente(s) por revisar", expanded=False):
+        with st.expander(f"⚠️ {n_pendientes} historia(s) clínica(s) pendiente(s) por revisar",
+                          expanded=st.session_state.get("expander_pendientes_abierto", True)):
             st.caption("Visitas recientes migradas del histórico que no traían fórmula registrada. "
                        "Al hacer clic en 'Revisar' se cargan los datos conocidos del paciente en la "
                        "pestaña de Admisión -- solo falta completar la fórmula y guardar; la pendiente "
@@ -1830,6 +1880,11 @@ if modulo == "👨‍⚕️ Consultorio":
                         st.session_state.doc_input = pend.get("paciente_documento") or ""
                         st.session_state.nom_input = pend.get("nombre_legado") or ""
                         st.session_state.cel_input = pend.get("celular_legado") or ""
+                        # Se contrae el desplegable automáticamente: sin esto,
+                        # había que bajar manualmente con scroll hasta el
+                        # formulario de Admisión, pasando por toda la lista
+                        # de pendientes que ya no hace falta seguir viendo.
+                        st.session_state.expander_pendientes_abierto = False
                         st.rerun()
 
         if st.session_state.get("revisando_pendiente"):
@@ -2000,6 +2055,7 @@ if modulo == "👨‍⚕️ Consultorio":
                     except Exception:
                         pass
                     st.session_state.revisando_pendiente = None
+                    st.session_state.expander_pendientes_abierto = True
 
                 st.session_state.global_toast = f"Historia de {nom_up} guardada."
                 st.session_state.trigger_clear_doc = True
@@ -3128,6 +3184,35 @@ elif modulo == "📊 Cuadre de Caja Físico":
             st.session_state.base_caja_guardada = st.session_state.base_caja_input
         except Exception:
             pass
+
+    # La PRIMERA vez que se abre este módulo cada día, hay que confirmar
+    # la base inicial en gaveta antes de poder ver el resto del cuadre --
+    # un checkpoint diario obligatorio, no solo un valor que se sugiere y
+    # se puede ignorar sin querer.
+    hoy_str_caja = now_co().strftime("%Y-%m-%d")
+    if "base_confirmada_hoy" not in st.session_state:
+        try:
+            cfg_fecha = supabase.table("configuracion").select("valor").eq("clave", "base_caja_confirmada_fecha").execute().data
+            st.session_state.base_confirmada_hoy = bool(cfg_fecha and cfg_fecha[0]["valor"] == hoy_str_caja)
+        except Exception:
+            st.session_state.base_confirmada_hoy = False
+
+    if not st.session_state.base_confirmada_hoy:
+        st.warning("🔒 Antes de continuar, confirma la **Base Inicial en Gaveta** de hoy.")
+        base_dia_nueva = st.number_input(
+            "Base Inicial en Gaveta ($)", min_value=0,
+            value=st.session_state.base_caja_guardada, step=10000, key="base_caja_dia_input",
+        )
+        if st.button("✅ Confirmar y Continuar", type="primary", use_container_width=True):
+            try:
+                supabase.table("configuracion").upsert({"clave": "base_caja_inicial", "valor": str(int(base_dia_nueva))}).execute()
+                supabase.table("configuracion").upsert({"clave": "base_caja_confirmada_fecha", "valor": hoy_str_caja}).execute()
+            except Exception:
+                pass
+            st.session_state.base_caja_guardada = int(base_dia_nueva)
+            st.session_state.base_confirmada_hoy = True
+            st.rerun()
+        st.stop()
 
     col_fc1, col_fc2 = st.columns([2, 1])
     with col_fc1:
