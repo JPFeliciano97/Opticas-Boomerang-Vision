@@ -515,6 +515,16 @@ def query_cached(tabla, filtros=None):
 # ── Usuarios del sistema ──────────────────────────────────────────────
 # Para agregar o cambiar contraseñas usa el script tools/hash_password.py
 # NUNCA escribas contraseñas en texto plano en este archivo.
+# Métodos de pago que un cliente puede usar para pagar (venta o recaudo de
+# saldo). ADDI y CODENSA son plataformas de crédito/compra-ahora-paga-después;
+# junto con BOLD (pasarela de tarjeta), son los que cobran una comisión al
+# negocio -- por eso son los que activan el campo de "% de recargo".
+METODOS_PAGO_VENTA = ["EFECTIVO", "BOLD", "ADDI", "CODENSA", "LLAVE", "NEQUI", "DAVIPLATA"]
+METODOS_PAGO_CON_RECARGO = {"BOLD", "ADDI", "CODENSA"}
+# Métodos de pago para gastos del negocio (no aplican ADDI/CODENSA, que son
+# líneas de crédito para clientes, no formas en que el negocio paga lo suyo).
+METODOS_PAGO_GASTO = ["EFECTIVO", "BOLD", "NEQUI", "DAVIPLATA"]
+
 USUARIOS_PERMITIDOS = {
     "1022396649": {"hash": "$2b$12$gFAaYBKx9MbY6LmB5jzlyua138yntPOt70A4vMek48tf7ar//iAVW", "nombre": "Dr. Mateo F.", "rol": "admin", "id": "1022396649"},
     "1024585129": {"hash": "$2b$12$B/6vCxYqn3UIhacSuTd/C.9AtZwQeHjVdLqpA8hLpc1RwhFx/A7zy", "nombre": "Dr. Juan Pablo", "rol": "admin", "id": "1024585129"},
@@ -1138,6 +1148,76 @@ def rx_string_a_numeros(rx_str):
         pass
     return 0.0, 0.0, 0
 
+
+def documento_parece_valido(doc):
+    """
+    Un documento de identificación (cédula, TI, CE, pasaporte, NIT)
+    SIEMPRE tiene al menos un dígito -- ningún tipo de documento válido
+    es puro texto. Esto detecta el caso real que se encontró: un campo
+    de "Documento" con un nombre completo tecleado por error
+    ("JUAN DIEGO VILLAMIL"), que el sistema guardaba sin avisar.
+    No exige que sea NUMÉRICO PURO porque cédulas de extranjería y
+    pasaportes pueden ser alfanuméricos.
+    """
+    doc = str(doc or "").strip()
+    return bool(doc) and any(c.isdigit() for c in doc)
+
+
+def es_documento_numerico(doc):
+    """
+    Validación ESTRICTA (solo dígitos) para los campos de "Documento"
+    en Facturación, donde casi siempre se trata de una cédula
+    colombiana. Más estricta que documento_parece_valido (que permite
+    alfanumérico para CE/pasaporte) -- aquí, si alguien escribe una
+    letra, es casi siempre un error de captura, no un tipo de
+    documento legítimo distinto.
+    """
+    doc = str(doc or "").strip()
+    return bool(doc) and doc.isdigit()
+
+
+def sello_auditoria():
+    """
+    Devuelve {"modificado_por": ..., "modificado_fecha": ...} con el
+    usuario actualmente logueado y la hora Colombia -- para dejar
+    rastro de quién hizo cada cambio sensible (anular, editar una
+    venta, corregir un documento), importante en un negocio con
+    varios empleados usando el mismo sistema.
+    """
+    usuario_actual = st.session_state.get("user_info", {}).get("nombre", "Desconocido")
+    return {"modificado_por": usuario_actual, "modificado_fecha": now_co().isoformat()}
+
+
+def corregir_documento_paciente(doc_viejo, doc_nuevo):
+    """
+    Corrige el documento de un paciente en CASCADA: actualiza la fila
+    en pacientes, y todas las historias_clinicas y ventas_facturacion
+    que tuvieran ese documento (no solo la factura que se esté
+    editando -- si el mismo error de captura se repitió en varias
+    visitas, todas quedan vinculadas al documento correcto).
+    Antes de tocar nada, valida que doc_nuevo no pertenezca YA a otro
+    paciente distinto (evita fusionar accidentalmente dos personas).
+    Devuelve (ok: bool, mensaje: str).
+    """
+    doc_viejo, doc_nuevo = str(doc_viejo).strip(), str(doc_nuevo).strip()
+    if doc_viejo == doc_nuevo:
+        return True, ""
+    if not documento_parece_valido(doc_nuevo):
+        return False, "El nuevo documento no parece válido (debe contener al menos un número)."
+    ya_existe = supabase.table("pacientes").select("documento").eq("documento", doc_nuevo).execute().data
+    if ya_existe:
+        return False, (f"Ya existe un paciente registrado con el documento '{doc_nuevo}'. "
+                        f"Si es la misma persona duplicada, contacta soporte para fusionar los registros -- "
+                        f"no se puede hacer automáticamente sin revisar ambos historiales.")
+    try:
+        sello_aud = sello_auditoria()
+        supabase.table("pacientes").update({"documento": doc_nuevo, **sello_aud}).eq("documento", doc_viejo).execute()
+        supabase.table("historias_clinicas").update({"paciente_documento": doc_nuevo}).eq("paciente_documento", doc_viejo).execute()
+        supabase.table("ventas_facturacion").update({"paciente_documento": doc_nuevo, "titular_doc": doc_nuevo, **sello_aud}).eq("paciente_documento", doc_viejo).execute()
+        return True, f"Documento corregido de '{doc_viejo}' a '{doc_nuevo}' en todos los registros vinculados."
+    except Exception as e:
+        return False, f"Error al corregir el documento: {e}"
+
 # =====================================================================
 # 5. FUNCIONES DE DIBUJO DE PDF (se mantienen igual, solo usan logo.png)
 # =====================================================================
@@ -1507,8 +1587,12 @@ if "trigger_clear_paciente_rapido" in st.session_state and st.session_state.trig
     st.session_state.trigger_clear_paciente_rapido = False
 
 if "trigger_clear_editar" in st.session_state and st.session_state.trigger_clear_editar:
-    st.session_state.edit_search_input = ""
     st.session_state.trigger_clear_editar = False
+
+if "trigger_clear_venta_menor" in st.session_state and st.session_state.trigger_clear_venta_menor:
+    st.session_state.metodo_menor_sel = "EFECTIVO"
+    st.session_state.recargo_pct_menor_input = 0.0
+    st.session_state.trigger_clear_venta_menor = False
 
 if "global_toast" in st.session_state:
     st.toast(st.session_state.global_toast, icon=st.session_state.get("global_toast_icon", "✅"))
@@ -1764,6 +1848,9 @@ if modulo == "👨‍⚕️ Consultorio":
         st.markdown("<br>", unsafe_allow_html=True)
         if st.button("💾 Guardar Historia Clínica", type="primary", use_container_width=True):
             if not documento or not nombre or not celular: st.error("⚠️ Documento, Nombre y Celular obligatorios.")
+            elif not documento_parece_valido(documento):
+                st.error(f"⚠️ '{documento}' no parece un número de documento válido (debe contener al menos un "
+                         f"número). Si escribiste un nombre por error en el campo Documento, corrígelo antes de guardar.")
             elif not habeas_data_autorizado: st.error("⚠️ Debes confirmar el Habeas Data.")
             else:
                 rx_od_final = build_rx_string(esfera_od, cilindro_od, eje_od); rx_oi_final = build_rx_string(esfera_oi, cilindro_oi, eje_oi)
@@ -1843,7 +1930,9 @@ elif modulo == "🛍️ Óptica y Facturación":
             st.divider()
 
         search_doc = st.text_input("🔍 Buscar Cédula del Paciente:", key="search_opt").upper()
-        if search_doc:
+        if search_doc and not es_documento_numerico(search_doc):
+            st.error("⚠️ El documento solo debe contener números. Ingresa un número de documento válido.")
+        elif search_doc:
             res_paciente = supabase.table("pacientes").select("*").eq("documento", search_doc).execute()
             
             if len(res_paciente.data) == 0:
@@ -1888,13 +1977,17 @@ elif modulo == "🛍️ Óptica y Facturación":
                     q_cel = st.text_input("Celular *", value=cel_sugerido, key="q_cel_nuevo").upper()
                     q_dir = st.text_input("Dirección (Opcional)", key="q_dir_nuevo").upper()
                     if st.button("Guardar y Alimentar Base de Datos") and q_nom and q_cel:
-                        supabase.table("pacientes").insert({
-                            "documento": search_doc, "nombre_completo": q_nom, "celular": q_cel, 
-                            "direccion": q_dir, "habeas_data": True, "habeas_data_fecha": now_co().isoformat()
-                        }).execute()
-                        st.success("¡Paciente guardado exitosamente!")
-                        st.session_state.trigger_clear_paciente_rapido = True
-                        st.rerun()
+                        if not documento_parece_valido(search_doc):
+                            st.error(f"⚠️ '{search_doc}' no parece un documento válido -- revisa lo que "
+                                     f"buscaste arriba antes de continuar.")
+                        else:
+                            supabase.table("pacientes").insert({
+                                "documento": search_doc, "nombre_completo": q_nom, "celular": q_cel, 
+                                "direccion": q_dir, "habeas_data": True, "habeas_data_fecha": now_co().isoformat()
+                            }).execute()
+                            st.success("¡Paciente guardado exitosamente!")
+                            st.session_state.trigger_clear_paciente_rapido = True
+                            st.rerun()
             else:
                 paciente = res_paciente.data[0]
                 
@@ -2054,15 +2147,28 @@ elif modulo == "🛍️ Óptica y Facturación":
 
                 c4, c5, c6 = st.columns(3)
                 c4.text_input("Abono Inicial ($)", key="abono_input", on_change=on_abono_change)
-                metodo_pago = c5.selectbox("Método de Pago", ["EFECTIVO", "BOLD", "LLAVE", "NEQUI", "DAVIPLATA"])
-                
-                with c6:
-                    st.markdown(f"""
-                        <div style="background-color: #f0f0f0; border: 1px solid #b0b0b0; padding: 9px; border-radius: 6px; text-align: center; margin-top: 24px;">
-                            <span style="font-size: 0.8em; color: #000000; font-weight: 600;">SALDO PENDIENTE</span><br>
-                            <span style="font-size: 1.3em; font-weight: bold; color: #e57373;">${format_currency_co(sal_pend)}</span>
-                        </div>
-                    """, unsafe_allow_html=True)
+                metodo_pago = c5.selectbox("Método de Pago", METODOS_PAGO_VENTA)
+
+                recargo_pct = 0.0
+                recargo_valor = 0
+                if metodo_pago in METODOS_PAGO_CON_RECARGO:
+                    recargo_pct = c6.number_input(
+                        f"% Recargo ({metodo_pago})", min_value=0.0, max_value=100.0,
+                        step=0.5, format="%.2f", key="recargo_pct_input",
+                        help="Comisión que cobra la plataforma por pagos a crédito/tarjeta. "
+                             "Se calcula sobre el abono de hoy, no sobre el total de la factura."
+                    )
+                    recargo_valor = int(round(abono_val * (recargo_pct / 100.0)))
+                    if recargo_valor > 0:
+                        c6.caption(f"Comisión: ${format_currency_co(recargo_valor)} · "
+                                   f"neto: ${format_currency_co(abono_val - recargo_valor)}")
+
+                st.markdown(f"""
+                    <div style="background-color: #f0f0f0; border: 1px solid #b0b0b0; padding: 9px; border-radius: 6px; text-align: center; margin-top: 10px;">
+                        <span style="font-size: 0.8em; color: #000000; font-weight: 600;">SALDO PENDIENTE</span><br>
+                        <span style="font-size: 1.3em; font-weight: bold; color: #e57373;">${format_currency_co(sal_pend)}</span>
+                    </div>
+                """, unsafe_allow_html=True)
 
                 col_ent1, col_ent2 = st.columns(2)
                 fecha_entrega = col_ent1.text_input("Fecha/Hora Entrega", placeholder="Ej: 3 días / Mañana / 15-ago").upper()
@@ -2117,6 +2223,8 @@ elif modulo == "🛍️ Óptica y Facturación":
                                 "av_cerca_od": detalles_rx.get("av_cerca_od", ""), "av_cerca_oi": detalles_rx.get("av_cerca_oi", ""),
                                 "origen_rx": origen_rx,
                                 "montura_codigo": selected_frame_code if (origen_montura == "Montura de Vitrina" and selected_frame_code) else None,
+                                "recargo_pct": recargo_pct if recargo_pct > 0 else None,
+                                "recargo_valor": recargo_valor,
                             }).execute()
                             
                             if origen_montura == "Montura de Vitrina" and selected_frame_code:
@@ -2195,14 +2303,25 @@ elif modulo == "🛍️ Óptica y Facturación":
                 cantidad_menor = st.number_input("Cantidad", min_value=1, value=1, step=1)
             with fm3:
                 valor_unit_menor = st.number_input("Valor unitario ($)", min_value=0, step=1000, value=0)
-            metodo_menor = st.selectbox("Método de Pago", ["EFECTIVO", "BOLD", "LLAVE", "NEQUI", "DAVIPLATA"])
             guardar_menor = st.form_submit_button("💾 Registrar Venta", type="primary", use_container_width=True)
+
+        # El método de pago vive FUERA del form: dentro de un st.form, los
+        # widgets no reaccionan hasta el submit, así que el campo de %
+        # recargo no podría aparecer/desaparecer según lo que se elija aquí.
+        metodo_menor = st.selectbox("Método de Pago", METODOS_PAGO_VENTA, key="metodo_menor_sel")
+        recargo_pct_menor = 0.0
+        if metodo_menor in METODOS_PAGO_CON_RECARGO:
+            recargo_pct_menor = st.number_input(
+                f"% Recargo ({metodo_menor})", min_value=0.0, max_value=100.0,
+                step=0.5, format="%.2f", key="recargo_pct_menor_input"
+            )
 
         if guardar_menor:
             if not desc_menor or valor_unit_menor <= 0:
                 st.warning("⚠️ Ingresa una descripción y un valor válidos.")
             else:
                 total_menor = int(valor_unit_menor) * int(cantidad_menor)
+                recargo_valor_menor = int(round(total_menor * (recargo_pct_menor / 100.0)))
                 # Prefijo "MEN-" + timestamp con microsegundos: identificador
                 # único sin necesitar consultar la BD primero. No es una
                 # factura formal, así que no ocupa la numeración real.
@@ -2221,8 +2340,11 @@ elif modulo == "🛍️ Óptica y Facturación":
                     "estado_lab": "Entregado",
                     "fecha_venta": now_co().isoformat(),
                     "laboratorio": "", "origen": "ACTUAL",
+                    "recargo_pct": recargo_pct_menor if recargo_pct_menor > 0 else None,
+                    "recargo_valor": recargo_valor_menor,
                 }).execute()
                 st.session_state.global_toast = f"Venta menor registrada: {desc_final} — ${format_currency_co(total_menor)}"
+                st.session_state.trigger_clear_venta_menor = True
                 st.rerun()
 
         st.divider()
@@ -2275,10 +2397,23 @@ elif modulo == "🛍️ Óptica y Facturación":
                 with col_rec1:
                     monto_rec = int(clean_numeric_string(st.text_input("Monto a Abonar/Liquidar ($)", key="monto_rec_input", on_change=on_monto_rec_change)) or 0)
                 with col_rec2:
-                    metodo_rec = st.selectbox("Método del Cobro", ["EFECTIVO", "BOLD", "LLAVE", "NEQUI", "DAVIPLATA"], key="met_rec")
+                    metodo_rec = st.selectbox("Método del Cobro", METODOS_PAGO_VENTA, key="met_rec")
                 with col_rec3:
                     estados_posibles = ["Pendiente de enviar", "En Laboratorio", "Recibido en Óptica", "Entregado"]
                     nuevo_est_recaudo = st.selectbox("Nuevo Estado de la Factura", estados_posibles, index=3)
+
+                recargo_pct_rec = 0.0
+                recargo_valor_rec = 0
+                if metodo_rec in METODOS_PAGO_CON_RECARGO:
+                    col_rg1, col_rg2 = st.columns(2)
+                    recargo_pct_rec = col_rg1.number_input(
+                        f"% Recargo ({metodo_rec})", min_value=0.0, max_value=100.0,
+                        step=0.5, format="%.2f", key="recargo_pct_rec_input"
+                    )
+                    recargo_valor_rec = int(round(monto_rec * (recargo_pct_rec / 100.0)))
+                    if recargo_valor_rec > 0:
+                        col_rg2.caption(f"Comisión: ${format_currency_co(recargo_valor_rec)} · "
+                                        f"neto: ${format_currency_co(monto_rec - recargo_valor_rec)}")
 
                 st.write("")
                 if st.button("✅ Registrar Pago y Actualizar Estado", type="primary", use_container_width=True):
@@ -2298,6 +2433,8 @@ elif modulo == "🛍️ Óptica y Facturación":
                             "paciente_documento": fac_pen['paciente_documento'], 
                             "monto_pagado": monto_rec, 
                             "metodo_pago": metodo_rec, 
+                            "recargo_pct": recargo_pct_rec if recargo_pct_rec > 0 else None,
+                            "recargo_valor": recargo_valor_rec,
                             "fecha_pago": now_co().isoformat()
                         }).execute()
                         
@@ -2329,7 +2466,7 @@ elif modulo == "🛍️ Óptica y Facturación":
                             # en ningún reporte, incluso si alguno olvidara filtrar
                             # por estado). abono se preserva como registro
                             # histórico de lo que sí se alcanzó a pagar.
-                            supabase.table("ventas_facturacion").update({"estado": "ANULADA", "saldo": 0}).eq("numero_factura", fac_a["numero_factura"]).execute()
+                            supabase.table("ventas_facturacion").update({"estado": "ANULADA", "saldo": 0, **sello_auditoria()}).eq("numero_factura", fac_a["numero_factura"]).execute()
                             # Si la factura tenía una montura de vitrina, se
                             # restaura el stock descontado en la venta -- si no,
                             # el inventario del sistema queda desincronizado de
@@ -2360,106 +2497,150 @@ elif modulo == "🛍️ Óptica y Facturación":
 
     with tab_editar:
         st.markdown("<h4 style='color: #000000;'>✏️ Editar Factura Reciente</h4>", unsafe_allow_html=True)
-        st.caption("Solo se pueden editar facturas creadas en las **últimas 24 horas** -- "
-                   "pasado ese plazo, usa Anular y crea una nueva si hace falta corregir algo, "
+        st.caption("Se pueden editar las **últimas 10 facturas generadas** (no legado, no anuladas). "
+                   "Para facturas más antiguas, usa Anular y crea una nueva si hace falta corregir algo, "
                    "para no alterar el historial financiero ya cerrado.")
 
-        edit_search = st.text_input("N° de Factura a editar:", key="edit_search_input").strip().upper()
-        if edit_search:
-            cond_edit = filtro_busqueda_factura(edit_search)
-            res_edit = supabase.table("ventas_facturacion").select("*").or_(",".join(cond_edit)).limit(1).execute()
+        ultimas_10 = traer_todas_las_filas(
+            "ventas_facturacion",
+            filtros_fn=lambda q: q.neq("estado", "ANULADA").eq("origen", "ACTUAL"),
+        )
+        ultimas_10.sort(key=lambda v: valor_numerico_factura(v.get("numero_factura")), reverse=True)
+        ultimas_10 = ultimas_10[:10]
 
-            if not res_edit.data:
-                st.error("No se encontró ninguna factura con ese número.")
+        sel_key = st.session_state.get("editar_factura_sel")
+        venta_e = next((v for v in ultimas_10 if v["numero_factura"] == sel_key), None) if sel_key else None
+
+        if not venta_e:
+            if not ultimas_10:
+                st.info("Todavía no hay facturas recientes para editar.")
             else:
-                venta_e = res_edit.data[0]
-                if venta_e.get("estado") == "ANULADA":
-                    st.error("⚠️ Esta factura está ANULADA y no se puede editar.")
-                elif venta_e.get("origen") == "LEGADO":
-                    st.error("⚠️ Esta es una factura histórica migrada, no una venta reciente -- no se puede editar.")
+                st.markdown(f"##### Elige una de las últimas {len(ultimas_10)} facturas:")
+                for v in ultimas_10:
+                    with st.container(border=True):
+                        vc1, vc2 = st.columns([4, 1])
+                        vc1.markdown(f"**Fac N° {formatear_numero_factura_display(v['numero_factura'])}** -- "
+                                     f"{v.get('titular_nombre','')} -- ${format_currency_co(v.get('total', 0))}")
+                        if v.get("modificado_por"):
+                            vc1.caption(f"✏️ Última edición: {v['modificado_por']} · "
+                                        f"{hora_co(v.get('modificado_fecha'), '%d/%m/%Y %H:%M')}")
+                        if vc2.button("✏️ Editar", key=f"sel_editar_{v['numero_factura']}", use_container_width=True):
+                            st.session_state.editar_factura_sel = v["numero_factura"]
+                            st.rerun()
+        else:
+            if st.button("🔙 Ver las 10 facturas"):
+                st.session_state.editar_factura_sel = None
+                st.rerun()
+
+            st.success(f"✏️ Editando Factura N° **{formatear_numero_factura_display(venta_e['numero_factura'])}**")
+
+            with st.form("form_editar_factura"):
+                st.markdown("##### Datos generales")
+                fe1, fe2 = st.columns(2)
+                e_desc = fe1.text_input("Descripción", value=(venta_e.get("descripcion") or "")).upper()
+                e_metodo = fe2.selectbox("Método de Pago", METODOS_PAGO_VENTA,
+                                          index=METODOS_PAGO_VENTA.index(venta_e.get("metodo_pago", "EFECTIVO")) if venta_e.get("metodo_pago") in METODOS_PAGO_VENTA else 0)
+
+                fe3, fe4, fe5 = st.columns(3)
+                e_total = fe3.number_input("Total ($)", min_value=0, step=1000, value=int(venta_e.get("total") or 0))
+                e_abono = fe4.number_input("Abono ($)", min_value=0, step=1000, value=int(venta_e.get("abono") or 0))
+                e_saldo_calc = max(0, e_total - e_abono)
+                fe5.metric("Saldo (calculado)", f"${format_currency_co(e_saldo_calc)}")
+
+                e_entrega = st.text_input("Fecha/Hora Entrega", value=(venta_e.get("fecha_entrega") or "")).upper()
+
+                st.markdown("##### Fórmula (Rx)")
+                esf_od_prev, cil_od_prev, eje_od_prev = rx_string_a_numeros(venta_e.get("rx_final_od"))
+                esf_oi_prev, cil_oi_prev, eje_oi_prev = rx_string_a_numeros(venta_e.get("rx_final_oi"))
+                dp_prev = str(venta_e.get("dp", "") or "")
+                dp_od_prev, dp_oi_prev = (dp_prev.split("/") + [""])[:2] if "/" in dp_prev else (dp_prev, dp_prev)
+
+                st.markdown("**OD**")
+                eo1, eo2, eo3, eo4, eo5 = st.columns(5)
+                e_esf_od = eo1.number_input("Esfera OD", step=0.25, format="%.2f", value=esf_od_prev, key=f"e_esf_od_{venta_e['numero_factura']}")
+                e_cil_od = eo2.number_input("Cilindro OD", step=0.25, format="%.2f", value=cil_od_prev, key=f"e_cil_od_{venta_e['numero_factura']}")
+                e_eje_od = eo3.number_input("Eje OD", min_value=0, max_value=175, step=5, value=eje_od_prev, key=f"e_eje_od_{venta_e['numero_factura']}")
+                e_av_od = eo4.text_input("AV OD", value=(venta_e.get("av_od") or "")).upper()
+                e_dp_od = eo5.text_input("DP OD", value=dp_od_prev.strip()).upper()
+
+                st.markdown("**OI**")
+                ei1, ei2, ei3, ei4, ei5 = st.columns(5)
+                e_esf_oi = ei1.number_input("Esfera OI", step=0.25, format="%.2f", value=esf_oi_prev, key=f"e_esf_oi_{venta_e['numero_factura']}")
+                e_cil_oi = ei2.number_input("Cilindro OI", step=0.25, format="%.2f", value=cil_oi_prev, key=f"e_cil_oi_{venta_e['numero_factura']}")
+                e_eje_oi = ei3.number_input("Eje OI", min_value=0, max_value=175, step=5, value=eje_oi_prev, key=f"e_eje_oi_{venta_e['numero_factura']}")
+                e_av_oi = ei4.text_input("AV OI", value=(venta_e.get("av_oi") or "")).upper()
+                e_dp_oi = ei5.text_input("DP OI", value=dp_oi_prev.strip()).upper()
+
+                add_prev = 0.0
+                try:
+                    add_prev = abs(float(str(venta_e.get("adicion", "") or "0").replace("+", "")))
+                except ValueError:
+                    pass
+                e_add = st.number_input("Adición (ADD)", min_value=0.00, step=0.25, format="%.2f", value=add_prev)
+
+                st.markdown("##### 📋 Datos del paciente")
+                st.caption("Corrige aquí si algo quedó mal capturado -- por ejemplo, si por error se "
+                           "escribió un nombre en el campo de documento.")
+                pe1, pe2 = st.columns(2)
+                e_pac_nombre = pe1.text_input("Nombre del titular", value=(venta_e.get("titular_nombre") or "")).upper()
+                e_pac_doc = pe2.text_input("Documento del titular", value=(venta_e.get("titular_doc") or "")).upper()
+                e_pac_tel = st.text_input("Celular del titular", value=(venta_e.get("titular_tel") or "")).upper()
+
+                guardar_edicion = st.form_submit_button("💾 Guardar Cambios", type="primary", use_container_width=True)
+
+            if guardar_edicion:
+                if e_abono > e_total:
+                    st.error(f"⚠️ El abono (${format_currency_co(int(e_abono))}) no puede ser mayor que el "
+                             f"total (${format_currency_co(int(e_total))}). Corrige los valores y guarda de nuevo.")
+                elif e_pac_doc and not es_documento_numerico(e_pac_doc):
+                    st.error(f"⚠️ El documento solo debe contener números. '{e_pac_doc}' no es válido.")
                 else:
-                    fv_raw = venta_e.get("fecha_venta", "")
-                    try:
-                        fv_dt = datetime.fromisoformat(fv_raw.replace("Z", "+00:00")).astimezone(timezone(timedelta(hours=-5))).replace(tzinfo=None)
-                    except Exception:
-                        fv_dt = None
+                    doc_original = venta_e.get("paciente_documento") or venta_e.get("titular_doc") or ""
+                    ok_doc, msg_doc = True, ""
+                    if doc_original and e_pac_doc and doc_original != e_pac_doc:
+                        ok_doc, msg_doc = corregir_documento_paciente(doc_original, e_pac_doc)
 
-                    horas_transcurridas = (now_co().replace(tzinfo=None) - fv_dt).total_seconds() / 3600 if fv_dt else None
-
-                    if horas_transcurridas is None or horas_transcurridas > 24:
-                        st.error(f"⚠️ Esta factura tiene más de 24 horas "
-                                 f"({horas_transcurridas:.1f} h) y ya no se puede editar."
-                                 if horas_transcurridas is not None else
-                                 "⚠️ No se pudo determinar la antigüedad de esta factura.")
+                    if not ok_doc:
+                        st.error(f"⚠️ {msg_doc}")
                     else:
-                        st.success(f"✏️ Editando Factura N° **{formatear_numero_factura_display(venta_e['numero_factura'])}** "
-                                   f"-- creada hace {horas_transcurridas:.1f} h, dentro del plazo permitido.")
-
-                        with st.form("form_editar_factura"):
-                            st.markdown("##### Datos generales")
-                            fe1, fe2 = st.columns(2)
-                            e_desc = fe1.text_input("Descripción", value=(venta_e.get("descripcion") or "")).upper()
-                            e_metodo = fe2.selectbox("Método de Pago", ["EFECTIVO", "BOLD", "LLAVE", "NEQUI", "DAVIPLATA"],
-                                                      index=["EFECTIVO", "BOLD", "LLAVE", "NEQUI", "DAVIPLATA"].index(venta_e.get("metodo_pago", "EFECTIVO")) if venta_e.get("metodo_pago") in ["EFECTIVO", "BOLD", "LLAVE", "NEQUI", "DAVIPLATA"] else 0)
-
-                            fe3, fe4, fe5 = st.columns(3)
-                            e_total = fe3.number_input("Total ($)", min_value=0, step=1000, value=int(venta_e.get("total") or 0))
-                            e_abono = fe4.number_input("Abono ($)", min_value=0, step=1000, value=int(venta_e.get("abono") or 0))
-                            e_saldo_calc = max(0, e_total - e_abono)
-                            fe5.metric("Saldo (calculado)", f"${format_currency_co(e_saldo_calc)}")
-
-                            e_entrega = st.text_input("Fecha/Hora Entrega", value=(venta_e.get("fecha_entrega") or "")).upper()
-
-                            st.markdown("##### Fórmula (Rx)")
-                            esf_od_prev, cil_od_prev, eje_od_prev = rx_string_a_numeros(venta_e.get("rx_final_od"))
-                            esf_oi_prev, cil_oi_prev, eje_oi_prev = rx_string_a_numeros(venta_e.get("rx_final_oi"))
-                            dp_prev = str(venta_e.get("dp", "") or "")
-                            dp_od_prev, dp_oi_prev = (dp_prev.split("/") + [""])[:2] if "/" in dp_prev else (dp_prev, dp_prev)
-
-                            st.markdown("**OD**")
-                            eo1, eo2, eo3, eo4, eo5 = st.columns(5)
-                            e_esf_od = eo1.number_input("Esfera OD", step=0.25, format="%.2f", value=esf_od_prev, key=f"e_esf_od_{venta_e['numero_factura']}")
-                            e_cil_od = eo2.number_input("Cilindro OD", step=0.25, format="%.2f", value=cil_od_prev, key=f"e_cil_od_{venta_e['numero_factura']}")
-                            e_eje_od = eo3.number_input("Eje OD", min_value=0, max_value=175, step=5, value=eje_od_prev, key=f"e_eje_od_{venta_e['numero_factura']}")
-                            e_av_od = eo4.text_input("AV OD", value=(venta_e.get("av_od") or "")).upper()
-                            e_dp_od = eo5.text_input("DP OD", value=dp_od_prev.strip()).upper()
-
-                            st.markdown("**OI**")
-                            ei1, ei2, ei3, ei4, ei5 = st.columns(5)
-                            e_esf_oi = ei1.number_input("Esfera OI", step=0.25, format="%.2f", value=esf_oi_prev, key=f"e_esf_oi_{venta_e['numero_factura']}")
-                            e_cil_oi = ei2.number_input("Cilindro OI", step=0.25, format="%.2f", value=cil_oi_prev, key=f"e_cil_oi_{venta_e['numero_factura']}")
-                            e_eje_oi = ei3.number_input("Eje OI", min_value=0, max_value=175, step=5, value=eje_oi_prev, key=f"e_eje_oi_{venta_e['numero_factura']}")
-                            e_av_oi = ei4.text_input("AV OI", value=(venta_e.get("av_oi") or "")).upper()
-                            e_dp_oi = ei5.text_input("DP OI", value=dp_oi_prev.strip()).upper()
-
-                            add_prev = 0.0
+                        supabase.table("ventas_facturacion").update({
+                            "descripcion": e_desc, "metodo_pago": e_metodo,
+                            "total": int(e_total), "subtotal": int(e_total),
+                            "abono": int(e_abono), "saldo": int(e_saldo_calc),
+                            "fecha_entrega": e_entrega,
+                            "rx_final_od": build_rx_string(e_esf_od, e_cil_od, e_eje_od),
+                            "rx_final_oi": build_rx_string(e_esf_oi, e_cil_oi, e_eje_oi),
+                            "adicion": f"{e_add:+.2f}" if e_add > 0.0 else "",
+                            "dp": f"{e_dp_od}/{e_dp_oi}",
+                            "av_od": e_av_od, "av_oi": e_av_oi,
+                            "titular_nombre": e_pac_nombre, "titular_doc": e_pac_doc, "titular_tel": e_pac_tel,
+                            "paciente_documento": e_pac_doc if e_pac_doc else venta_e.get("paciente_documento"),
+                            **sello_auditoria(),
+                        }).eq("numero_factura", venta_e["numero_factura"]).execute()
+                        # Se intenta vincular/actualizar la ficha del paciente
+                        # correspondiente al documento FINAL (sea el original sin
+                        # cambios, o uno recién asignado a una venta que antes no
+                        # tenía documento) -- .update().eq() simplemente no hace
+                        # nada si ese documento no corresponde a ningún paciente
+                        # existente, así que es seguro intentarlo siempre. Antes
+                        # esto solo se intentaba si la venta YA tenía un documento
+                        # (dejaba sin actualizar al paciente cuando se le agregaba
+                        # el documento por primera vez a una venta walk-in).
+                        doc_final = e_pac_doc or doc_original
+                        if doc_final:
                             try:
-                                add_prev = abs(float(str(venta_e.get("adicion", "") or "0").replace("+", "")))
-                            except ValueError:
+                                supabase.table("pacientes").update({
+                                    "nombre_completo": e_pac_nombre, "celular": e_pac_tel,
+                                }).eq("documento", doc_final).execute()
+                            except Exception:
                                 pass
-                            e_add = st.number_input("Adición (ADD)", min_value=0.00, step=0.25, format="%.2f", value=add_prev)
-
-                            guardar_edicion = st.form_submit_button("💾 Guardar Cambios", type="primary", use_container_width=True)
-
-                        if guardar_edicion:
-                            if e_abono > e_total:
-                                st.error(f"⚠️ El abono (${format_currency_co(int(e_abono))}) no puede ser mayor que el "
-                                         f"total (${format_currency_co(int(e_total))}). Corrige los valores y guarda de nuevo.")
-                            else:
-                                supabase.table("ventas_facturacion").update({
-                                    "descripcion": e_desc, "metodo_pago": e_metodo,
-                                    "total": int(e_total), "subtotal": int(e_total),
-                                    "abono": int(e_abono), "saldo": int(e_saldo_calc),
-                                    "fecha_entrega": e_entrega,
-                                    "rx_final_od": build_rx_string(e_esf_od, e_cil_od, e_eje_od),
-                                    "rx_final_oi": build_rx_string(e_esf_oi, e_cil_oi, e_eje_oi),
-                                    "adicion": f"{e_add:+.2f}" if e_add > 0.0 else "",
-                                    "dp": f"{e_dp_od}/{e_dp_oi}",
-                                    "av_od": e_av_od, "av_oi": e_av_oi,
-                                }).eq("numero_factura", venta_e["numero_factura"]).execute()
-                                st.session_state.global_toast = f"Factura #{formatear_numero_factura_display(venta_e['numero_factura'])} actualizada."
-                                st.session_state.trigger_clear_editar = True
-                                st.rerun()
+                        st.session_state.global_toast = (
+                            f"Factura #{formatear_numero_factura_display(venta_e['numero_factura'])} actualizada."
+                            + (f" {msg_doc}" if msg_doc else "")
+                        )
+                        st.session_state.editar_factura_sel = None
+                        st.session_state.trigger_clear_editar = True
+                        st.rerun()
 
     with tab_reimprimir:
         st.markdown("<h4 style='color:#000000;'>🖨️ Reimprimir Documentos de una Factura</h4>", unsafe_allow_html=True)
@@ -2792,7 +2973,7 @@ elif modulo == "📊 Cuadre de Caja Físico":
         col_g1, col_g2, col_g3 = st.columns([2, 1, 1])
         with col_g1: desc_gasto = st.text_input("Concepto / Descripción del Gasto", placeholder="Ej: Pago mensajería laboratorio", key="desc_gasto_input").upper()
         with col_g2: monto_gasto = int(clean_numeric_string(st.text_input("Valor ($)", key="monto_gasto_input", on_change=on_monto_gasto_change)) or 0)
-        with col_g3: metodo_gasto = st.selectbox("Forma de Salida", ["EFECTIVO", "BOLD", "NEQUI", "DAVIPLATA"], key="metodo_gasto_input")
+        with col_g3: metodo_gasto = st.selectbox("Forma de Salida", METODOS_PAGO_GASTO, key="metodo_gasto_input")
         
         if st.button("💾 Guardar Gasto de Caja", type="primary"):
             if not desc_gasto or monto_gasto <= 0: st.warning("⚠️ Ingresa una descripción y valor válidos.")
@@ -3493,6 +3674,33 @@ elif modulo == "📅 CRM y Fidelización":
         else: st.info("No hay pacientes registrados con fecha de nacimiento en el mes actual.")
 
     with tab_directorio:
+        # Se detectan pacientes con documento inválido (el mismo tipo de
+        # error que se encontró: un nombre tecleado por accidente en el
+        # campo Documento) para poder corregirlos aquí mismo, sin depender
+        # de que tengan una factura reciente para usar "Editar Reciente".
+        pacientes_doc_invalido = [p for p in todos_pacientes if not documento_parece_valido(p.get("documento"))]
+        if pacientes_doc_invalido:
+            with st.expander(f"⚠️ {len(pacientes_doc_invalido)} paciente(s) con documento inválido -- revisar", expanded=True):
+                st.caption("El campo Documento no parece un número de identificación válido "
+                           "(probablemente se escribió un nombre por error). Corrígelo aquí.")
+                for p in pacientes_doc_invalido:
+                    with st.container(border=True):
+                        st.markdown(f"**{p.get('nombre_completo','')}** -- documento actual: `{p.get('documento','')}`")
+                        cc1, cc2 = st.columns([3, 1])
+                        doc_nuevo_dir = cc1.text_input(
+                            "Documento correcto", key=f"fix_doc_{p['documento']}"
+                        ).strip().upper()
+                        if cc2.button("💾 Corregir", key=f"fix_btn_{p['documento']}", use_container_width=True):
+                            if not doc_nuevo_dir:
+                                st.warning("⚠️ Escribe el documento correcto antes de guardar.")
+                            else:
+                                ok_fix, msg_fix = corregir_documento_paciente(p["documento"], doc_nuevo_dir)
+                                if ok_fix:
+                                    st.session_state.global_toast = msg_fix
+                                    st.rerun()
+                                else:
+                                    st.error(f"⚠️ {msg_fix}")
+
         POR_PAGINA = 50
         d_col1, d_col2 = st.columns([3, 1])
         busqueda_dir = d_col1.text_input("🔍 Filtrar por nombre o cédula:").upper()
