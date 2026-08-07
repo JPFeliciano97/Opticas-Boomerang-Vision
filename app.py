@@ -1197,26 +1197,51 @@ def corregir_documento_paciente(doc_viejo, doc_nuevo):
     visitas, todas quedan vinculadas al documento correcto).
     Antes de tocar nada, valida que doc_nuevo no pertenezca YA a otro
     paciente distinto (evita fusionar accidentalmente dos personas).
-    Devuelve (ok: bool, mensaje: str).
+    Devuelve (ok: bool, mensaje: str, es_colision: bool) -- es_colision
+    le indica al llamador si el fallo fue específicamente porque el
+    documento nuevo ya pertenece a alguien más, para poder ofrecer la
+    opción de fusionar en vez de solo mostrar el error.
     """
     doc_viejo, doc_nuevo = str(doc_viejo).strip(), str(doc_nuevo).strip()
     if doc_viejo == doc_nuevo:
-        return True, ""
+        return True, "", False
     if not documento_parece_valido(doc_nuevo):
-        return False, "El nuevo documento no parece válido (debe contener al menos un número)."
+        return False, "El nuevo documento no parece válido (debe contener al menos un número).", False
     ya_existe = supabase.table("pacientes").select("documento").eq("documento", doc_nuevo).execute().data
     if ya_existe:
         return False, (f"Ya existe un paciente registrado con el documento '{doc_nuevo}'. "
-                        f"Si es la misma persona duplicada, contacta soporte para fusionar los registros -- "
-                        f"no se puede hacer automáticamente sin revisar ambos historiales.")
+                        f"Si es la misma persona duplicada, puedes fusionar los registros."), True
     try:
         sello_aud = sello_auditoria()
         supabase.table("pacientes").update({"documento": doc_nuevo, **sello_aud}).eq("documento", doc_viejo).execute()
         supabase.table("historias_clinicas").update({"paciente_documento": doc_nuevo}).eq("paciente_documento", doc_viejo).execute()
         supabase.table("ventas_facturacion").update({"paciente_documento": doc_nuevo, "titular_doc": doc_nuevo, **sello_aud}).eq("paciente_documento", doc_viejo).execute()
-        return True, f"Documento corregido de '{doc_viejo}' a '{doc_nuevo}' en todos los registros vinculados."
+        return True, f"Documento corregido de '{doc_viejo}' a '{doc_nuevo}' en todos los registros vinculados.", False
     except Exception as e:
-        return False, f"Error al corregir el documento: {e}"
+        return False, f"Error al corregir el documento: {e}", False
+
+
+def fusionar_pacientes(doc_a_eliminar, doc_a_conservar):
+    """
+    Fusiona dos fichas de paciente que resultaron ser la MISMA persona
+    duplicada (ej: una vez registrada correctamente, y otra vez con el
+    bug de nombre-en-el-campo-documento). Traslada todo el historial
+    clínico y todas las ventas del documento que se va a eliminar hacia
+    el documento que se conserva, y borra la ficha duplicada. Esto es
+    una acción explícita del operador (nunca automática) porque fusionar
+    a dos personas DISTINTAS por error sería mucho peor que el problema
+    que resuelve -- por eso solo se ofrece cuando el operador ya
+    confirmó visualmente que el nombre/celular coinciden.
+    """
+    doc_a_eliminar, doc_a_conservar = str(doc_a_eliminar).strip(), str(doc_a_conservar).strip()
+    try:
+        sello_aud = sello_auditoria()
+        supabase.table("historias_clinicas").update({"paciente_documento": doc_a_conservar}).eq("paciente_documento", doc_a_eliminar).execute()
+        supabase.table("ventas_facturacion").update({"paciente_documento": doc_a_conservar, "titular_doc": doc_a_conservar, **sello_aud}).eq("paciente_documento", doc_a_eliminar).execute()
+        supabase.table("pacientes").delete().eq("documento", doc_a_eliminar).execute()
+        return True, f"Registros fusionados en el documento '{doc_a_conservar}'. La ficha duplicada se eliminó."
+    except Exception as e:
+        return False, f"Error al fusionar: {e}"
 
 # =====================================================================
 # 5. FUNCIONES DE DIBUJO DE PDF (se mantienen igual, solo usan logo.png)
@@ -1852,7 +1877,7 @@ if modulo == "👨‍⚕️ Consultorio":
 
     if n_pendientes > 0:
         with st.expander(f"⚠️ {n_pendientes} historia(s) clínica(s) pendiente(s) por revisar",
-                          expanded=st.session_state.get("expander_pendientes_abierto", True)):
+                          expanded=st.session_state.get("expander_pendientes_abierto", False)):
             st.caption("Visitas recientes migradas del histórico que no traían fórmula registrada. "
                        "Al hacer clic en 'Revisar' se cargan los datos conocidos del paciente en la "
                        "pestaña de Admisión -- solo falta completar la fórmula y guardar; la pendiente "
@@ -2903,7 +2928,7 @@ elif modulo == "🛍️ Óptica y Facturación":
                         doc_original = venta_e.get("paciente_documento") or venta_e.get("titular_doc") or ""
                         ok_doc, msg_doc = True, ""
                         if doc_original and e_pac_doc and doc_original != e_pac_doc:
-                            ok_doc, msg_doc = corregir_documento_paciente(doc_original, e_pac_doc)
+                            ok_doc, msg_doc, _ = corregir_documento_paciente(doc_original, e_pac_doc)
 
                         if not ok_doc:
                             st.error(f"⚠️ {msg_doc}")
@@ -4003,7 +4028,18 @@ elif modulo == "📅 CRM y Fidelización":
 
         if pacientes_para_llamar:
             st.info(f"Se encontraron **{len(pacientes_para_llamar)}** pacientes para control anual.")
-            for item in pacientes_para_llamar:
+
+            POR_PAGINA_ANUAL = 10
+            total_anual = len(pacientes_para_llamar)
+            total_pags_anual = max(1, (total_anual + POR_PAGINA_ANUAL - 1) // POR_PAGINA_ANUAL)
+            if "anual_pagina" not in st.session_state: st.session_state.anual_pagina = 1
+            pag_anual = min(st.session_state.anual_pagina, total_pags_anual)
+            inicio_anual = (pag_anual - 1) * POR_PAGINA_ANUAL
+            pagina_anual_actual = pacientes_para_llamar[inicio_anual:inicio_anual + POR_PAGINA_ANUAL]
+
+            st.caption(f"Página **{pag_anual}** de **{total_pags_anual}**")
+
+            for item in pagina_anual_actual:
                 nombre_corto = item['Nombre'].split()[0]
                 msg_final = st.session_state.tpl_anual.replace("[NOMBRE]", nombre_corto)
                 compras = compras_por_doc.get(item["Documento"])
@@ -4021,6 +4057,18 @@ elif modulo == "📅 CRM y Fidelización":
                     else:
                         c3.button("💬 Enviar WhatsApp", disabled=True, use_container_width=True,
                                   key=f"wa_off_anual_{item['Documento']}", help="Sin celular registrado")
+
+            if total_pags_anual > 1:
+                nva1, nva2, nva3, nva4, nva5 = st.columns([1, 1, 2, 1, 1])
+                if nva1.button("⏮ Primera", key="anual_first", disabled=(pag_anual == 1)):
+                    st.session_state.anual_pagina = 1; st.rerun()
+                if nva2.button("◀ Anterior", key="anual_prev", disabled=(pag_anual == 1)):
+                    st.session_state.anual_pagina = pag_anual - 1; st.rerun()
+                nva3.markdown(f"<div style='text-align:center; padding-top:8px;'>{pag_anual} / {total_pags_anual}</div>", unsafe_allow_html=True)
+                if nva4.button("Siguiente ▶", key="anual_next", disabled=(pag_anual == total_pags_anual)):
+                    st.session_state.anual_pagina = pag_anual + 1; st.rerun()
+                if nva5.button("Última ⏭", key="anual_last", disabled=(pag_anual == total_pags_anual)):
+                    st.session_state.anual_pagina = total_pags_anual; st.rerun()
         else: st.info("No hay pacientes cumpliendo un año de su última consulta.")
 
     with tab_cumple:
@@ -4069,12 +4117,39 @@ elif modulo == "📅 CRM y Fidelización":
                             if not doc_nuevo_dir:
                                 st.warning("⚠️ Escribe el documento correcto antes de guardar.")
                             else:
-                                ok_fix, msg_fix = corregir_documento_paciente(p["documento"], doc_nuevo_dir)
+                                ok_fix, msg_fix, es_colision = corregir_documento_paciente(p["documento"], doc_nuevo_dir)
                                 if ok_fix:
                                     st.session_state.global_toast = msg_fix
+                                    st.session_state[f"colision_pend_{p['documento']}"] = None
+                                    st.rerun()
+                                elif es_colision:
+                                    # El documento correcto ya existe como OTRO
+                                    # registro -- probablemente es la misma
+                                    # persona duplicada. Se guarda para ofrecer
+                                    # fusionar en el próximo render (no se puede
+                                    # mostrar el botón en esta misma pasada
+                                    # porque el layout de columnas ya se cerró).
+                                    st.session_state[f"colision_pend_{p['documento']}"] = doc_nuevo_dir
                                     st.rerun()
                                 else:
                                     st.error(f"⚠️ {msg_fix}")
+
+                        doc_en_colision = st.session_state.get(f"colision_pend_{p['documento']}")
+                        if doc_en_colision:
+                            st.warning(f"⚠️ Ya existe un paciente registrado con el documento "
+                                       f"'{doc_en_colision}'. Si es la misma persona duplicada, "
+                                       f"puedes fusionar los dos registros -- esto traslada todo el "
+                                       f"historial y las ventas hacia ese documento, y elimina esta "
+                                       f"ficha duplicada. Esta acción no se puede deshacer.")
+                            if st.button("🔀 Fusionar con el registro existente",
+                                         key=f"fusionar_btn_{p['documento']}"):
+                                ok_merge, msg_merge = fusionar_pacientes(p["documento"], doc_en_colision)
+                                st.session_state[f"colision_pend_{p['documento']}"] = None
+                                if ok_merge:
+                                    st.session_state.global_toast = msg_merge
+                                    st.rerun()
+                                else:
+                                    st.error(f"⚠️ {msg_merge}")
 
         POR_PAGINA = 50
         d_col1, d_col2 = st.columns([3, 1])
