@@ -2425,7 +2425,8 @@ elif modulo == "🛍️ Óptica y Facturación":
                         supabase.table("ventas_facturacion").update({
                             "saldo": nuevo_saldo, 
                             "abono": nuevo_abono, 
-                            "estado_lab": nuevo_est_recaudo
+                            "estado_lab": nuevo_est_recaudo,
+                            **sello_auditoria(),
                         }).eq("numero_factura", fac_pen["numero_factura"]).execute()
                         
                         supabase.table("pagos_saldos").insert({
@@ -2435,7 +2436,8 @@ elif modulo == "🛍️ Óptica y Facturación":
                             "metodo_pago": metodo_rec, 
                             "recargo_pct": recargo_pct_rec if recargo_pct_rec > 0 else None,
                             "recargo_valor": recargo_valor_rec,
-                            "fecha_pago": now_co().isoformat()
+                            "fecha_pago": now_co().isoformat(),
+                            "recibido_por": st.session_state.get("user_info", {}).get("nombre", "Desconocido"),
                         }).execute()
                         
                         st.session_state.global_toast = f"Pago registrado. Nuevo saldo: ${format_currency_co(nuevo_saldo)} | Estado: {nuevo_est_recaudo}"
@@ -3244,7 +3246,7 @@ elif modulo == "📦 Inventario":
                         nuevo_stock = stock + cant_ajustar if accion == "Sumar (+)" else stock - cant_ajustar
                         if nuevo_stock < 0: st.error("⚠️ Stock negativo.")
                         else:
-                            supabase.table("inventario").update({"cantidad": nuevo_stock}).eq("codigo", codigo_ajuste).execute()
+                            supabase.table("inventario").update({"cantidad": nuevo_stock, **sello_auditoria()}).eq("codigo", codigo_ajuste).execute()
                             st.session_state.global_toast = f"Stock actualizado a {nuevo_stock}."
                             st.session_state.trigger_clear_ajuste = True
                             st.rerun()
