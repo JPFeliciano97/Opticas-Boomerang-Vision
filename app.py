@@ -1627,6 +1627,10 @@ def _limpiar_busquedas_historial():
     for key in list(st.session_state.keys()):
         if key.startswith(prefijos):
             del st.session_state[key]
+    # Si se estaba revisando una pendiente y se sale sin guardar, se
+    # descarta ese estado -- si no, el aviso "Datos de X cargados"
+    # quedaría pegado en la próxima visita a Consultorio.
+    st.session_state.revisando_pendiente = None
 
 
 def hay_cambios_sin_guardar():
@@ -1653,6 +1657,9 @@ def hay_cambios_sin_guardar():
             return True
         # Hay una historia clínica seleccionada para editar (formulario abierto)
         if ss.get("editar_historia_sel") is not None:
+            return True
+        # Hay una pendiente de revisión en curso (datos ya cargados en Admisión)
+        if ss.get("revisando_pendiente"):
             return True
         return False
 
@@ -1797,8 +1804,9 @@ if modulo == "👨‍⚕️ Consultorio":
     if n_pendientes > 0:
         with st.expander(f"⚠️ {n_pendientes} historia(s) clínica(s) pendiente(s) por revisar", expanded=False):
             st.caption("Visitas recientes migradas del histórico que no traían fórmula registrada. "
-                       "Se resuelven solas cuando el paciente vuelve y se le crea una historia nueva "
-                       "con fórmula, o puedes marcarlas como revisadas manualmente.")
+                       "Al hacer clic en 'Revisar' se cargan los datos conocidos del paciente en la "
+                       "pestaña de Admisión -- solo falta completar la fórmula y guardar; la pendiente "
+                       "se marca como resuelta automáticamente.")
             for i, pend in enumerate(pendientes_revisar):
                 with st.container(border=True):
                     pc1, pc2 = st.columns([4, 1])
@@ -1807,19 +1815,29 @@ if modulo == "👨‍⚕️ Consultorio":
                     fecha_p = (pend.get("fecha") or "")[:10]
                     pc1.markdown(f"**{nombre_p}** · Doc: `{doc_p}` · {fecha_p}")
                     pc1.caption(pend.get("motivo_consulta") or "Sin motivo registrado")
-                    if pc2.button("Marcar revisada", key=f"marcar_rev_{i}", use_container_width=True):
-                        try:
-                            q = supabase.table("historias_clinicas").update({"pendiente_revisar": False})
-                            if pend.get("paciente_documento"):
-                                q = q.eq("paciente_documento", pend["paciente_documento"]).eq("fecha", pend["fecha"])
-                            else:
-                                q = q.eq("nombre_legado", pend.get("nombre_legado")).eq("fecha", pend["fecha"])
-                            q.execute()
-                            st.toast("Marcada como revisada.")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"No se pudo actualizar: {e}")
-    
+                    if pc2.button("📋 Revisar", key=f"revisar_pend_{i}", use_container_width=True):
+                        # Se guarda la identidad de la pendiente ORIGINAL (no
+                        # solo el documento) porque muchas de estas no traen
+                        # documento vinculado -- sin esto, no habría forma de
+                        # encontrar y cerrar la fila correcta después de
+                        # guardar la historia nueva con un documento recién
+                        # asignado.
+                        st.session_state.revisando_pendiente = {
+                            "documento": pend.get("paciente_documento") or "",
+                            "nombre_legado": pend.get("nombre_legado") or "",
+                            "fecha": pend.get("fecha"),
+                        }
+                        st.session_state.doc_input = pend.get("paciente_documento") or ""
+                        st.session_state.nom_input = pend.get("nombre_legado") or ""
+                        st.session_state.cel_input = pend.get("celular_legado") or ""
+                        st.rerun()
+
+        if st.session_state.get("revisando_pendiente"):
+            rp = st.session_state.revisando_pendiente
+            st.info(f"📋 Datos de **{rp.get('nombre_legado') or rp.get('documento')}** cargados -- "
+                    f"ve a la pestaña **'📋 1. Admisión Paciente'** para completar y guardar la "
+                    f"fórmula. Se marcará como revisada automáticamente al guardar.")
+
     tab_adm, tab_ref, tab_cierre, tab_hist, tab_editar_hist = st.tabs(["📋 1. Admisión Paciente", "👁️ 2. Refracción (Rx)", "📝 3. Diagnóstico y Cierre", "📂 4. Historial", "✏️ Editar Historia"])
     
     with tab_adm:
@@ -1964,6 +1982,24 @@ if modulo == "👨‍⚕️ Consultorio":
                         .eq("paciente_documento", doc_up).eq("pendiente_revisar", True).execute()
                 except Exception:
                     pass
+
+                # Si se llegó aquí desde el botón "Revisar" de una pendiente
+                # específica, se cierra ESA fila puntual por fecha original --
+                # muchas pendientes no traían documento vinculado, así que el
+                # UPDATE genérico de arriba (que busca por documento) no las
+                # encontraría si el documento se acaba de asignar recién ahora.
+                rp_activa = st.session_state.get("revisando_pendiente")
+                if rp_activa:
+                    try:
+                        q_cerrar = supabase.table("historias_clinicas").update({"pendiente_revisar": False})
+                        if rp_activa.get("documento"):
+                            q_cerrar = q_cerrar.eq("paciente_documento", rp_activa["documento"])
+                        else:
+                            q_cerrar = q_cerrar.eq("nombre_legado", rp_activa.get("nombre_legado", ""))
+                        q_cerrar.eq("fecha", rp_activa["fecha"]).execute()
+                    except Exception:
+                        pass
+                    st.session_state.revisando_pendiente = None
 
                 st.session_state.global_toast = f"Historia de {nom_up} guardada."
                 st.session_state.trigger_clear_doc = True
