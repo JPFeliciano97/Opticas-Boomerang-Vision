@@ -1716,7 +1716,7 @@ def _limpiar_busquedas_historial():
     # "hay algo en curso" sin distinguir si es una sesión nueva.
     st.session_state.editar_factura_sel = None
     st.session_state.editar_historia_sel = None
-    st.session_state.expander_pendientes_abierto = True
+    st.session_state.expander_pendientes_abierto = False
 
 
 def hay_cambios_sin_guardar():
@@ -2133,7 +2133,7 @@ if modulo == "👨‍⚕️ Consultorio":
                     except Exception:
                         pass
                     st.session_state.revisando_pendiente = None
-                    st.session_state.expander_pendientes_abierto = True
+                    st.session_state.expander_pendientes_abierto = False
 
                 st.session_state.global_toast = f"Historia de {nom_up} guardada."
                 st.session_state.trigger_clear_doc = True
