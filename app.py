@@ -1552,6 +1552,24 @@ def wrap_eje(key):
     elif v > 175:
         st.session_state[key] = 0
 
+
+def normalizar_cil_eje(cilindro, eje):
+    """
+    Misma corrección que force_negative_cyl/wrap_eje, pero como función
+    pura (sin session_state) para usar DESPUÉS de un st.form_submit_button
+    -- Streamlit no permite on_change en widgets dentro de un st.form(),
+    así que en "Editar Historia" y "Editar Reciente" (que sí usan forms)
+    la corrección se aplica aquí, sobre el valor ya enviado, en vez de
+    en vivo mientras se digita.
+    """
+    if cilindro > 0:
+        cilindro = -abs(cilindro)
+    if eje < 0:
+        eje = 175
+    elif eje > 175:
+        eje = 0
+    return cilindro, eje
+
 def on_subtotal_change(): st.session_state.subtotal_input = format_currency_co(st.session_state.subtotal_input)
 def on_abono_change(): st.session_state.abono_input = format_currency_co(st.session_state.abono_input)
 def on_monto_rec_change(): st.session_state.monto_rec_input = format_currency_co(st.session_state.monto_rec_input)
@@ -2176,15 +2194,15 @@ if modulo == "👨‍⚕️ Consultorio":
                     st.markdown("**OD**")
                     hh1, hh2, hh3, hh4 = st.columns(4)
                     eh_esf_od = hh1.number_input("Esfera OD", step=0.25, format="%.2f", value=heh_esf_od, key=f"eh_esf_od_{hist_e.get('id')}")
-                    eh_cil_od = hh2.number_input("Cilindro OD", step=0.25, format="%.2f", value=heh_cil_od, key=f"eh_cil_od_{hist_e.get('id')}", on_change=force_negative_cyl, args=(f"eh_cil_od_{hist_e.get('id')}",))
-                    eh_eje_od = hh3.number_input("Eje OD", min_value=-5, max_value=180, step=5, value=heh_eje_od, key=f"eh_eje_od_{hist_e.get('id')}", on_change=wrap_eje, args=(f"eh_eje_od_{hist_e.get('id')}",))
+                    eh_cil_od = hh2.number_input("Cilindro OD", step=0.25, format="%.2f", value=heh_cil_od, key=f"eh_cil_od_{hist_e.get('id')}")
+                    eh_eje_od = hh3.number_input("Eje OD", min_value=-5, max_value=180, step=5, value=heh_eje_od, key=f"eh_eje_od_{hist_e.get('id')}")
                     eh_dp_od = hh4.text_input("DP OD", value=dp_od_prev_h.strip()).upper()
 
                     st.markdown("**OI**")
                     hh5, hh6, hh7, hh8 = st.columns(4)
                     eh_esf_oi = hh5.number_input("Esfera OI", step=0.25, format="%.2f", value=heh_esf_oi, key=f"eh_esf_oi_{hist_e.get('id')}")
-                    eh_cil_oi = hh6.number_input("Cilindro OI", step=0.25, format="%.2f", value=heh_cil_oi, key=f"eh_cil_oi_{hist_e.get('id')}", on_change=force_negative_cyl, args=(f"eh_cil_oi_{hist_e.get('id')}",))
-                    eh_eje_oi = hh7.number_input("Eje OI", min_value=-5, max_value=180, step=5, value=heh_eje_oi, key=f"eh_eje_oi_{hist_e.get('id')}", on_change=wrap_eje, args=(f"eh_eje_oi_{hist_e.get('id')}",))
+                    eh_cil_oi = hh6.number_input("Cilindro OI", step=0.25, format="%.2f", value=heh_cil_oi, key=f"eh_cil_oi_{hist_e.get('id')}")
+                    eh_eje_oi = hh7.number_input("Eje OI", min_value=-5, max_value=180, step=5, value=heh_eje_oi, key=f"eh_eje_oi_{hist_e.get('id')}")
                     eh_dp_oi = hh8.text_input("DP OI", value=dp_oi_prev_h.strip()).upper()
 
                     eh_add_prev = 0.0
@@ -2200,6 +2218,8 @@ if modulo == "👨‍⚕️ Consultorio":
                     guardar_hist_edit = st.form_submit_button("💾 Guardar Cambios", type="primary", use_container_width=True)
 
                 if guardar_hist_edit:
+                    eh_cil_od, eh_eje_od = normalizar_cil_eje(eh_cil_od, eh_eje_od)
+                    eh_cil_oi, eh_eje_oi = normalizar_cil_eje(eh_cil_oi, eh_eje_oi)
                     supabase.table("historias_clinicas").update({
                         "motivo_consulta": eh_motivo,
                         "rx_final_od": build_rx_string(eh_esf_od, eh_cil_od, eh_eje_od),
@@ -2923,16 +2943,16 @@ elif modulo == "🛍️ Óptica y Facturación":
                     st.markdown("**OD**")
                     eo1, eo2, eo3, eo4, eo5 = st.columns(5)
                     e_esf_od = eo1.number_input("Esfera OD", step=0.25, format="%.2f", value=esf_od_prev, key=f"e_esf_od_{venta_e['numero_factura']}")
-                    e_cil_od = eo2.number_input("Cilindro OD", step=0.25, format="%.2f", value=cil_od_prev, key=f"e_cil_od_{venta_e['numero_factura']}", on_change=force_negative_cyl, args=(f"e_cil_od_{venta_e['numero_factura']}",))
-                    e_eje_od = eo3.number_input("Eje OD", min_value=-5, max_value=180, step=5, value=eje_od_prev, key=f"e_eje_od_{venta_e['numero_factura']}", on_change=wrap_eje, args=(f"e_eje_od_{venta_e['numero_factura']}",))
+                    e_cil_od = eo2.number_input("Cilindro OD", step=0.25, format="%.2f", value=cil_od_prev, key=f"e_cil_od_{venta_e['numero_factura']}")
+                    e_eje_od = eo3.number_input("Eje OD", min_value=-5, max_value=180, step=5, value=eje_od_prev, key=f"e_eje_od_{venta_e['numero_factura']}")
                     e_av_od = eo4.text_input("AV OD", value=(venta_e.get("av_od") or "")).upper()
                     e_dp_od = eo5.text_input("DP OD", value=dp_od_prev.strip()).upper()
 
                     st.markdown("**OI**")
                     ei1, ei2, ei3, ei4, ei5 = st.columns(5)
                     e_esf_oi = ei1.number_input("Esfera OI", step=0.25, format="%.2f", value=esf_oi_prev, key=f"e_esf_oi_{venta_e['numero_factura']}")
-                    e_cil_oi = ei2.number_input("Cilindro OI", step=0.25, format="%.2f", value=cil_oi_prev, key=f"e_cil_oi_{venta_e['numero_factura']}", on_change=force_negative_cyl, args=(f"e_cil_oi_{venta_e['numero_factura']}",))
-                    e_eje_oi = ei3.number_input("Eje OI", min_value=-5, max_value=180, step=5, value=eje_oi_prev, key=f"e_eje_oi_{venta_e['numero_factura']}", on_change=wrap_eje, args=(f"e_eje_oi_{venta_e['numero_factura']}",))
+                    e_cil_oi = ei2.number_input("Cilindro OI", step=0.25, format="%.2f", value=cil_oi_prev, key=f"e_cil_oi_{venta_e['numero_factura']}")
+                    e_eje_oi = ei3.number_input("Eje OI", min_value=-5, max_value=180, step=5, value=eje_oi_prev, key=f"e_eje_oi_{venta_e['numero_factura']}")
                     e_av_oi = ei4.text_input("AV OI", value=(venta_e.get("av_oi") or "")).upper()
                     e_dp_oi = ei5.text_input("DP OI", value=dp_oi_prev.strip()).upper()
 
@@ -2960,6 +2980,8 @@ elif modulo == "🛍️ Óptica y Facturación":
                     elif e_pac_doc and not es_documento_numerico(e_pac_doc):
                         st.error(f"⚠️ El documento solo debe contener números. '{e_pac_doc}' no es válido.")
                     else:
+                        e_cil_od, e_eje_od = normalizar_cil_eje(e_cil_od, e_eje_od)
+                        e_cil_oi, e_eje_oi = normalizar_cil_eje(e_cil_oi, e_eje_oi)
                         doc_original = venta_e.get("paciente_documento") or venta_e.get("titular_doc") or ""
                         ok_doc, msg_doc = True, ""
                         if doc_original and e_pac_doc and doc_original != e_pac_doc:
