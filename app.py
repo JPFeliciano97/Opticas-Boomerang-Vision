@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 from supabase import create_client
 import os
 import base64
@@ -68,7 +69,10 @@ st.markdown("""
         [data-testid="stSidebar"] {
             background-color: #f0f0f0 !important;
         }
-        [data-testid="stSidebar"] * {
+        /* El selector universal apagaba también el texto de las alertas de
+           stock (sin stock / stock bajo), que es justo lo que debe saltar a
+           la vista. Se excluyen las alertas para que conserven su color. */
+        [data-testid="stSidebar"] *:not([data-testid="stAlertContainer"]):not([data-testid="stAlertContainer"] *) {
             color: #000000 !important;
         }
 
@@ -300,8 +304,23 @@ st.markdown("""
             border-color: #c62828 !important;
         }
         .stButton > button[kind="primary"]:hover {
-            background-color: #ef9a9a !important;
-            color: #000000 !important;
+            background-color: #d35f5f !important;
+            color: #ffffff !important;
+        }
+        /* La etiqueta visible del botón es un <p> hijo, y la regla global
+           "p, label {color:#000}" le gana por apuntar directo al elemento.
+           Sin estos dos selectores el texto blanco del botón primario nunca
+           llega a verse: se renderiza negro sobre rojo. */
+        .stButton > button[kind="primary"] p,
+        .stButton > button[kind="primary"] div,
+        .stButton > button[kind="primary"] label,
+        /* En el sidebar hace falta repetir el selector con el prefijo del
+           propio sidebar: la regla que pinta todo de negro allí lleva dos
+           :not() y por eso gana en especificidad a la versión corta. */
+        [data-testid="stSidebar"] .stButton > button[kind="primary"] p,
+        [data-testid="stSidebar"] .stButton > button[kind="primary"] div,
+        [data-testid="stSidebar"] .stButton > button[kind="primary"] label {
+            color: #ffffff !important;
         }
 
         /* --- 6. Tabs --- */
@@ -342,15 +361,52 @@ st.markdown("""
         }
 
         /* --- 8. Alertas (success, info, warning, error) ---
-               NO forzamos color negro en * porque los iconos SVG
-               de Streamlit usan fill que se rompería. Solo
-               actuamos sobre el texto. */
-        .stAlert {
-            background-color: #f9f9f9 !important;
+           El recuadro visible NO es .stAlert (ese es un envoltorio exterior)
+           sino [data-testid="stAlertContainer"], al que Streamlit ya aplica
+           el tinte semántico. Pintar .stAlert de gris solo ensuciaba el fondo
+           por detrás de un tinte translúcido, y forzar el texto a negro
+           borraba la señal de color. Aquí se conserva el tinte y se refuerza
+           con un borde lateral, para que el tipo de mensaje se lea de reojo. */
+        [data-testid="stAlertContainer"] {
             border-radius: 6px !important;
         }
-        .stAlert p, .stAlert span {
-            color: #000000 !important;
+        [data-testid="stAlertContainer"]:has([data-testid="stAlertContentSuccess"]) {
+            border-left: 4px solid #22c55e !important;
+        }
+        [data-testid="stAlertContainer"]:has([data-testid="stAlertContentSuccess"]),
+        [data-testid="stAlertContainer"]:has([data-testid="stAlertContentSuccess"]) p,
+        [data-testid="stAlertContainer"]:has([data-testid="stAlertContentSuccess"]) span {
+            color: #166534 !important;
+        }
+        [data-testid="stAlertContainer"]:has([data-testid="stAlertContentError"]) {
+            border-left: 4px solid #ef4444 !important;
+        }
+        [data-testid="stAlertContainer"]:has([data-testid="stAlertContentError"]),
+        [data-testid="stAlertContainer"]:has([data-testid="stAlertContentError"]) p,
+        [data-testid="stAlertContainer"]:has([data-testid="stAlertContentError"]) span {
+            color: #991b1b !important;
+        }
+        [data-testid="stAlertContainer"]:has([data-testid="stAlertContentWarning"]) {
+            border-left: 4px solid #eab308 !important;
+        }
+        [data-testid="stAlertContainer"]:has([data-testid="stAlertContentWarning"]),
+        [data-testid="stAlertContainer"]:has([data-testid="stAlertContentWarning"]) p,
+        [data-testid="stAlertContainer"]:has([data-testid="stAlertContentWarning"]) span {
+            color: #854d0e !important;
+        }
+        [data-testid="stAlertContainer"]:has([data-testid="stAlertContentInfo"]) {
+            border-left: 4px solid #0ea5e9 !important;
+        }
+        [data-testid="stAlertContainer"]:has([data-testid="stAlertContentInfo"]),
+        [data-testid="stAlertContainer"]:has([data-testid="stAlertContentInfo"]) p,
+        [data-testid="stAlertContainer"]:has([data-testid="stAlertContentInfo"]) span {
+            color: #075985 !important;
+        }
+        /* El código en línea (`texto`) dentro de una alerta hereda el color
+           semántico y quedaría ilegible sobre su propio fondo: lo fijamos. */
+        [data-testid="stAlertContainer"] code {
+            color: #111111 !important;
+            background-color: rgba(255,255,255,0.72) !important;
         }
 
         /* --- 9. Expander --- */
@@ -385,44 +441,94 @@ st.markdown("""
             color: #555555 !important;
         }
 
-        /* --- 12. Contenedores con borde (st.container(border=True)) --- */
-        /* Base: borde gris estándar para todos los containers */
-        [data-testid="stVerticalBlockBorderWrapper"] {
+        /* --- 12. Contenedores con borde (st.container(border=True)) ---
+           OJO con el nombre del testid: hasta ~1.4x el contenedor con borde
+           era [data-testid="stVerticalBlockBorderWrapper"]; en Streamlit
+           reciente (verificado en 1.61) ese testid ya no existe y el borde
+           lo dibuja el stVerticalBlock que cuelga de un stLayoutWrapper.
+           Se cubren ambos para no depender de la versión que instale el
+           servidor -- requirements.txt solo fija "streamlit>=1.40".
+           El hijo directo se usa a propósito: el wrapper de st.columns
+           contiene un stHorizontalBlock, así que las columnas no coinciden
+           con este selector y no se les pinta borde por error. */
+        [data-testid="stVerticalBlockBorderWrapper"],
+        [data-testid="stLayoutWrapper"] > [data-testid="stVerticalBlock"] {
             border: 1px solid #d0d0d0 !important;
             border-radius: 10px !important;
-            overflow: hidden !important;
             padding-bottom: 6px !important;
         }
 
-        /* --- 12b. Tarjetas de laboratorio coloreadas por estado ---
-           El JS dentro de cada tarjeta escribe el atributo data-estado
-           en su propio stVerticalBlockBorderWrapper. Estos selectores de
-           atributo tienen mayor especificidad que la regla base de arriba
-           y sobreescriben el border-left con el color del estado. */
-        [data-testid="stVerticalBlockBorderWrapper"][data-estado="Pendiente de enviar"],
-        [data-testid="stVerticalBlockBorderWrapper"][data-estado="Pendiente de enviar"] > div[data-testid="stVerticalBlock"] {
-            border-left: 6px solid #E61B23 !important;
-            background-color: #fff5f5 !important;
+        /* --- 12b. Selectbox dentro de tarjetas ---
+           Antes existía aquí un bloque que coloreaba las tarjetas de
+           laboratorio según [data-estado]. Ese atributo lo escribía un
+           <script> incrustado con st.markdown, y Streamlit inyecta ese HTML
+           vía innerHTML: por especificación, los <script> insertados así
+           NO se ejecutan, así que el atributo nunca existía y el bloque
+           entero era código muerto. Ahora el color del estado se dibuja
+           como una franja HTML dentro de la tarjeta (módulo 5), que sí se
+           renderiza siempre.
+           Estas reglas de selectbox estaban duplicadas una vez por cada
+           trabajo listado; aquí se declaran una sola vez. */
+        [data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stSelectbox"],
+        [data-testid="stLayoutWrapper"] div[data-testid="stSelectbox"] {
+            background-color: transparent !important;
+            border: none !important;
         }
-        [data-testid="stVerticalBlockBorderWrapper"][data-estado="En Laboratorio"],
-        [data-testid="stVerticalBlockBorderWrapper"][data-estado="En Laboratorio"] > div[data-testid="stVerticalBlock"] {
-            border-left: 6px solid #ff9800 !important;
-            background-color: #fffaf2 !important;
+        [data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stSelectbox"] > div:last-child,
+        [data-testid="stLayoutWrapper"] div[data-testid="stSelectbox"] > div:last-child {
+            background-color: #f2f2f2 !important;
+            border: 1.5px solid #b0b0b0 !important;
+            border-radius: 6px !important;
         }
-        [data-testid="stVerticalBlockBorderWrapper"][data-estado="Recibido en Óptica"],
-        [data-testid="stVerticalBlockBorderWrapper"][data-estado="Recibido en Óptica"] > div[data-testid="stVerticalBlock"] {
-            border-left: 6px solid #2196F3 !important;
-            background-color: #f3f8ff !important;
-        }
-        [data-testid="stVerticalBlockBorderWrapper"][data-estado="Entregado"],
-        [data-testid="stVerticalBlockBorderWrapper"][data-estado="Entregado"] > div[data-testid="stVerticalBlock"] {
-            border-left: 6px solid #4CAF50 !important;
-            background-color: #f4fdf4 !important;
+        [data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stSelectbox"] [data-baseweb="select"],
+        [data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stSelectbox"] [data-baseweb="select"] > div,
+        [data-testid="stLayoutWrapper"] div[data-testid="stSelectbox"] [data-baseweb="select"],
+        [data-testid="stLayoutWrapper"] div[data-testid="stSelectbox"] [data-baseweb="select"] > div {
+            background-color: transparent !important;
+            border: none !important;
+            box-shadow: none !important;
         }
 
         /* --- 13. Spinner / Progress --- */
         .stProgress > div > div {
             background-color: #e57373 !important;
+        }
+
+        /* --- 14. Foco visible por teclado ---
+           Varias reglas de arriba ponen outline:none para limpiar el borde
+           de los inputs; sin esto, navegar con Tab no deja rastro visible. */
+        button:focus-visible,
+        [role="tab"]:focus-visible,
+        summary:focus-visible,
+        a:focus-visible {
+            outline: 2px solid #c62828 !important;
+            outline-offset: 2px !important;
+        }
+
+        /* --- 15. Hover de tarjetas: indica que la fila es manipulable --- */
+        [data-testid="stVerticalBlockBorderWrapper"],
+        [data-testid="stLayoutWrapper"] > [data-testid="stVerticalBlock"] {
+            transition: box-shadow 0.18s ease, border-color 0.18s ease !important;
+        }
+        [data-testid="stVerticalBlockBorderWrapper"]:hover,
+        [data-testid="stLayoutWrapper"] > [data-testid="stVerticalBlock"]:hover {
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08) !important;
+            border-color: #b8b8b8 !important;
+        }
+
+        /* --- 16. Métricas: cifras largas de moneda en 4 columnas --- */
+        [data-testid="stMetricValue"] {
+            font-size: 1.55rem !important;
+            font-variant-numeric: tabular-nums !important;
+        }
+
+        /* --- 17. Accesibilidad: respetar reduced-motion --- */
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
+            }
         }
 
     </style>
@@ -446,59 +552,14 @@ def init_connection():
 
 supabase = init_connection()
 
-# Parche JS global: fuerza estilos de borde en selectbox después de cada re-render
-# (Streamlit Cloud inyecta estilos inline que sobreescriben el CSS; este JS los pisa de vuelta)
-st.markdown("""
-    <script>
-    (function() {
-        function styleSelects() {
-            // Apuntamos al ultimo div hijo de stSelectbox/stMultiSelect:
-            // ese es el contenedor del control de BaseWeb, justo despues del label.
-            // Asi el borde rodea solo el control, no el label → estetica limpia.
-            [
-                'div[data-testid="stSelectbox"]',
-                'div[data-testid="stMultiSelect"]'
-            ].forEach(function(sel) {
-                document.querySelectorAll(sel).forEach(function(wrapper) {
-                    // Outer wrapper: sin borde ni fondo
-                    wrapper.style.setProperty('background-color', 'transparent', 'important');
-                    wrapper.style.setProperty('border', 'none', 'important');
-                    // Last child: el control visual
-                    var ctrl = wrapper.lastElementChild;
-                    if (ctrl) {
-                        ctrl.style.setProperty('background-color', '#f2f2f2', 'important');
-                        ctrl.style.setProperty('border', '1.5px solid #b0b0b0', 'important');
-                        ctrl.style.setProperty('border-radius', '6px', 'important');
-                    }
-                });
-            });
-            // Todos los divs internos de BaseWeb: transparent
-            document.querySelectorAll(
-                'div[data-testid="stSelectbox"] [data-baseweb="select"], ' +
-                'div[data-testid="stSelectbox"] [data-baseweb="select"] > div, ' +
-                'div[data-testid="stMultiSelect"] [data-baseweb="select"], ' +
-                'div[data-testid="stMultiSelect"] [data-baseweb="select"] > div'
-            ).forEach(function(el) {
-                el.style.setProperty('background-color', 'transparent', 'important');
-                el.style.setProperty('border', 'none', 'important');
-                el.style.setProperty('box-shadow', 'none', 'important');
-            });
-        }
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', styleSelects);
-        } else {
-            styleSelects();
-        }
-        var obs = new MutationObserver(function(muts) {
-            if (muts.some(function(m) { return m.addedNodes.length > 0; })) {
-                clearTimeout(window._sst);
-                window._sst = setTimeout(styleSelects, 80);
-            }
-        });
-        obs.observe(document.body, { childList: true, subtree: true });
-    })();
-    </script>
-""", unsafe_allow_html=True)
+# NOTA: aquí vivía un "parche JS global" (styleSelects + MutationObserver)
+# que pretendía reforzar el borde de los selectbox tras cada re-render.
+# Nunca se ejecutó: Streamlit inyecta el HTML de unsafe_allow_html mediante
+# innerHTML, y por especificación del estándar HTML los <script> insertados
+# de esa forma NO corren. El HTML y el <style> hermanos sí se renderizan,
+# lo que hacía que el fallo pasara desapercibido al leer el código.
+# El CSS equivalente (sección 4c/4d del bloque de estilos) sí funciona y es
+# quien realmente da el borde a los selectbox.
 
 @st.cache_data(ttl=60, show_spinner=False)
 def query_cached(tabla, filtros=None):
@@ -989,6 +1050,16 @@ def mostrar_buscador_historial(key_prefix):
 
     if not hist_data and not ventas_data and not pac_hist:
         st.info("No hay historias ni ventas asociadas a este contacto todavía.")
+
+
+# Paleta semántica de la app. Antes estos valores estaban escritos a mano
+# en cada punto de uso, lo que ya había producido tres verdes distintos
+# (#4CAF50, #00A650, #2E7D32) y tres ámbares para el mismo significado.
+COLOR_MARCA  = "#e57373"   # rojo suave de marca
+COLOR_EXITO  = "#4CAF50"   # verde "correcto / entregado"
+COLOR_ALERTA = "#ff9800"   # ámbar "en proceso / atención"
+COLOR_INFO   = "#2196F3"   # azul "informativo / recibido"
+COLOR_URGENTE = "#E61B23"  # rojo "pendiente / urgente"
 
 
 def format_currency_co(val):
@@ -2181,7 +2252,7 @@ if modulo == "👨‍⚕️ Consultorio":
                     st.session_state.editar_historia_sel = None
                     st.rerun()
 
-                st.success(f"✏️ Editando historia del {hist_e.get('fecha','')[:10]}")
+                st.info(f"✏️ Editando historia del {hist_e.get('fecha','')[:10]}")
 
                 with st.form("form_editar_historia"):
                     eh_motivo = st.text_input("Motivo de Consulta", value=(hist_e.get("motivo_consulta") or "")).upper()
@@ -2823,6 +2894,7 @@ elif modulo == "🛍️ Óptica y Facturación":
                                     st.session_state.global_toast = f"Factura ANULADA. Stock de la montura {montura_venta} restaurado."
                                 except Exception:
                                     st.session_state.global_toast = "Factura ANULADA. No se pudo restaurar el stock automáticamente -- revísalo manualmente."
+                                    st.session_state.global_toast_icon = "⚠️"
                             else:
                                 st.session_state.global_toast = "Factura ANULADA exitosamente."
                             st.session_state.global_toast_icon = "🚨"
@@ -2895,7 +2967,7 @@ elif modulo == "🛍️ Óptica y Facturación":
             if es_categoria_menor:
                 # Formulario simplificado: una venta menor no tiene fórmula
                 # ni paciente vinculado, mostrar todo eso sería ruido inútil.
-                st.success(f"✏️ Editando venta menor: **{venta_e.get('descripcion','')}**")
+                st.info(f"✏️ Editando venta menor: **{venta_e.get('descripcion','')}**")
                 with st.form("form_editar_venta_menor"):
                     fm1, fm2 = st.columns(2)
                     em_desc = fm1.text_input("Descripción", value=(venta_e.get("descripcion") or "")).upper()
@@ -2917,7 +2989,7 @@ elif modulo == "🛍️ Óptica y Facturación":
                     st.rerun()
 
             else:
-                st.success(f"✏️ Editando Factura N° **{formatear_numero_factura_display(venta_e['numero_factura'])}**")
+                st.info(f"✏️ Editando Factura N° **{formatear_numero_factura_display(venta_e['numero_factura'])}**")
 
                 with st.form("form_editar_factura"):
                     st.markdown("##### Datos generales")
@@ -3247,64 +3319,102 @@ elif modulo == "🛍️ Óptica y Facturación":
 elif modulo == "📊 Cuadre de Caja Físico":
     styled_header("Cuadre de Caja Físico e Historial Diario", "📊")
 
-    # La base inicial de caja es un valor estable día a día para el
-    # negocio -- se persiste en 'configuracion' (misma tabla que las
-    # plantillas de WhatsApp) para no tener que reingresarla cada vez
-    # que se visita este módulo, en vez de resetear siempre a $50.000.
-    if "base_caja_guardada" not in st.session_state:
-        try:
-            cfg_base = supabase.table("configuracion").select("valor").eq("clave", "base_caja_inicial").execute().data
-            st.session_state.base_caja_guardada = int(cfg_base[0]["valor"]) if cfg_base else 50000
-        except Exception:
-            st.session_state.base_caja_guardada = 50000
-
-    def _guardar_base_caja():
-        try:
-            supabase.table("configuracion").upsert({
-                "clave": "base_caja_inicial", "valor": str(st.session_state.base_caja_input)
-            }).execute()
-            st.session_state.base_caja_guardada = st.session_state.base_caja_input
-        except Exception:
-            pass
-
-    # La PRIMERA vez que se abre este módulo cada día, hay que confirmar
-    # la base inicial en gaveta antes de poder ver el resto del cuadre --
-    # un checkpoint diario obligatorio, no solo un valor que se sugiere y
-    # se puede ignorar sin querer.
+    # ---------------------------------------------------------------
+    # BASE INICIAL EN GAVETA — se registra UNA SOLA VEZ al día
+    # ---------------------------------------------------------------
+    # El registro vive en la tabla 'configuracion', que es global al
+    # negocio y no por usuario: por eso, una vez que alguien confirma la
+    # base del día, ningún otro usuario que abra sesión después vuelve a
+    # verla pedida, y nadie puede modificarla hasta el día siguiente.
+    # Junto con el valor se guarda la HORA exacta y QUIÉN la registró.
+    #
+    # La lectura se hace en cada ejecución y NO se cachea en session_state:
+    # cachearla haría que (a) una sesión abierta desde ayer siguiera
+    # creyendo que la base de hoy ya está confirmada al pasar la medianoche,
+    # y (b) un usuario con la sesión abierta no viera la base que acaba de
+    # registrar un compañero desde otro equipo.
     hoy_str_caja = now_co().strftime("%Y-%m-%d")
-    if "base_confirmada_hoy" not in st.session_state:
-        try:
-            cfg_fecha = supabase.table("configuracion").select("valor").eq("clave", "base_caja_confirmada_fecha").execute().data
-            st.session_state.base_confirmada_hoy = bool(cfg_fecha and cfg_fecha[0]["valor"] == hoy_str_caja)
-        except Exception:
-            st.session_state.base_confirmada_hoy = False
+    CLAVES_BASE = ("base_caja_inicial", "base_caja_confirmada_fecha",
+                   "base_caja_confirmada_hora", "base_caja_confirmada_por")
 
-    if not st.session_state.base_confirmada_hoy:
+    def _leer_config_base():
+        """Devuelve {clave: valor} de las claves de base de caja. Ante fallo
+        de red devuelve None, para poder distinguir 'no hay registro' de
+        'no se pudo consultar' y no bloquear el módulo por un error de red."""
+        try:
+            filas = supabase.table("configuracion").select("clave,valor").in_(
+                "clave", list(CLAVES_BASE)).execute().data or []
+            return {f["clave"]: f["valor"] for f in filas}
+        except Exception:
+            return None
+
+    cfg_base = _leer_config_base()
+    lectura_fallida = cfg_base is None
+    cfg_base = cfg_base or {}
+
+    try:
+        base_guardada = int(cfg_base.get("base_caja_inicial") or 50000)
+    except (TypeError, ValueError):
+        base_guardada = 50000
+
+    base_confirmada_hoy = cfg_base.get("base_caja_confirmada_fecha") == hoy_str_caja
+    # Si la consulta falló, se respeta lo que ya se había confirmado en esta
+    # sesión para no volver a pedir la base por un corte momentáneo de red.
+    if lectura_fallida and st.session_state.get("base_confirmada_sesion") == hoy_str_caja:
+        base_confirmada_hoy = True
+
+    if not base_confirmada_hoy:
         st.warning("🔒 Antes de continuar, confirma la **Base Inicial en Gaveta** de hoy.")
+        st.caption("Se registra una sola vez al día. Queda guardada la hora y el "
+                   "usuario que la ingresó, y no vuelve a pedirse aunque entre otra persona.")
         base_dia_nueva = st.number_input(
             "Base Inicial en Gaveta ($)", min_value=0,
-            value=st.session_state.base_caja_guardada, step=10000, key="base_caja_dia_input",
+            value=base_guardada, step=10000, key="base_caja_dia_input",
         )
         if st.button("✅ Confirmar y Continuar", type="primary", use_container_width=True):
+            momento = now_co()
             try:
-                supabase.table("configuracion").upsert({"clave": "base_caja_inicial", "valor": str(int(base_dia_nueva))}).execute()
-                supabase.table("configuracion").upsert({"clave": "base_caja_confirmada_fecha", "valor": hoy_str_caja}).execute()
+                supabase.table("configuracion").upsert([
+                    {"clave": "base_caja_inicial",           "valor": str(int(base_dia_nueva))},
+                    {"clave": "base_caja_confirmada_fecha",  "valor": hoy_str_caja},
+                    {"clave": "base_caja_confirmada_hora",   "valor": momento.isoformat()},
+                    {"clave": "base_caja_confirmada_por",    "valor": st.session_state.get("user_info", {}).get("nombre", "Desconocido")},
+                ]).execute()
+                st.session_state.base_confirmada_sesion = hoy_str_caja
+                st.session_state.global_toast = (
+                    f"Base inicial registrada: ${format_currency_co(int(base_dia_nueva))} "
+                    f"a las {momento.strftime('%H:%M')}"
+                )
+                st.rerun()
             except Exception:
-                pass
-            st.session_state.base_caja_guardada = int(base_dia_nueva)
-            st.session_state.base_confirmada_hoy = True
-            st.rerun()
+                st.error("No se pudo guardar la base inicial. Revisa la conexión "
+                         "e inténtalo de nuevo; el cuadre no se abre sin este registro.")
         st.stop()
+
+    # Ya confirmada: el valor queda BLOQUEADO hasta mañana. Se muestra como
+    # dato de solo lectura -- antes era un number_input que reescribía la
+    # base en cada cambio, lo que permitía alterarla a media jornada y
+    # descuadraba el cierre respecto a lo que realmente había en la gaveta.
+    base_caja_inicial = base_guardada
+    hora_base = hora_co(cfg_base.get("base_caja_confirmada_hora"))
+    quien_base = cfg_base.get("base_caja_confirmada_por") or "—"
 
     col_fc1, col_fc2 = st.columns([2, 1])
     with col_fc1:
         fecha_consulta = st.date_input("Selecciona la fecha a consultar:", now_co().date(), format="DD/MM/YYYY")
     with col_fc2:
-        base_caja_inicial = st.number_input(
-            "Base Inicial en Gaveta ($)", min_value=0,
-            value=st.session_state.base_caja_guardada, step=10000,
-            key="base_caja_input", on_change=_guardar_base_caja,
+        st.markdown(
+            '<div style="font-size:14px; font-weight:500; color:#000; margin-bottom:4px;">'
+            'Base Inicial en Gaveta ($)</div>'
+            '<div style="background-color:#f2f2f2; border:1.5px solid #b0b0b0; border-radius:6px;'
+            ' padding:8px 12px; font-size:15px; display:flex; align-items:center;'
+            ' justify-content:space-between; gap:8px;">'
+            f'<span style="font-weight:700;">${format_currency_co(base_caja_inicial)}</span>'
+            '<span style="font-size:0.78em; color:#555;">🔒 bloqueada</span>'
+            '</div>',
+            unsafe_allow_html=True
         )
+        st.caption(f"Registrada hoy a las **{hora_base}** por **{quien_base}**.")
 
     fecha_str = fecha_consulta.strftime("%Y-%m-%d")
     
@@ -3349,7 +3459,11 @@ elif modulo == "📊 Cuadre de Caja Físico":
         st.divider()
         st.markdown(f"#### 📜 Movimientos de Caja del Día ({fecha_consulta.strftime('%d/%m/%Y')})")
         
-        movimientos = [{"Hora": "08:00", "Tipo": "BASE", "Detalle": "Apertura de Caja Inicial", "Monto": base_caja_inicial, "Método": "EFECTIVO"}]
+        # La hora de apertura ya no se inventa: es la que quedó registrada al
+        # confirmar la base del día. Al consultar una fecha pasada no hay
+        # registro de aquella jornada, así que se marca con "--:--".
+        hora_apertura = hora_base if fecha_consulta == now_co().date() else "--:--"
+        movimientos = [{"Hora": hora_apertura, "Tipo": "BASE", "Detalle": "Apertura de Caja Inicial", "Monto": base_caja_inicial, "Método": "EFECTIVO"}]
         for v in ventas:
             if v.get('abono', 0) > 0:
                 # Las ventas menores (cordones, líquidos, etc.) no tienen un
@@ -3677,7 +3791,7 @@ elif modulo == "📦 Inventario":
                 st.error(f"No se encontró ningún producto con el código '{codigo_editar_prod}'.")
             else:
                 prod_e = res_edit_prod[0]
-                st.success(f"✏️ Editando: **{prod_e.get('marca','')} — {prod_e.get('descripcion','')}**")
+                st.info(f"✏️ Editando: **{prod_e.get('marca','')} — {prod_e.get('descripcion','')}**")
 
                 with st.form("form_editar_producto"):
                     CATEGORIAS_INV = ["Montura", "Lente de Contacto", "Accesorio", "Estuche", "Líquido", "Otro"]
@@ -3788,76 +3902,31 @@ elif modulo == "🔬 Control de Trabajos":
                 fac_id_display = formatear_numero_factura_display(fac_id)
 
                 if est_act == "Pendiente de enviar":
-                    border_color = "#E61B23"; card_bg = "#fff8f8"; badge_bg = "#ffebee"; badge_fg = "#c62828"
+                    border_color = COLOR_URGENTE; badge_bg = "#ffebee"; badge_fg = "#c62828"
                 elif est_act == "En Laboratorio":
-                    border_color = "#ff9800"; card_bg = "#fffbf4"; badge_bg = "#fff3e0"; badge_fg = "#ef6c00"
+                    border_color = COLOR_ALERTA; badge_bg = "#fff3e0"; badge_fg = "#ef6c00"
                 elif est_act == "Recibido en Óptica":
-                    border_color = "#2196F3"; card_bg = "#f5f9ff"; badge_bg = "#e3f2fd"; badge_fg = "#1565c0"
+                    border_color = COLOR_INFO; badge_bg = "#e3f2fd"; badge_fg = "#1565c0"
                 else:
-                    border_color = "#4CAF50"; card_bg = "#f6fdf6"; badge_bg = "#e8f5e9"; badge_fg = "#2e7d32"
+                    border_color = COLOR_EXITO; badge_bg = "#e8f5e9"; badge_fg = "#2e7d32"
 
                 with st.container(border=True):
-                    # Estrategia definitiva: el script se ejecuta DESDE DENTRO del container.
-                    # Sube por el DOM buscando su propio stVerticalBlockBorderWrapper y le
-                    # añade un atributo data-estado. El CSS global (abajo, sección 12b) usa
-                    # ese atributo con alta especificidad para pintar el borde lateral.
-                    # Usar setAttribute en lugar de style.setProperty evita la guerra !important.
-                    st.markdown(f"""
-                        <script>
-                        (function() {{
-                            function tag(el) {{
-                                var node = el ? el.parentElement : null;
-                                var attempts = 0;
-                                var interval = setInterval(function() {{
-                                    var cur = node;
-                                    while (cur && cur !== document.body) {{
-                                        if (cur.getAttribute && cur.getAttribute('data-testid') === 'stVerticalBlockBorderWrapper') {{
-                                            cur.setAttribute('data-estado', '{est_act}');
-                                            // Propaga color al stVerticalBlock interior
-                                            var inner = cur.querySelector('[data-testid="stVerticalBlock"]');
-                                            if (inner) {{ inner.style.setProperty('background-color', '{card_bg}', 'important'); }}
-                                            clearInterval(interval);
-                                            return;
-                                        }}
-                                        cur = cur.parentElement;
-                                    }}
-                                    if (++attempts > 20) clearInterval(interval);
-                                }}, 50);
-                            }}
-                            var sc = document.currentScript;
-                            if (document.readyState === 'loading') {{
-                                document.addEventListener('DOMContentLoaded', function() {{ tag(sc); }});
-                            }} else {{
-                                tag(sc);
-                            }}
-                        }})();
-                        </script>
-                        <style>
-                        /* Estilo de selectbox en tarjetas de lab — apunta al wrapper externo
-                           de Streamlit que React no toca, garantizando persistencia. */
-                        [data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stSelectbox"] {{
-                            background-color: transparent !important;
-                            border: none !important;
-                        }}
-                        [data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stSelectbox"] > div:last-child {{
-                            background-color: #f2f2f2 !important;
-                            border: 1.5px solid #b0b0b0 !important;
-                            border-radius: 6px !important;
-                        }}
-                        [data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stSelectbox"] [data-baseweb="select"],
-                        [data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stSelectbox"] [data-baseweb="select"] > div {{
-                            background-color: transparent !important;
-                            border: none !important;
-                            box-shadow: none !important;
-                        }}
-                        </style>
-                        <div style="margin-bottom:10px; padding-top:2px;">
-                            <span style="background-color:{badge_bg}; color:{badge_fg}; padding:4px 12px;
-                                border-radius:20px; font-weight:700; font-size:0.8em; letter-spacing:0.6px;">
-                                {est_act.upper()}
-                            </span>
-                        </div>
-                    """, unsafe_allow_html=True)
+                    # El color de estado se dibuja como una franja HTML dentro
+                    # de la tarjeta. Antes se intentaba con un <script> que
+                    # escribía data-estado en el contenedor para que lo pintara
+                    # el CSS; ese script nunca se ejecutaba (innerHTML no corre
+                    # <script>), así que todas las tarjetas salían grises y se
+                    # perdía el semáforo del flujo de laboratorio. Una franja
+                    # en HTML plano se renderiza siempre.
+                    st.markdown(
+                        f'<div style="height:6px; background:{border_color}; border-radius:3px;'
+                        f' margin:0 0 12px 0;"></div>'
+                        f'<div style="margin-bottom:10px;">'
+                        f'<span style="background-color:{badge_bg}; color:{badge_fg}; padding:4px 12px;'
+                        f' border-radius:20px; font-weight:700; font-size:0.8em; letter-spacing:0.6px;">'
+                        f'{est_act.upper()}</span></div>',
+                        unsafe_allow_html=True
+                    )
 
                     c1, c2, c3 = st.columns([2, 2, 2])
                     with c1:
@@ -4236,7 +4305,16 @@ elif modulo == "📅 CRM y Fidelización":
         if tabla_dir:
             st.caption(f"**{total}** pacientes registrados  •  Página **{pag}** de **{total_pags}**")
             df_dir = pd.DataFrame(pagina_actual)
-            st.dataframe(df_dir, use_container_width=True)
+            st.dataframe(
+                df_dir, use_container_width=True, hide_index=True,
+                column_config={
+                    "documento": "Documento",
+                    "nombre_completo": "Nombre completo",
+                    "celular": "Celular",
+                    "direccion": "Dirección",
+                    "fecha_nacimiento": "Fecha de nacimiento",
+                },
+            )
 
             # Controles de paginación
             if total_pags > 1:
@@ -4274,10 +4352,11 @@ elif modulo == "📅 CRM y Fidelización":
 elif modulo == "📈 Analítica y Estadísticas":
     styled_header("Dashboard Analítico y Respaldo General", "📈")
     
-    ventas_db = traer_todas_las_filas(
-        "ventas_facturacion",
-        filtros_fn=lambda q: q.neq("estado", "ANULADA"),
-        orden_col="fecha_venta", orden_desc=True)
+    with st.spinner("Cargando datos de ventas..."):
+        ventas_db = traer_todas_las_filas(
+            "ventas_facturacion",
+            filtros_fn=lambda q: q.neq("estado", "ANULADA"),
+            orden_col="fecha_venta", orden_desc=True)
     hoy_an = now_co()
     mes_actual = hoy_an.strftime("%Y-%m")
     # Se compara el mes en hora Colombia real (no el string crudo que
@@ -4370,13 +4449,20 @@ elif modulo == "📈 Analítica y Estadísticas":
                     tabla_comp.append({"Mes": m, "Ventas Brutas": ventas_m, "Gastos": gastos_m, "Ganancia Neta": ganancia_m, "N° Facturas": fact_m})
                 
                 df_tabla_comp = pd.DataFrame(tabla_comp)
-                st.dataframe(df_tabla_comp.style.format({"Ventas Brutas": lambda x: f"${format_currency_co(x)}", "Gastos": lambda x: f"${format_currency_co(x)}", "Ganancia Neta": lambda x: f"${format_currency_co(x)}"}), use_container_width=True)
+                st.dataframe(
+                    df_tabla_comp.style.format({
+                        "Ventas Brutas": lambda x: f"${format_currency_co(x)}",
+                        "Gastos": lambda x: f"${format_currency_co(x)}",
+                        "Ganancia Neta": lambda x: f"${format_currency_co(x)}",
+                    }),
+                    use_container_width=True, hide_index=True,
+                )
                 
                 df_melted = df_tabla_comp.melt(id_vars=['Mes'], value_vars=['Ventas Brutas', 'Gastos', 'Ganancia Neta'], var_name='Concepto', value_name='Valor')
                 chart = alt.Chart(df_melted).mark_bar(width=20).encode(
                     x=alt.X('Mes:N', title='Mes', axis=alt.Axis(labelAngle=0)),
                     y=alt.Y('Valor:Q', title='Valor ($)'),
-                    color=alt.Color('Concepto:N', scale=alt.Scale(domain=['Ventas Brutas', 'Gastos', 'Ganancia Neta'], range=['#2196F3', '#ff9800', '#00A650']), title='Concepto'),
+                    color=alt.Color('Concepto:N', scale=alt.Scale(domain=['Ventas Brutas', 'Gastos', 'Ganancia Neta'], range=[COLOR_INFO, COLOR_ALERTA, COLOR_EXITO]), title='Concepto'),
                     xOffset='Concepto:N'
                 ).properties(height=320)
                 
@@ -4411,7 +4497,7 @@ elif modulo == "📈 Analítica y Estadísticas":
                     (df_dash['fecha_venta'] >= fecha_limite_tendencia) &
                     (df_dash['fecha_venta'] <= hoy_an)
                 ]
-                chart_tendencia = alt.Chart(df_tendencia.groupby('mes_anio')['total'].sum().reset_index()).mark_bar(width=25).encode(
+                chart_tendencia = alt.Chart(df_tendencia.groupby('mes_anio')['total'].sum().reset_index()).mark_bar(width=25, color=COLOR_MARCA).encode(
                     x=alt.X('mes_anio:N', title='Mes', sort=None),
                     y=alt.Y('total:Q', title='Total ($)')
                 ).properties(height=280)
@@ -4419,7 +4505,7 @@ elif modulo == "📈 Analítica y Estadísticas":
                 
                 st.markdown("**💳 Uso de Métodos de Pago**")
                 if 'metodo_pago' in df_dash.columns:
-                    chart_pagos = alt.Chart(df_dash['metodo_pago'].value_counts().reset_index()).mark_bar(width=25).encode(
+                    chart_pagos = alt.Chart(df_dash['metodo_pago'].value_counts().reset_index()).mark_bar(width=25, color=COLOR_MARCA).encode(
                         x=alt.X('metodo_pago:N', title='Método'),
                         y=alt.Y('count:Q', title='Cantidad')
                     ).properties(height=280)
@@ -4429,7 +4515,7 @@ elif modulo == "📈 Analítica y Estadísticas":
                 st.markdown("**🏭 Ranking de Laboratorios (Asignaciones)**")
                 if 'laboratorio' in df_dash.columns:
                     labs_count = df_dash['laboratorio'].fillna('NO ASIGNADO').value_counts().reset_index()
-                    chart_labs = alt.Chart(labs_count).mark_bar(width=25).encode(
+                    chart_labs = alt.Chart(labs_count).mark_bar(width=25, color=COLOR_MARCA).encode(
                         x=alt.X('laboratorio:N', title='Laboratorio'),
                         y=alt.Y('count:Q', title='Trabajos')
                     ).properties(height=280)
@@ -4440,7 +4526,16 @@ elif modulo == "📈 Analítica y Estadísticas":
                 st.markdown("**🔥 Top 5 de Ventas Más Altas**")
                 top_ventas = df_dash[['numero_factura', 'titular_nombre', 'total', 'fecha_venta']].sort_values(by='total', ascending=False).head(5)
                 top_ventas['fecha_venta'] = top_ventas['fecha_venta'].dt.strftime('%d/%m/%Y')
-                st.dataframe(top_ventas.style.format({"total": lambda x: f"${format_currency_co(x)}"}), use_container_width=True)
+                st.dataframe(
+                    top_ventas.style.format({"total": lambda x: f"${format_currency_co(x)}"}),
+                    use_container_width=True, hide_index=True,
+                    column_config={
+                        "numero_factura": "N° Factura",
+                        "titular_nombre": "Titular",
+                        "total": "Total",
+                        "fecha_venta": "Fecha",
+                    },
+                )
 
         st.divider()
         st.markdown("### 💾 Respaldo Total de Base de Datos (Master Backup)")
@@ -4481,12 +4576,27 @@ elif modulo == "📈 Analítica y Estadísticas":
 # si la persona cierra la pestaña o recarga el navegador directamente,
 # Streamlit nunca se entera de eso -- por eso también se activa el
 # aviso NATIVO del navegador (beforeunload), como respaldo para ese caso.
+#
+# Tiene que ir por st.components.v1.html y NO por st.markdown: este último
+# inyecta el HTML con innerHTML, y los <script> insertados así no se
+# ejecutan nunca. components.html lo monta en un iframe con su propio
+# documento, donde el script sí corre; desde ahí se alcanza la pestaña
+# real con window.parent.
 if st.session_state.get("user_info"):
     _hay_cambios_js = "true" if hay_cambios_sin_guardar() else "false"
-    st.markdown(f"""
+    components.html(f"""
         <script>
-        window.onbeforeunload = {_hay_cambios_js} ? function() {{
-            return "Hay información sin guardar en esta pantalla. ¿Seguro que quieres salir?";
-        }} : null;
+        (function() {{
+            var win = window.parent || window;
+            if ({_hay_cambios_js}) {{
+                win.onbeforeunload = function(e) {{
+                    e.preventDefault();
+                    e.returnValue = "";
+                    return "";
+                }};
+            }} else {{
+                win.onbeforeunload = null;
+            }}
+        }})();
         </script>
-    """, unsafe_allow_html=True)
+    """, height=0)
