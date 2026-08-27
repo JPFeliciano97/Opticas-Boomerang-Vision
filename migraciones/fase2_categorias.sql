@@ -56,7 +56,18 @@ update ventas_facturacion
 -- las descripciones reales. El orden importa -- lo más específico va
 -- primero, y cada UPDATE solo toca lo que sigue SIN CLASIFICAR, así que
 -- ninguna fila se reclasifica dos veces.
-begin;
+--
+-- SIN 'begin;' A PROPOSITO. El editor SQL de Supabase ya envuelve todo
+-- el script en una transaccion propia y la confirma al terminar. Abrir
+-- otra a mano y no cerrarla deja la transaccion colgada: al soltarse la
+-- conexion, Postgres revierte TODO -- incluidos los ALTER TABLE del
+-- bloque 1 -- y parece que no paso nada. Ocurrio exactamente eso en el
+-- primer intento: el 'select' de control mostro las categorias porque
+-- corria dentro de la transaccion sin confirmar, y despues la columna
+-- ya no existia.
+--
+-- Si quieres poder deshacer, ejecuta el bloque, revisa el control del
+-- final y usa el UPDATE de reversion que queda al pie.
 
 -- Devoluciones a clientes. No son un gasto de operar: es dinero que
 -- se regresa por una venta. Mezclarlas con lo demás infla el costo
@@ -129,12 +140,13 @@ update gastos_caja set categoria_gasto = 'ASEO E INSUMOS'
 -- traen descripción que permita saber a qué correspondían. Se dejan sin
 -- clasificar: son inmateriales y no vale la pena forzar una etiqueta.
 
--- CONTROL: revisa este resultado ANTES de confirmar.
+-- CONTROL: el reparto queda ya confirmado. Revisalo.
 select categoria_gasto, count(*) as filas, sum(monto) as total
   from gastos_caja group by 1 order by 3 desc;
 
--- Si el reparto tiene sentido:      commit;
--- Si prefieres deshacerlo todo:     rollback;
+-- Para volver a empezar la clasificacion desde cero (no borra la
+-- columna, solo vacia las etiquetas y deja correr de nuevo el bloque):
+-- update gastos_caja set categoria_gasto = 'SIN CLASIFICAR';
 
 
 -- ---------------------------------------------------------------------
