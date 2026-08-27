@@ -4375,6 +4375,38 @@ elif modulo == "📈 Analítica y Estadísticas":
     km4.metric("⏳ Por recaudar",       f"${format_currency_co(pendiente_mes)}")
     st.markdown("---")
     gastos_db = traer_todas_las_filas("gastos_caja")
+
+    # -----------------------------------------------------------------
+    # FASE 1 -- clasificación sin tocar la base de datos
+    # -----------------------------------------------------------------
+    # El dato ya existía pero este módulo lo ignoraba: 'tipo_gasto' solo
+    # se usaba en Cuadre de Caja, así que aquí el arriendo se sumaba junto
+    # con la mensajería del martes y todo se rotulaba "Gastos Operativos".
+    def _es_gasto_mensual(g):
+        """Las filas migradas del histórico pueden no traer tipo_gasto;
+        se asumen DIARIAS, que es como las trata el resto de la app."""
+        return str(g.get("tipo_gasto") or "DIARIO").upper() == "MENSUAL"
+
+    def _partir_gastos(lista):
+        """Devuelve (diarios, mensuales, total) a partir de una lista de gastos."""
+        diarios = sum(g.get("monto", 0) for g in lista if not _es_gasto_mensual(g))
+        mensuales = sum(g.get("monto", 0) for g in lista if _es_gasto_mensual(g))
+        return diarios, mensuales, diarios + mensuales
+
+    # Las ventas menores llevan el prefijo MEN- en el número de factura.
+    # Mientras no exista una columna 'tipo_venta' (fase 2), el prefijo es
+    # el único discriminador disponible -- pero basta para no promediar
+    # un estuche de $8.000 con unas progresivas de $900.000.
+    def _es_venta_menor(num_factura):
+        return str(num_factura or "").upper().startswith("MEN-")
+
+    def _money(v):
+        """Formatea con el signo DELANTE del símbolo: '-$250.000' y no
+        '$-250.000', que es donde queda si se antepone el '$' a secas.
+        Importa en el resultado del mes, que es la cifra que puede salir
+        en rojo y debe leerse como pérdida de un vistazo."""
+        v = int(v or 0)
+        return f"-${format_currency_co(abs(v))}" if v < 0 else f"${format_currency_co(v)}"
     
     if ventas_db:
         df_dash = pd.DataFrame(ventas_db)
@@ -4399,6 +4431,15 @@ elif modulo == "📈 Analítica y Estadísticas":
         # (el mismo problema que ya se corrigió en Cuadre de Caja).
         df_dash['fecha_venta'] = df_dash['fecha_venta'].dt.tz_convert(timezone(timedelta(hours=-5)))
         df_dash['mes_anio'] = df_dash['fecha_venta'].dt.strftime('%Y-%m')
+
+        # Las filas migradas del histórico pueden no traer todas las
+        # columnas. Sin esto, un solo registro antiguo sin 'abono' tumba
+        # el módulo entero con un KeyError al calcular lo recaudado.
+        for _col, _defecto in (("abono", 0), ("total", 0), ("saldo", 0), ("numero_factura", "")):
+            if _col not in df_dash.columns:
+                df_dash[_col] = _defecto
+            else:
+                df_dash[_col] = df_dash[_col].fillna(_defecto)
         
         total_cartera_pendiente = df_dash['saldo'].sum()
         
@@ -4419,18 +4460,41 @@ elif modulo == "📈 Analítica y Estadísticas":
             df_filtered = df_dash[df_dash['mes_anio'] == mes_sel]
             gastos_filtered = [g for g in gastos_db if _fecha_gasto_seguro(g.get('fecha_gasto')) == mes_sel] if gastos_db else []
             
-            total_recaudado = df_filtered['total'].sum()
+            # Facturado y recaudado son cosas distintas y antes se
+            # mezclaban: la variable se llamaba 'total_recaudado' pero
+            # sumaba 'total' (lo facturado). Restarle a eso los gastos ya
+            # pagados inflaba la ganancia por toda la cartera pendiente.
+            total_facturado = df_filtered['total'].sum()
+            total_cobrado = df_filtered['abono'].sum()
             total_facturas = len(df_filtered)
-            promedio = total_recaudado / total_facturas if total_facturas > 0 else 0
-            total_gastos = sum(g.get("monto", 0) for g in gastos_filtered)
-            
+            g_diarios, g_mensuales, total_gastos = _partir_gastos(gastos_filtered)
+
             st.markdown(f"### 🎯 Resumen Financiero - {mes_sel}")
             m1, m2, m3, m4 = st.columns(4)
-            m1.metric("💰 Ventas del Mes", f"${format_currency_co(total_recaudado)}")
-            m2.metric("💸 Gastos Operativos", f"${format_currency_co(total_gastos)}", delta="- Salidas", delta_color="inverse")
-            m3.metric("📈 Ganancia Neta Mes", f"${format_currency_co(total_recaudado - total_gastos)}")
-            m4.metric("📊 Ticket Promedio", f"${format_currency_co(promedio)}")
-            
+            m1.metric("🧾 Facturado", f"${format_currency_co(total_facturado)}")
+            m2.metric("✅ Recaudado", f"${format_currency_co(total_cobrado)}")
+            m3.metric("💸 Gastos totales", f"${format_currency_co(total_gastos)}", delta="- Salidas", delta_color="inverse")
+            m4.metric("📈 Resultado sobre lo facturado", _money(total_facturado - total_gastos))
+            st.caption("**Facturado** es lo que vendiste; **Recaudado**, lo que realmente entró. "
+                       "El resultado se calcula sobre lo facturado: si la cartera es alta, "
+                       "el dinero disponible es menor que esa cifra.")
+
+            g1, g2 = st.columns(2)
+            g1.metric("🗓️ Gastos diarios (operativos)", f"${format_currency_co(g_diarios)}")
+            g2.metric("📅 Gastos mensuales (nómina, arriendo…)", f"${format_currency_co(g_mensuales)}")
+
+            # Ticket promedio separado: mezclarlos no informaba de nada.
+            df_gafas = df_filtered[~df_filtered['numero_factura'].apply(_es_venta_menor)]
+            df_menor = df_filtered[df_filtered['numero_factura'].apply(_es_venta_menor)]
+            t1, t2, t3 = st.columns(3)
+            t1.metric("👓 Ticket promedio gafas",
+                      f"${format_currency_co(df_gafas['total'].mean() if len(df_gafas) else 0)}",
+                      help=f"{len(df_gafas)} factura(s) de gafas en el mes.")
+            t2.metric("🧦 Ticket promedio venta menor",
+                      f"${format_currency_co(df_menor['total'].mean() if len(df_menor) else 0)}",
+                      help=f"{len(df_menor)} venta(s) menor(es) en el mes.")
+            t3.metric("🧮 N° de facturas", f"{total_facturas}")
+
             st.info(f"📌 **Dinero de saldos por cobrar:** ${format_currency_co(total_cartera_pendiente)}")
             
         elif modo_analitica == "Comparativa Multimes":
@@ -4444,25 +4508,36 @@ elif modulo == "📈 Analítica y Estadísticas":
                     df_m = df_comp[df_comp['mes_anio'] == m]
                     ventas_m = df_m['total'].sum()
                     fact_m = len(df_m)
-                    gastos_m = sum(g.get("monto", 0) for g in gastos_db if _fecha_gasto_seguro(g.get('fecha_gasto')) == m)
+                    gastos_del_mes = [g for g in gastos_db if _fecha_gasto_seguro(g.get('fecha_gasto')) == m]
+                    gd_m, gm_m, gastos_m = _partir_gastos(gastos_del_mes)
                     ganancia_m = ventas_m - gastos_m
-                    tabla_comp.append({"Mes": m, "Ventas Brutas": ventas_m, "Gastos": gastos_m, "Ganancia Neta": ganancia_m, "N° Facturas": fact_m})
+                    tabla_comp.append({
+                        "Mes": m, "Facturado": ventas_m,
+                        "Gastos diarios": gd_m, "Gastos mensuales": gm_m,
+                        "Resultado": ganancia_m, "N° Facturas": fact_m,
+                    })
                 
                 df_tabla_comp = pd.DataFrame(tabla_comp)
                 st.dataframe(
                     df_tabla_comp.style.format({
-                        "Ventas Brutas": lambda x: f"${format_currency_co(x)}",
-                        "Gastos": lambda x: f"${format_currency_co(x)}",
-                        "Ganancia Neta": lambda x: f"${format_currency_co(x)}",
+                        "Facturado": lambda x: f"${format_currency_co(x)}",
+                        "Gastos diarios": lambda x: f"${format_currency_co(x)}",
+                        "Gastos mensuales": lambda x: f"${format_currency_co(x)}",
+                        "Resultado": lambda x: f"${format_currency_co(x)}",
                     }),
                     use_container_width=True, hide_index=True,
                 )
                 
-                df_melted = df_tabla_comp.melt(id_vars=['Mes'], value_vars=['Ventas Brutas', 'Gastos', 'Ganancia Neta'], var_name='Concepto', value_name='Valor')
+                df_melted = df_tabla_comp.melt(
+                    id_vars=['Mes'],
+                    value_vars=['Facturado', 'Gastos diarios', 'Gastos mensuales', 'Resultado'],
+                    var_name='Concepto', value_name='Valor')
                 chart = alt.Chart(df_melted).mark_bar(width=20).encode(
                     x=alt.X('Mes:N', title='Mes', axis=alt.Axis(labelAngle=0)),
                     y=alt.Y('Valor:Q', title='Valor ($)'),
-                    color=alt.Color('Concepto:N', scale=alt.Scale(domain=['Ventas Brutas', 'Gastos', 'Ganancia Neta'], range=[COLOR_INFO, COLOR_ALERTA, COLOR_EXITO]), title='Concepto'),
+                    color=alt.Color('Concepto:N', scale=alt.Scale(
+                        domain=['Facturado', 'Gastos diarios', 'Gastos mensuales', 'Resultado'],
+                        range=[COLOR_INFO, COLOR_ALERTA, COLOR_URGENTE, COLOR_EXITO]), title='Concepto'),
                     xOffset='Concepto:N'
                 ).properties(height=320)
                 
@@ -4470,17 +4545,22 @@ elif modulo == "📈 Analítica y Estadísticas":
             else:
                 st.warning("Selecciona al menos un mes para la comparativa.")
         else:
-            total_recaudado = df_dash['total'].sum()
+            total_facturado = df_dash['total'].sum()
+            total_cobrado = df_dash['abono'].sum()
             total_facturas = len(df_dash)
-            promedio = total_recaudado / total_facturas if total_facturas > 0 else 0
-            total_gastos = sum(g.get("monto", 0) for g in gastos_db)
-            
+            g_diarios, g_mensuales, total_gastos = _partir_gastos(gastos_db)
+
             st.markdown("### 🎯 Resumen Financiero Histórico Global")
             m1, m2, m3, m4 = st.columns(4)
-            m1.metric("💰 Ventas Brutas", f"${format_currency_co(total_recaudado)}")
-            m2.metric("💸 Gastos Operativos", f"${format_currency_co(total_gastos)}", delta="- Salidas", delta_color="inverse")
-            m3.metric("📈 Ganancia Neta", f"${format_currency_co(total_recaudado - total_gastos)}")
-            m4.metric("📊 Ticket Promedio", f"${format_currency_co(promedio)}")
+            m1.metric("🧾 Facturado", f"${format_currency_co(total_facturado)}")
+            m2.metric("✅ Recaudado", f"${format_currency_co(total_cobrado)}")
+            m3.metric("💸 Gastos totales", f"${format_currency_co(total_gastos)}", delta="- Salidas", delta_color="inverse")
+            m4.metric("📈 Resultado sobre lo facturado", _money(total_facturado - total_gastos))
+
+            g1, g2, g3 = st.columns(3)
+            g1.metric("🗓️ Gastos diarios", f"${format_currency_co(g_diarios)}")
+            g2.metric("📅 Gastos mensuales", f"${format_currency_co(g_mensuales)}")
+            g3.metric("🧮 N° de facturas", f"{total_facturas}")
             
             st.info(f"📌 **Dinero de saldos por cobrar:** ${format_currency_co(total_cartera_pendiente)}")
             
