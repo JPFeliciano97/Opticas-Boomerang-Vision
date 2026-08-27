@@ -4566,36 +4566,6 @@ elif modulo == "📈 Analítica y Estadísticas":
     def _es_venta_menor(num_factura):
         return str(num_factura or "").upper().startswith("MEN-")
 
-    def _por_categoria(lista):
-        """Agrupa gastos por categoría, de mayor a menor. Las filas sin
-        clasificar (todo el histórico migrado) caen en su propio grupo en
-        vez de desaparecer, para que el total siempre cuadre."""
-        acum = {}
-        for g in lista:
-            cat = str(g.get("categoria_gasto") or CATEGORIA_POR_DEFECTO)
-            acum[cat] = acum.get(cat, 0) + g.get("monto", 0)
-        return sorted(acum.items(), key=lambda kv: -kv[1])
-
-    def _tabla_categorias(lista, titulo):
-        """Pinta el desglose por categoría si la columna existe y hay algo
-        que mostrar. Separa además el costo de laboratorio del resto: es
-        costo de lo vendido, no gasto de operar, y mezclarlos impide ver
-        el margen."""
-        if not columna_existe("gastos_caja", "categoria_gasto"):
-            return
-        filas = _por_categoria(lista)
-        if not filas or (len(filas) == 1 and filas[0][0] == CATEGORIA_POR_DEFECTO):
-            return
-        total_cat = sum(v for _, v in filas)
-        st.markdown(f"##### {titulo}")
-        df_cat = pd.DataFrame([
-            {"Categoría": c, "Monto": v, "% del gasto": f"{v / total_cat * 100:.1f}%"}
-            for c, v in filas
-        ])
-        st.dataframe(
-            df_cat.style.format({"Monto": lambda x: f"${format_currency_co(x)}"}),
-            use_container_width=True, hide_index=True)
-
     # -----------------------------------------------------------------
     # Periodos, granularidad y series para los gráficos de gasto
     # -----------------------------------------------------------------
@@ -4991,21 +4961,17 @@ elif modulo == "📈 Analítica y Estadísticas":
             total_facturado = df_filtered['total'].sum()
             total_cobrado = df_filtered['abono'].sum()
             total_facturas = len(df_filtered)
-            g_diarios, g_mensuales, total_gastos = _partir_gastos(gastos_filtered)
 
-            st.markdown(f"### 🎯 Resumen Financiero - {mes_sel}")
-            m1, m2, m3, m4 = st.columns(4)
+            # Los gastos ya no se muestran aquí: tienen pestaña propia, y
+            # repetirlos obligaba a mantener la misma cifra en dos sitios.
+            st.markdown(f"### 🎯 Ventas de {mes_sel}")
+            m1, m2, m3 = st.columns(3)
             m1.metric("🧾 Facturado", f"${format_currency_co(total_facturado)}")
             m2.metric("✅ Recaudado", f"${format_currency_co(total_cobrado)}")
-            m3.metric("💸 Gastos totales", f"${format_currency_co(total_gastos)}", delta="- Salidas", delta_color="inverse")
-            m4.metric("📈 Resultado sobre lo facturado", _money(total_facturado - total_gastos))
+            m3.metric("⏳ Por cobrar del mes", _money(total_facturado - total_cobrado))
             st.caption("**Facturado** es lo que vendiste; **Recaudado**, lo que realmente entró. "
-                       "El resultado se calcula sobre lo facturado: si la cartera es alta, "
-                       "el dinero disponible es menor que esa cifra.")
-
-            g1, g2 = st.columns(2)
-            g1.metric("🗓️ Gastos diarios (operativos)", f"${format_currency_co(g_diarios)}")
-            g2.metric("📅 Gastos mensuales (nómina, arriendo…)", f"${format_currency_co(g_mensuales)}")
+                       "El resultado del negocio, ya con los gastos descontados, está en la "
+                       "pestaña **Gastos**.")
 
             # Ticket promedio separado: mezclarlos no informaba de nada.
             df_gafas = df_filtered[~df_filtered['numero_factura'].apply(_es_venta_menor)]
@@ -5019,23 +4985,7 @@ elif modulo == "📈 Analítica y Estadísticas":
                       help=f"{len(df_menor)} venta(s) menor(es) en el mes.")
             t3.metric("🧮 N° de facturas", f"{total_facturas}")
 
-            _tabla_categorias(gastos_filtered, f"🏷️ Gastos por categoría — {mes_sel}")
-
-            # Margen bruto: solo tiene sentido si el costo de laboratorio
-            # está identificado. Es la cifra que dice si los precios dan.
-            _lab = sum(g.get("monto", 0) for g in gastos_filtered
-                       if str(g.get("categoria_gasto") or "").startswith("LABORATORIO"))
-            if _lab > 0:
-                _margen = total_facturado - _lab
-                mb1, mb2 = st.columns(2)
-                mb1.metric("🔬 Costo de laboratorio", f"${format_currency_co(_lab)}")
-                mb2.metric("📐 Margen bruto", _money(_margen),
-                           help="Facturado menos el costo de laboratorio, antes de los "
-                                "gastos de operar. Indica si los precios están bien puestos.")
-                if total_facturado:
-                    st.caption(f"Margen bruto sobre lo facturado: **{_margen / total_facturado * 100:.1f}%**")
-
-            st.info(f"📌 **Dinero de saldos por cobrar:** ${format_currency_co(total_cartera_pendiente)}")
+            st.info(f"📌 **Cartera total acumulada:** ${format_currency_co(total_cartera_pendiente)}")
             
         elif modo_analitica == "Comparativa Multimes":
             meses_sel = st.multiselect("Selecciona los meses a comparar:", meses_disponibles, default=meses_disponibles[:min(2, len(meses_disponibles))])
@@ -5088,43 +5038,187 @@ elif modulo == "📈 Analítica y Estadísticas":
             total_facturado = df_dash['total'].sum()
             total_cobrado = df_dash['abono'].sum()
             total_facturas = len(df_dash)
-            g_diarios, g_mensuales, total_gastos = _partir_gastos(gastos_db)
-
-            st.markdown("### 🎯 Resumen Financiero Histórico Global")
+            st.markdown("### 🎯 Ventas — histórico completo")
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("🧾 Facturado", f"${format_currency_co(total_facturado)}")
             m2.metric("✅ Recaudado", f"${format_currency_co(total_cobrado)}")
-            m3.metric("💸 Gastos totales", f"${format_currency_co(total_gastos)}", delta="- Salidas", delta_color="inverse")
-            m4.metric("📈 Resultado sobre lo facturado", _money(total_facturado - total_gastos))
-
-            g1, g2, g3 = st.columns(3)
-            g1.metric("🗓️ Gastos diarios", f"${format_currency_co(g_diarios)}")
-            g2.metric("📅 Gastos mensuales", f"${format_currency_co(g_mensuales)}")
-            g3.metric("🧮 N° de facturas", f"{total_facturas}")
-
-            _tabla_categorias(gastos_db, "🏷️ Gastos por categoría — histórico completo")
+            m3.metric("⏳ Cartera", _money(total_cartera_pendiente))
+            m4.metric("🧮 N° de facturas", f"{total_facturas}")
+            if total_facturado:
+                st.caption(f"Recaudas el **{total_cobrado / total_facturado * 100:.1f}%** de lo "
+                           f"que facturas. El resto financia al cliente con tu propio flujo.")
             
-            st.info(f"📌 **Dinero de saldos por cobrar:** ${format_currency_co(total_cartera_pendiente)}")
-            
+            st.divider()
+            # =============================================================
+            # FASE C -- cartera y mezcla de venta
+            # =============================================================
+            # Se mira solo el ultimo ano: la historia migrada llega a 2019
+            # y con 60 periodos las lineas se vuelven ilegibles. La cartera
+            # (mas abajo) si usa todo el historico, porque una factura de
+            # hace dos anos sigue siendo plata por cobrar.
+            # Se ancla al primer día del mes, no a "hoy menos 11 meses":
+            # si no, el periodo más viejo sale a medias y el gráfico
+            # arranca con una caída falsa.
+            _desde_12 = (hoy_an - pd.DateOffset(months=11)).replace(
+                day=1, hour=0, minute=0, second=0, microsecond=0)
+            df_12 = df_dash[
+                (df_dash['fecha_venta'] >= _desde_12) &
+                (df_dash['fecha_venta'] <= hoy_an)
+            ].copy()
+            _gran_v = _granularidad(list(df_12['fecha_venta']))
+            _lab_v = "semana" if _gran_v == "semana" else "mes"
+            df_12['_periodo'] = df_12['fecha_venta'].apply(
+                lambda d: _etiqueta_periodo(d, _gran_v))
+
+            st.markdown(f"### 💰 Facturado y recaudado por {_lab_v}")
+            st.caption("La distancia entre las dos líneas **es** la cartera del periodo: "
+                       "lo que vendiste pero todavía no entró en caja.")
+            _fr = (df_12.groupby('_periodo')[['total', 'abono']].sum()
+                   .reset_index().sort_values('_periodo'))
+            df_fr = (_fr.rename(columns={'_periodo': 'Periodo', 'total': 'Facturado',
+                                         'abono': 'Recaudado'})
+                     .melt(id_vars='Periodo', var_name='Concepto', value_name='Monto'))
+            chart_fr = alt.Chart(df_fr).mark_line(
+                point=alt.OverlayMarkDef(size=70, filled=True), strokeWidth=2
+            ).encode(
+                x=alt.X("Periodo:N", title=None, sort=None,
+                        axis=alt.Axis(labelAngle=-45)),
+                y=alt.Y("Monto:Q", title="Pesos",
+                        axis=alt.Axis(format="~s")),
+                color=alt.Color("Concepto:N", title=None,
+                                scale=alt.Scale(domain=["Facturado", "Recaudado"],
+                                                range=["#2a78d6", "#1baf7a"]),
+                                legend=alt.Legend(orient="top")),
+                tooltip=[alt.Tooltip("Periodo:N", title="Periodo"),
+                         alt.Tooltip("Concepto:N", title="Concepto"),
+                         alt.Tooltip("Monto:Q", title="Monto", format=",.0f")],
+            ).properties(height=300)
+            st.altair_chart(chart_fr, use_container_width=True)
+            with st.expander("Ver las cifras en tabla"):
+                _tab_fr = _fr.copy()
+                _tab_fr['pendiente'] = _tab_fr['total'] - _tab_fr['abono']
+                st.dataframe(
+                    _tab_fr.style.format({c: lambda x: f"${format_currency_co(x)}"
+                                          for c in ('total', 'abono', 'pendiente')}),
+                    use_container_width=True, hide_index=True,
+                    column_config={"_periodo": "Periodo", "total": "Facturado",
+                                   "abono": "Recaudado", "pendiente": "Por cobrar"})
+
+            st.divider()
+
+            # ---------- antigüedad de la cartera ----------
+            st.markdown("### ⏳ Antigüedad de la cartera")
+            df_deuda = df_dash[df_dash['saldo'] > 0].copy()
+            if len(df_deuda):
+                _hoy_c = now_co()
+                df_deuda['dias'] = df_deuda['fecha_venta'].apply(
+                    lambda d: (_hoy_c - d).days)
+                # Los tramos son los del cobro habitual en el comercio:
+                # hasta 30 días es corriente, de 31 a 60 empieza a
+                # preocupar, y pasados los 90 el cobro se vuelve difícil.
+                def _tramo(d):
+                    if d <= 30:
+                        return "0–30 días"
+                    if d <= 60:
+                        return "31–60 días"
+                    if d <= 90:
+                        return "61–90 días"
+                    return "Más de 90 días"
+                _ORDEN_TRAMO = ["0–30 días", "31–60 días", "61–90 días", "Más de 90 días"]
+                df_deuda['Antiguedad'] = df_deuda['dias'].apply(_tramo)
+                df_ag = (df_deuda.groupby('Antiguedad')
+                         .agg(Saldo=('saldo', 'sum'), Facturas=('saldo', 'size'))
+                         .reindex(_ORDEN_TRAMO).fillna(0).reset_index()
+                         .rename(columns={'index': 'Antiguedad'}))
+                # Rampa de un solo tono: la antigüedad es magnitud, no
+                # identidad -- a más viejo, más oscuro. Un color por tramo
+                # sugeriría que son cuatro cosas distintas y no lo son.
+                chart_ag = alt.Chart(df_ag).mark_bar(
+                    size=44, cornerRadiusTopLeft=4, cornerRadiusTopRight=4
+                ).encode(
+                    x=alt.X("Antiguedad:N", sort=_ORDEN_TRAMO, title=None,
+                            axis=alt.Axis(labelAngle=0)),
+                    y=alt.Y("Saldo:Q", title="Saldo pendiente ($)",
+                            axis=alt.Axis(format="~s")),
+                    color=alt.Color("Antiguedad:N", sort=_ORDEN_TRAMO, legend=None,
+                                    scale=alt.Scale(domain=_ORDEN_TRAMO,
+                                                    range=["#bcd9f5", "#7fb3e8",
+                                                           "#3d84d1", "#14538f"])),
+                    tooltip=[alt.Tooltip("Antiguedad:N", title="Antigüedad"),
+                             alt.Tooltip("Saldo:Q", title="Saldo", format=",.0f"),
+                             alt.Tooltip("Facturas:Q", title="Facturas")],
+                ).properties(height=280)
+                etiq_ag = alt.Chart(df_ag).mark_text(
+                    dy=-8, fontSize=12, color="#31333f"
+                ).encode(
+                    x=alt.X("Antiguedad:N", sort=_ORDEN_TRAMO),
+                    y=alt.Y("Saldo:Q"),
+                    text=alt.Text("Saldo:Q", format=".3~s"),
+                )
+                st.altair_chart(chart_ag + etiq_ag, use_container_width=True)
+                _viejo = df_ag[df_ag['Antiguedad'].isin(
+                    ["61–90 días", "Más de 90 días"])]['Saldo'].sum()
+                ac1, ac2, ac3 = st.columns(3)
+                ac1.metric("💵 Cartera total",
+                           f"${format_currency_co(df_deuda['saldo'].sum())}")
+                ac2.metric("🧾 Facturas con saldo", f"{len(df_deuda)}")
+                ac3.metric("🔴 Con más de 60 días", f"${format_currency_co(_viejo)}",
+                           help="Cuanto más vieja es la deuda, más difícil de cobrar.")
+                with st.expander("Ver facturas pendientes, de la más antigua a la más reciente"):
+                    _cols = [c for c in ('numero_factura', 'titular_nombre', 'total',
+                                         'abono', 'saldo', 'dias')
+                             if c in df_deuda.columns]
+                    _fmt = {c: (lambda x: f"${format_currency_co(x)}")
+                            for c in ('total', 'abono', 'saldo') if c in _cols}
+                    st.dataframe(
+                        df_deuda.sort_values('dias', ascending=False)[_cols]
+                                .style.format(_fmt),
+                        use_container_width=True, hide_index=True,
+                        column_config={"numero_factura": "N° Factura",
+                                       "titular_nombre": "Titular", "total": "Total",
+                                       "abono": "Abonado", "saldo": "Saldo",
+                                       "dias": "Días"})
+            else:
+                st.success("✅ No hay facturas con saldo pendiente.")
+
+            st.divider()
+
+            # ---------- mezcla de venta ----------
+            st.markdown(f"### 👓 Gafas y ventas menores por {_lab_v}")
+            df_12['_tipo'] = df_12['numero_factura'].apply(
+                lambda n: "Venta menor" if _es_venta_menor(n) else "Gafas")
+            df_mix = (df_12.groupby(['_periodo', '_tipo'], as_index=False)
+                      .agg(Facturado=('total', 'sum'), Facturas=('total', 'size'))
+                      .rename(columns={'_periodo': 'Periodo', '_tipo': 'Tipo'})
+                      .sort_values('Periodo'))
+            chart_mix = alt.Chart(df_mix).mark_bar(
+                size=26, stroke="#ffffff", strokeWidth=1
+            ).encode(
+                x=alt.X("Periodo:N", title=None, sort=None,
+                        axis=alt.Axis(labelAngle=-45)),
+                y=alt.Y("Facturado:Q", title="Facturado ($)", stack=True,
+                        axis=alt.Axis(format="~s")),
+                color=alt.Color("Tipo:N", title=None,
+                                scale=alt.Scale(domain=["Gafas", "Venta menor"],
+                                                range=["#2a78d6", "#eb6834"]),
+                                legend=alt.Legend(orient="top")),
+                tooltip=[alt.Tooltip("Periodo:N", title="Periodo"),
+                         alt.Tooltip("Tipo:N", title="Tipo"),
+                         alt.Tooltip("Facturado:Q", title="Facturado", format=",.0f"),
+                         alt.Tooltip("Facturas:Q", title="N° de facturas")],
+            ).properties(height=300)
+            st.altair_chart(chart_mix, use_container_width=True)
+            _n_men = int(df_12['_tipo'].eq("Venta menor").sum())
+            _p_men = df_12.loc[df_12['_tipo'].eq("Venta menor"), 'total'].sum()
+            _tot12 = df_12['total'].sum()
+            if _tot12:
+                st.caption(f"Las ventas menores son **{_n_men} de {len(df_12)}** facturas "
+                           f"pero solo el **{_p_men / _tot12 * 100:.1f}%** del dinero. "
+                           "Son dos negocios distintos y conviene leerlos por separado.")
+
             st.divider()
             c1, c2 = st.columns(2)
             with c1:
-                st.markdown("**📅 Tendencia de Ventas (Últimos 12 meses)**")
-                # Se usa la fecha REAL de hoy como referencia, no el máximo
-                # de fecha_venta -- si algún dato tuviera una fecha corrupta
-                # a futuro, .max() desplazaría todo el gráfico hacia
-                # adelante (esto causó exactamente el bug reportado).
-                fecha_limite_tendencia = hoy_an - pd.DateOffset(months=11)
-                df_tendencia = df_dash[
-                    (df_dash['fecha_venta'] >= fecha_limite_tendencia) &
-                    (df_dash['fecha_venta'] <= hoy_an)
-                ]
-                chart_tendencia = alt.Chart(df_tendencia.groupby('mes_anio')['total'].sum().reset_index()).mark_bar(width=25, color=COLOR_MARCA).encode(
-                    x=alt.X('mes_anio:N', title='Mes', sort=None),
-                    y=alt.Y('total:Q', title='Total ($)')
-                ).properties(height=280)
-                st.altair_chart(chart_tendencia, use_container_width=True)
-                
                 st.markdown("**💳 Uso de Métodos de Pago**")
                 if 'metodo_pago' in df_dash.columns:
                     chart_pagos = alt.Chart(df_dash['metodo_pago'].value_counts().reset_index()).mark_bar(width=25, color=COLOR_MARCA).encode(
