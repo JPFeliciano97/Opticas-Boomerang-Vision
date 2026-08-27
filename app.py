@@ -1130,7 +1130,8 @@ CATEGORIAS_GASTO = [
     "NOMINA",
     "ARRIENDO Y ADMINISTRACION",
     "SERVICIOS PUBLICOS",
-    "HONORARIOS",
+    "HONORARIOS POR CONSULTA",
+    "HONORARIOS POR TURNO",
     "TRANSPORTE",
     "ALIMENTACION",
     "ASEO E INSUMOS",
@@ -3598,7 +3599,10 @@ elif modulo == "📊 Cuadre de Caja Físico":
             categoria_gasto = st.selectbox(
                 "Categoría del gasto", CATEGORIAS_GASTO, key="categoria_gasto_input",
                 help="Qué CLASE de gasto es. Es independiente de si es diario o mensual: "
-                     "un pago al laboratorio puede ser cualquiera de los dos.",
+                     "un pago al laboratorio puede ser cualquiera de los dos.\n\n"
+                     "· NOMINA: personal de planta (asesores).\n"
+                     "· HONORARIOS POR CONSULTA: la optómetra, que cobra por paciente atendido.\n"
+                     "· HONORARIOS POR TURNO: el doctor que cubre un día completo.",
             )
         else:
             categoria_gasto = None

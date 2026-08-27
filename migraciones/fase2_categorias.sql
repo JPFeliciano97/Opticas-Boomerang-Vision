@@ -75,16 +75,26 @@ update gastos_caja set categoria_gasto = 'SERVICIOS PUBLICOS'
  where categoria_gasto = 'SIN CLASIFICAR'
    and descripcion ~* '(enel|codensa|claro|movistar|internet|acueducto|gas natural|comcel)';
 
--- Honorarios de optometría (va ANTES de nómina, para que
--- "CONSULTA DRA ASTRID" no lo capture el patrón de nómina)
-update gastos_caja set categoria_gasto = 'HONORARIOS'
- where categoria_gasto = 'SIN CLASIFICAR'
-   and descripcion ~* '(dra astrid|consulta|optometra|\ydra\y|\ydr\y)';
-
--- Nómina y personal
+-- Nómina: personal de planta (asesores). Va PRIMERO porque el nombre
+-- de la persona es la señal más específica.
 update gastos_caja set categoria_gasto = 'NOMINA'
  where categoria_gasto = 'SIN CLASIFICAR'
-   and descripcion ~* '(nomina|rosa|nelson|mateo|ana leon|alejandra|eps|colsanitas|turno|p\.?tur|^doc|doctor|prestamo)';
+   and descripcion ~* '(nomina|rosa|nelson|ana leon|alejandra|eps|colsanitas|prestamo)';
+
+-- Honorarios por TURNO: doctor que cubre un día completo. Tarifa fija
+-- por día abierto, no dependa de cuántos pacientes entren. Va antes que
+-- consulta porque "Dra turno" contiene ambas palabras y manda el turno.
+update gastos_caja set categoria_gasto = 'HONORARIOS POR TURNO'
+ where categoria_gasto = 'SIN CLASIFICAR'
+   and descripcion ~* '(turno|p\.?\s?tur)';
+
+-- Honorarios por CONSULTA: la optómetra cobra por paciente atendido.
+-- Es un costo variable que sube y baja con la demanda, a diferencia
+-- del turno. Separarlos permite comparar costo por consulta contra
+-- costo por día cubierto.
+update gastos_caja set categoria_gasto = 'HONORARIOS POR CONSULTA'
+ where categoria_gasto = 'SIN CLASIFICAR'
+   and descripcion ~* '(dra astrid|consulta|optometra|\ydra\y|\ydr\y|\ydoctora\y|\ydoctara\y|^doc|doctor)';
 
 -- Laboratorio y proveedores (costo de lo vendido)
 update gastos_caja set categoria_gasto = 'LABORATORIO Y PROVEEDORES'
@@ -105,6 +115,13 @@ update gastos_caja set categoria_gasto = 'ALIMENTACION'
 update gastos_caja set categoria_gasto = 'ASEO E INSUMOS'
  where categoria_gasto = 'SIN CLASIFICAR'
    and descripcion ~* '(jabon|blanqueador|limpiapiso|fabuloso|papel|guantes|alcohol|vasos|escoba|impresion|copias|tinta|sharpie|folder|bolsa)';
+
+-- OJO con MATEO: en el histórico aparece como "DOC MATEO" (¿un doctor?)
+-- y en lo reciente como persona a la que se le paga nómina, almuerzos y
+-- transporte. Se deja SIN CLASIFICAR a propósito para que decidas:
+--   select descripcion, count(*), sum(monto) from gastos_caja
+--    where categoria_gasto = 'SIN CLASIFICAR' and descripcion ~* 'mateo'
+--    group by 1 order by 3 desc;
 
 -- CONTROL: revisa este resultado ANTES de confirmar.
 select categoria_gasto, count(*) as filas, sum(monto) as total
