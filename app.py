@@ -18,9 +18,12 @@ import bcrypt
 # 1. CONFIGURACIÓN INICIAL DE PÁGINA Y ESTILOS (MODO CLARO CON ACENTOS SUAVES)
 # =====================================================================
 # Zona horaria Colombia GMT-5
+TZ_CO = timezone(timedelta(hours=-5))
+
+
 def now_co():
     """Retorna datetime actual en hora Colombia (GMT-5)."""
-    return datetime.now(timezone(timedelta(hours=-5)))
+    return datetime.now(TZ_CO)
 
 
 def hora_co(fecha_iso_str, formato="%H:%M"):
@@ -4593,6 +4596,91 @@ elif modulo == "📈 Analítica y Estadísticas":
             df_cat.style.format({"Monto": lambda x: f"${format_currency_co(x)}"}),
             use_container_width=True, hide_index=True)
 
+    # -----------------------------------------------------------------
+    # Periodos, granularidad y series para los gráficos de gasto
+    # -----------------------------------------------------------------
+    # El orden de estas seis categorías es FIJO, no por tamaño. Si el
+    # color se asignara por ranking, filtrar o cambiar de mes repintaría
+    # las series y la lectura se rompería: laboratorio debe seguir siendo
+    # azul aunque un mes deje de ser la mayor. Todo lo demás cae en OTROS,
+    # porque a partir de la séptima serie el color deja de identificar.
+    CATS_GRAFICO = ["LABORATORIO Y PROVEEDORES", "NOMINA", "ARRIENDO Y ADMINISTRACION",
+                    "HONORARIOS POR CONSULTA", "HONORARIOS POR TURNO", "SERVICIOS PUBLICOS"]
+    CAT_OTROS = "OTROS"
+    # Estas tres NO son costo de operar: son reparto de utilidad,
+    # amortización de deuda e impuestos. Se excluyen de la evolución del
+    # gasto operativo y aparecen aparte, en la cascada.
+    CATS_NO_OPERATIVAS = ["RETIROS DEL PROPIETARIO", "OBLIGACIONES FINANCIERAS", "IMPUESTOS"]
+    # Paleta validada para daltonismo protán, deután y tritán, y para
+    # fondo claro y oscuro. El orden corresponde 1:1 con CATS_GRAFICO.
+    COLORES_SERIE = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100",
+                     "#e87ba4", "#008300", "#4a3aa7"]
+
+    def _cat_serie(cat):
+        """Categoría -> serie del gráfico. None si no es gasto operativo."""
+        c = str(cat or CATEGORIA_POR_DEFECTO)
+        if c in CATS_NO_OPERATIVAS:
+            return None
+        return c if c in CATS_GRAFICO else CAT_OTROS
+
+    def _fecha_gasto_dt(g):
+        """Fecha del gasto como datetime en hora Colombia, o None."""
+        try:
+            dt = datetime.fromisoformat(str(g.get("fecha_gasto")).replace("Z", "+00:00"))
+            return dt.astimezone(TZ_CO) if dt.tzinfo else dt.replace(tzinfo=TZ_CO)
+        except (ValueError, TypeError):
+            return None
+
+    def _granularidad(fechas):
+        """Semanas mientras haya poca historia, meses cuando ya la hay.
+        El corte en 62 días son dos meses: por debajo, un gráfico mensual
+        tendría dos barras y no diría nada."""
+        fs = [f for f in fechas if f]
+        if len(fs) < 2:
+            return "semana"
+        return "mes" if (max(fs) - min(fs)).days >= 62 else "semana"
+
+    def _etiqueta_periodo(dt, gran):
+        if gran == "semana":
+            iso = dt.isocalendar()
+            return f"{iso[0]}-S{iso[1]:02d}"
+        return dt.strftime("%Y-%m")
+
+    def _inicio_periodo(dt, gran):
+        d = dt.replace(hour=0, minute=0, second=0, microsecond=0)
+        return d - timedelta(days=d.weekday()) if gran == "semana" else d.replace(day=1)
+
+    def _comparar_con_anterior(gastos, gran, ahora):
+        """Periodo en curso contra el anterior.
+
+        Si el periodo actual está a medias -- y casi siempre lo está --
+        recorta el anterior a los MISMOS días transcurridos. Sin esto,
+        comparar 4 días contra 7 hace que todas las categorías salgan
+        desplomadas y el gráfico no sirva para nada.
+        """
+        ini_act = _inicio_periodo(ahora, gran)
+        if gran == "semana":
+            ini_ant = ini_act - timedelta(days=7)
+            largo = 7
+        else:
+            ini_ant = (ini_act - timedelta(days=1)).replace(day=1)
+            largo = (ini_act - ini_ant).days
+        dias_corridos = (ahora - ini_act).days + 1
+        fin_ant = ini_ant + timedelta(days=dias_corridos)
+        parcial = dias_corridos < largo
+        act, ant = {}, {}
+        for g in gastos:
+            f = _fecha_gasto_dt(g)
+            if not f:
+                continue
+            cat = str(g.get("categoria_gasto") or CATEGORIA_POR_DEFECTO)
+            monto = g.get("monto", 0)
+            if f >= ini_act:
+                act[cat] = act.get(cat, 0) + monto
+            elif ini_ant <= f < fin_ant:
+                ant[cat] = ant.get(cat, 0) + monto
+        return act, ant, ini_act, ini_ant, dias_corridos, parcial
+
     def _money(v):
         """Formatea con el signo DELANTE del símbolo: '-$250.000' y no
         '$-250.000', que es donde queda si se antepone el '$' a secas.
@@ -4601,7 +4689,232 @@ elif modulo == "📈 Analítica y Estadísticas":
         v = int(v or 0)
         return f"-${format_currency_co(abs(v))}" if v < 0 else f"${format_currency_co(v)}"
     
-    if ventas_db:
+    # Nombres propios: 'tab_gastos' ya existe en Cuadre de Caja. No hay
+    # conflicto real -- son ramas excluyentes del if de módulos -- pero en
+    # un archivo de 5.000 líneas conviene que no se llamen igual.
+    tab_an_ventas, tab_an_gastos, tab_an_respaldo = st.tabs(
+        ["📈 Ventas y resultado", "💸 Gastos", "💾 Respaldo"])
+
+    # =================================================================
+    # PESTAÑA: GASTOS
+    # =================================================================
+    with tab_an_gastos:
+        if not gastos_db:
+            st.info("Todavía no hay gastos registrados.")
+        elif not columna_existe("gastos_caja", "categoria_gasto"):
+            st.warning("⚠️ Falta la columna `categoria_gasto` en Supabase. "
+                       "Corre `migraciones/fase2_categorias.sql` para activar "
+                       "el análisis de gastos por categoría.")
+        else:
+            _fechas = [_fecha_gasto_dt(g) for g in gastos_db]
+            _gran = _granularidad(_fechas)
+            _ahora = now_co()
+
+            # ---------- B2: qué cambió (va primero: es la pregunta) ----
+            act, ant, ini_a, ini_b, dias_c, parcial = _comparar_con_anterior(
+                gastos_db, _gran, _ahora)
+            _label = "semana" if _gran == "semana" else "mes"
+            st.markdown(f"### 🔀 Qué cambió esta {_label}")
+            if parcial:
+                st.caption(
+                    f"La {_label} en curso lleva **{dias_c} día(s)**, así que se compara "
+                    f"contra los **mismos {dias_c} día(s)** de la anterior "
+                    f"(desde el {ini_b.strftime('%d/%m')}). Compararla contra "
+                    f"{'una semana completa' if _gran == 'semana' else 'un mes completo'} "
+                    f"mostraría una caída que no existe.")
+            else:
+                st.caption(f"{_label.capitalize()} completa, desde el {ini_a.strftime('%d/%m')}, "
+                           f"contra la anterior desde el {ini_b.strftime('%d/%m')}.")
+
+            _cats = sorted(set(act) | set(ant))
+            if _cats:
+                df_cmp = pd.DataFrame([{
+                    "Categoría": c,
+                    "Anterior": ant.get(c, 0),
+                    "Actual": act.get(c, 0),
+                    "Cambio": act.get(c, 0) - ant.get(c, 0),
+                } for c in _cats])
+                df_cmp = df_cmp[df_cmp[["Anterior", "Actual"]].abs().sum(axis=1) > 0]
+
+            if _cats and len(df_cmp):
+                df_cmp = df_cmp.reindex(df_cmp["Cambio"].abs().sort_values(ascending=False).index)
+                # Barras divergentes: a la derecha lo que subió, a la
+                # izquierda lo que bajó. Azul/rojo son los polos, no
+                # series -- por eso no salen de la paleta categórica.
+                # height=16 sobre banda de 34 deja el hueco de 2px que pide
+                # la guía; pegadas se leen como un bloque continuo. Y
+                # labelLimit generoso: los nombres de categoría son largos
+                # y Vega prefiere descartarlos antes que truncarlos.
+                chart_cmp = alt.Chart(df_cmp).mark_bar(height=16).encode(
+                    x=alt.X("Cambio:Q", title=f"Diferencia contra la {_label} anterior ($)"),
+                    y=alt.Y("Categoría:N", sort=None, title=None,
+                            axis=alt.Axis(labelLimit=220, labelFontSize=11)),
+                    color=alt.condition(alt.datum.Cambio > 0,
+                                        alt.value("#d03b3b"), alt.value("#2a78d6")),
+                    tooltip=[alt.Tooltip("Categoría:N"),
+                             alt.Tooltip("Anterior:Q", format=",.0f"),
+                             alt.Tooltip("Actual:Q", format=",.0f"),
+                             alt.Tooltip("Cambio:Q", format="+,.0f")],
+                ).properties(height=max(140, 34 * len(df_cmp)))
+                st.altair_chart(chart_cmp, use_container_width=True)
+                st.caption("🔴 subió · 🔵 bajó — respecto al mismo tramo del periodo anterior.")
+                # La tabla acompaña siempre al gráfico: con siete series
+                # hay colores por debajo de contraste 3:1, así que la
+                # cifra exacta tiene que estar disponible en texto.
+                with st.expander("Ver cifras exactas"):
+                    st.dataframe(
+                        df_cmp.style.format({c: lambda x: f"${format_currency_co(x)}"
+                                             for c in ("Anterior", "Actual", "Cambio")}),
+                        use_container_width=True, hide_index=True)
+            else:
+                st.info(f"Todavía no hay gastos en esta {_label} ni en la anterior.")
+
+            st.divider()
+
+            # ---------- B1: evolución por categoría ----------
+            st.markdown(f"### 📊 Evolución del gasto operativo por {_label}")
+            st.caption("Excluye retiros del propietario, cuotas de crédito e impuestos: "
+                       "no son costo de operar y distorsionarían la tendencia.")
+            filas_ev = []
+            for g in gastos_db:
+                f = _fecha_gasto_dt(g)
+                serie = _cat_serie(g.get("categoria_gasto"))
+                if f and serie:
+                    filas_ev.append({"Periodo": _etiqueta_periodo(f, _gran),
+                                     "Categoría": serie, "Monto": g.get("monto", 0)})
+            if filas_ev:
+                df_ev = (pd.DataFrame(filas_ev).groupby(["Periodo", "Categoría"], as_index=False)
+                         .sum().sort_values("Periodo"))
+                orden = [c for c in CATS_GRAFICO + [CAT_OTROS]
+                         if c in set(df_ev["Categoría"])]
+                # El borde blanco separa los segmentos apilados: sin él,
+                # dos categorías de tono parecido se leen como una sola.
+                chart_ev = alt.Chart(df_ev).mark_bar(
+                    size=26, stroke="white", strokeWidth=1).encode(
+                    x=alt.X("Periodo:N", title=None, axis=alt.Axis(labelAngle=0)),
+                    y=alt.Y("Monto:Q", title="Gasto operativo ($)", stack=True),
+                    color=alt.Color("Categoría:N", sort=orden, title="Categoría",
+                                    scale=alt.Scale(domain=orden,
+                                                    range=COLORES_SERIE[:len(orden)])),
+                    order=alt.Order("Categoría:N", sort="ascending"),
+                    tooltip=[alt.Tooltip("Periodo:N"), alt.Tooltip("Categoría:N"),
+                             alt.Tooltip("Monto:Q", format=",.0f")],
+                ).properties(height=340)
+                st.altair_chart(chart_ev, use_container_width=True)
+                with st.expander("Ver cifras exactas"):
+                    st.dataframe(
+                        df_ev.pivot(index="Periodo", columns="Categoría", values="Monto")
+                             .fillna(0).reindex(columns=orden)
+                             .style.format(lambda x: f"${format_currency_co(x)}"),
+                        use_container_width=True)
+            else:
+                st.info("No hay gastos operativos clasificados todavía.")
+
+            st.divider()
+
+            # ---------- B3: cascada ----------
+            st.markdown("### 🪜 De lo facturado al flujo final")
+            _lab_c = sum(g.get("monto", 0) for g in gastos_db
+                         if str(g.get("categoria_gasto") or "").startswith("LABORATORIO"))
+            _oper_c = sum(g.get("monto", 0) for g in gastos_db
+                          if _cat_serie(g.get("categoria_gasto")) is not None
+                          and not str(g.get("categoria_gasto") or "").startswith("LABORATORIO"))
+            _noop_c = sum(g.get("monto", 0) for g in gastos_db
+                          if str(g.get("categoria_gasto") or "") in CATS_NO_OPERATIVAS)
+            _fact_c = sum(int(v.get("total", 0)) for v in ventas_db)
+            pasos = [("Facturado", _fact_c, "total"),
+                     ("− Laboratorio", -_lab_c, "resta"),
+                     ("Margen bruto", None, "subtotal"),
+                     ("− Gastos de operar", -_oper_c, "resta"),
+                     ("Utilidad operativa", None, "subtotal"),
+                     ("− Retiros, deuda e impuestos", -_noop_c, "resta"),
+                     ("Flujo final", None, "subtotal")]
+            filas_c, acum = [], 0
+            for et, val, tipo in pasos:
+                if tipo == "subtotal":
+                    filas_c.append({"Paso": et, "Desde": 0, "Hasta": acum,
+                                    "Valor": acum, "Tipo": "Subtotal"})
+                else:
+                    ini = acum; acum += val
+                    filas_c.append({"Paso": et, "Desde": min(ini, acum), "Hasta": max(ini, acum),
+                                    "Valor": val, "Tipo": "Entrada" if val > 0 else "Salida"})
+            df_c = pd.DataFrame(filas_c)
+            chart_c = alt.Chart(df_c).mark_bar(size=34).encode(
+                x=alt.X("Paso:N", sort=None, title=None, axis=alt.Axis(labelAngle=-30)),
+                y=alt.Y("Desde:Q", title="Pesos"), y2=alt.Y2("Hasta:Q"),
+                color=alt.Color("Tipo:N", title=None,
+                                scale=alt.Scale(domain=["Entrada", "Salida", "Subtotal"],
+                                                range=["#0ca30c", "#d03b3b", "#2a78d6"])),
+                tooltip=[alt.Tooltip("Paso:N"), alt.Tooltip("Valor:Q", format="+,.0f")],
+            ).properties(height=330)
+            st.altair_chart(chart_c, use_container_width=True)
+            c_w1, c_w2, c_w3 = st.columns(3)
+            c_w1.metric("📐 Margen bruto", _money(_fact_c - _lab_c))
+            c_w2.metric("⚙️ Utilidad operativa", _money(_fact_c - _lab_c - _oper_c))
+            c_w3.metric("💵 Flujo final", _money(_fact_c - _lab_c - _oper_c - _noop_c))
+            if _noop_c:
+                st.caption(f"**${format_currency_co(_noop_c)}** salieron del negocio sin ser costo "
+                           f"de operar: retiros del propietario, cuotas de crédito e impuestos. "
+                           f"Es la diferencia entre la utilidad operativa y el flujo final.")
+
+            st.divider()
+
+            # ---------- B4: proveedores ----------
+            st.markdown("### 🏭 A quién le pagas más")
+            _prov = {}
+            for g in gastos_db:
+                if str(g.get("categoria_gasto") or "").startswith("LABORATORIO"):
+                    d = str(g.get("descripcion", "")).upper()
+                    d = re.sub(r"^(PAGO|ABONO A?|COMPRA)\s+", "", d).strip()
+                    d = re.sub(r"\s+", " ", d)[:28] or "(sin descripción)"
+                    _prov[d] = _prov.get(d, 0) + g.get("monto", 0)
+            if _prov:
+                df_p = (pd.DataFrame([{"Proveedor": k, "Monto": v} for k, v in _prov.items()])
+                        .nlargest(10, "Monto"))
+                chart_p = alt.Chart(df_p).mark_bar(height=20, color="#2a78d6").encode(
+                    x=alt.X("Monto:Q", title="Pagado ($)"),
+                    y=alt.Y("Proveedor:N", sort="-x", title=None),
+                    tooltip=[alt.Tooltip("Proveedor:N"), alt.Tooltip("Monto:Q", format=",.0f")],
+                ).properties(height=max(140, 26 * len(df_p)))
+                st.altair_chart(chart_p, use_container_width=True)
+                st.caption("Agrupado por descripción, quitando los prefijos «PAGO», «ABONO» "
+                           "y «COMPRA». Laboratorio es tu mayor categoría de gasto.")
+            else:
+                st.info("No hay gastos clasificados como laboratorio o proveedores.")
+
+            st.divider()
+
+            # ---------- B5: diario vs mensual ----------
+            st.markdown(f"### ⚖️ Carga fija contra operación, por {_label}")
+            filas_dm = []
+            for g in gastos_db:
+                f = _fecha_gasto_dt(g)
+                if f:
+                    filas_dm.append({"Periodo": _etiqueta_periodo(f, _gran),
+                                     "Tipo": "Mensual (carga fija)" if _es_gasto_mensual(g)
+                                             else "Diario (operación)",
+                                     "Monto": g.get("monto", 0)})
+            if filas_dm:
+                df_dm = (pd.DataFrame(filas_dm).groupby(["Periodo", "Tipo"], as_index=False)
+                         .sum().sort_values("Periodo"))
+                chart_dm = alt.Chart(df_dm).mark_line(point=True, strokeWidth=2).encode(
+                    x=alt.X("Periodo:N", title=None, axis=alt.Axis(labelAngle=0)),
+                    y=alt.Y("Monto:Q", title="Gasto ($)"),
+                    color=alt.Color("Tipo:N", title=None,
+                                    scale=alt.Scale(domain=["Diario (operación)", "Mensual (carga fija)"],
+                                                    range=["#2a78d6", "#eb6834"])),
+                    tooltip=[alt.Tooltip("Periodo:N"), alt.Tooltip("Tipo:N"),
+                             alt.Tooltip("Monto:Q", format=",.0f")],
+                ).properties(height=300)
+                st.altair_chart(chart_dm, use_container_width=True)
+                st.caption("Si la carga fija crece más rápido que la operación, el punto de "
+                           "equilibrio sube aunque las ventas no cambien.")
+
+    # =================================================================
+    # PESTAÑA: VENTAS Y RESULTADO
+    # =================================================================
+    with tab_an_ventas:
+      if ventas_db:
         df_dash = pd.DataFrame(ventas_db)
         # format='ISO8601' + errors='coerce': la tabla mezcla fechas de
         # facturas nuevas (con microsegundos, ej. "...T10:23:45.123456-05:00")
@@ -4846,7 +5159,13 @@ elif modulo == "📈 Analítica y Estadísticas":
                     },
                 )
 
-        st.divider()
+      else:
+        st.info("No hay suficientes registros en la base de datos.")
+
+    # =================================================================
+    # PESTAÑA: RESPALDO
+    # =================================================================
+    with tab_an_respaldo:
         st.markdown("### 💾 Respaldo Total de Base de Datos (Master Backup)")
         st.caption("Descarga un archivo Excel con todas las tablas críticas del sistema para tu respaldo local.")
         if st.button("📥 Generar Respaldo Completo en Excel", type="primary"):
@@ -4854,19 +5173,19 @@ elif modulo == "📈 Analítica y Estadísticas":
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 p_data = traer_todas_las_filas("pacientes")
                 if p_data: pd.DataFrame(p_data).to_excel(writer, index=False, sheet_name="Pacientes")
-                
+            
                 h_data = traer_todas_las_filas("historias_clinicas")
                 if h_data: pd.DataFrame(h_data).to_excel(writer, index=False, sheet_name="HistoriasClinicas")
-                
+            
                 v_data = traer_todas_las_filas("ventas_facturacion")
                 if v_data: pd.DataFrame(v_data).to_excel(writer, index=False, sheet_name="VentasFacturacion")
-                
+            
                 i_data = traer_todas_las_filas("inventario")
                 if i_data: pd.DataFrame(i_data).to_excel(writer, index=False, sheet_name="Inventario")
-                
+            
                 g_data = traer_todas_las_filas("gastos_caja")
                 if g_data: pd.DataFrame(g_data).to_excel(writer, index=False, sheet_name="GastosCaja")
-            
+        
             excel_bytes = output.getvalue()
             st.download_button(
                 label="📥 Descargar Master Backup (.xlsx)",
@@ -4874,8 +5193,6 @@ elif modulo == "📈 Analítica y Estadísticas":
                 file_name=f"MasterBackup_BoomerangVision_{now_co().strftime('%d-%m-%Y')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-    else:
-        st.info("No hay suficientes registros en la base de datos.")
 
 # =====================================================================
 # AVISO DE CAMBIOS SIN GUARDAR — respaldo con beforeunload del navegador
