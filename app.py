@@ -1136,6 +1136,8 @@ CATEGORIAS_GASTO = [
     "ALIMENTACION",
     "ASEO E INSUMOS",
     "DEVOLUCIONES A CLIENTES",
+    "OBLIGACIONES FINANCIERAS",
+    "IMPUESTOS",
     "RETIROS DEL PROPIETARIO",
     "OTROS",
 ]
@@ -3604,6 +3606,9 @@ elif modulo == "📊 Cuadre de Caja Físico":
                      "· NOMINA: personal de planta (asesores).\n"
                      "· HONORARIOS POR CONSULTA: la optómetra, que cobra por paciente atendido.\n"
                      "· HONORARIOS POR TURNO: el doctor que cubre un día completo.\n"
+                     "· OBLIGACIONES FINANCIERAS: cuotas y abonos de créditos "
+                     "(cooperativa, préstamos familiares). Amortizan deuda, no son "
+                     "costo de operar.\n"
                      "· RETIROS DEL PROPIETARIO: dinero que toma el dueño. No es "
                      "costo de operar, es reparto de utilidad: mezclarlo hace que el "
                      "negocio parezca menos rentable de lo que es.",

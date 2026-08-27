@@ -140,6 +140,49 @@ update gastos_caja set categoria_gasto = 'ASEO E INSUMOS'
 -- traen descripción que permita saber a qué correspondían. Se dejan sin
 -- clasificar: son inmateriales y no vale la pena forzar una etiqueta.
 
+-- ---------------------------------------------------------------------
+-- 3b. Segunda pasada, con los conceptos que aparecieron al revisar
+-- ---------------------------------------------------------------------
+-- La primera pasada dejó el 17% del importe sin clasificar. Al mirar qué
+-- había, salieron proveedores que no estaban en la lista, varios con
+-- errata (CYSOLUTION sin la s, ZAFIRTO por ZAFIRO, DANMLU por DAMILU), y
+-- dos conceptos que no encajaban en ninguna categoría existente: los
+-- créditos con la cooperativa y con un familiar, y los impuestos.
+--
+-- Solo toca lo que sigue SIN CLASIFICAR, así que es seguro reejecutar.
+
+update gastos_caja set categoria_gasto = 'LABORATORIO Y PROVEEDORES'
+ where categoria_gasto = 'SIN CLASIFICAR'
+   and descripcion ~* '(distrisasayo|giralens|inkoptical|only ?vision|vision village|cysolution|zafirt?o|optiza|todo optic|danmlu|falc )';
+
+update gastos_caja set categoria_gasto = 'SERVICIOS PUBLICOS'
+ where categoria_gasto = 'SIN CLASIFICAR'
+   and descripcion ~* '(\yetb\y|luz local)';
+
+update gastos_caja set categoria_gasto = 'NOMINA'
+ where categoria_gasto = 'SIN CLASIFICAR'
+   and descripcion ~* '(salario|alcira)';
+
+-- Cuotas y abonos de crédito: amortizan deuda, no son costo de operar.
+-- Mezclarlos con los gastos hace que el negocio parezca más caro de
+-- sostener de lo que es, igual que pasaba con los retiros del dueño.
+update gastos_caja set categoria_gasto = 'OBLIGACIONES FINANCIERAS'
+ where categoria_gasto = 'SIN CLASIFICAR'
+   and descripcion ~* '(cooapa|tio julio|piggy bank)';
+
+update gastos_caja set categoria_gasto = 'IMPUESTOS'
+ where categoria_gasto = 'SIN CLASIFICAR'
+   and descripcion ~* '(declaracion renta|impuesto|\ydian\y|retencion|industria y comercio)';
+
+update gastos_caja set categoria_gasto = 'ASEO E INSUMOS'
+ where categoria_gasto = 'SIN CLASIFICAR'
+   and descripcion ~* '(blusa|toalla|bombillo|materiales electricos)';
+
+update gastos_caja set categoria_gasto = 'TRANSPORTE'
+ where categoria_gasto = 'SIN CLASIFICAR'
+   and descripcion ~* '(\ybus\y|gasolina|despinchada)';
+
+
 -- CONTROL: el reparto queda ya confirmado. Revisalo.
 select categoria_gasto, count(*) as filas, sum(monto) as total
   from gastos_caja group by 1 order by 3 desc;
