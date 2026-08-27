@@ -561,6 +561,18 @@ supabase = init_connection()
 # El CSS equivalente (sección 4c/4d del bloque de estilos) sí funciona y es
 # quien realmente da el borde a los selectbox.
 
+@st.cache_data(ttl=300, show_spinner=False)
+def columna_existe(tabla, columna):
+    """¿La tabla tiene esa columna? Permite que el código funcione tanto
+    antes como después de correr la migración, sin romperse si todavía
+    no se ha añadido la columna en Supabase."""
+    try:
+        supabase.table(tabla).select(columna).limit(1).execute()
+        return True
+    except Exception:
+        return False
+
+
 @st.cache_data(ttl=60, show_spinner=False)
 def query_cached(tabla, filtros=None):
     """Cache de 60 s para consultas de solo lectura frecuentes."""
@@ -643,9 +655,55 @@ if not st.session_state.user_info:
 # 4. FUNCIONES DE FORMATEO Y PDF (sin cambios)
 # =====================================================================
 def clean_numeric_string(val_str):
+    """Deja solo los dígitos. Sirve para teléfonos y documentos.
+    NO usar para dinero: descarta el separador decimal, de modo que
+    "5.500,00" se convierte en 550000. Para importes usar parse_money_co."""
     val = str(val_str).strip()
     if not val: return ""
     return "".join(c for c in val if c.isdigit())
+
+
+def parse_money_co(val_str):
+    """
+    Interpreta un importe en pesos tal y como lo escribe una persona.
+
+    El problema que resuelve: antes los montos se leían con
+    clean_numeric_string, que borra TODO lo que no sea dígito. Así,
+    escribir "5.500,00" guardaba 550.000 y "2.100.000,00" guardaba
+    210 millones -- el importe quedaba multiplicado por 10 elevado al
+    número de decimales, en silencio y sin ningún aviso.
+
+    Regla: si tras el último separador quedan 1 o 2 dígitos, ese
+    separador es el decimal y esa parte se descarta (el peso colombiano
+    no maneja centavos en caja). Cualquier otro punto o coma es
+    separador de miles. Acepta símbolos y texto alrededor.
+    """
+    if val_str is None:
+        return 0
+    if isinstance(val_str, (int, float)):
+        return int(val_str)
+    txt = str(val_str).strip()
+    if not txt:
+        return 0
+    negativo = txt.startswith("-")
+    limpio = re.sub(r"[^0-9.,]", "", txt)
+    if not limpio:
+        return 0
+    ultimo = max(limpio.rfind("."), limpio.rfind(","))
+    if ultimo != -1 and len(limpio) - ultimo - 1 in (1, 2):
+        limpio = limpio[:ultimo]          # descarta la parte decimal
+    digitos = re.sub(r"[^0-9]", "", limpio)
+    if not digitos:
+        return 0
+    valor = int(digitos)
+    return -valor if negativo else valor
+
+
+def formatear_campo_money(val_str):
+    """Normaliza lo que hay en un campo de dinero: interpreta y reescribe.
+    Al salir del campo, "5.500,00" se muestra ya como "5.500", de modo
+    que la persona ve el importe que realmente se va a guardar."""
+    return format_currency_co(parse_money_co(val_str))
 
 def valor_numerico_factura(numero_factura):
     """
@@ -1060,6 +1118,32 @@ COLOR_EXITO  = "#4CAF50"   # verde "correcto / entregado"
 COLOR_ALERTA = "#ff9800"   # ámbar "en proceso / atención"
 COLOR_INFO   = "#2196F3"   # azul "informativo / recibido"
 COLOR_URGENTE = "#E61B23"  # rojo "pendiente / urgente"
+
+# Categorías de gasto. Salieron de agrupar los conceptos realmente
+# escritos en los tres primeros meses de uso: laboratorio, nómina y
+# arriendo concentran el 95% del dinero, así que ocho etiquetas bastan.
+# 'tipo_gasto' (DIARIO/MENSUAL) responde a CUÁNDO golpea la caja y es
+# un eje distinto: un pago a Falcon puede ser diario o mensual sin
+# dejar de ser laboratorio.
+CATEGORIAS_GASTO = [
+    "LABORATORIO Y PROVEEDORES",
+    "NOMINA",
+    "ARRIENDO Y ADMINISTRACION",
+    "SERVICIOS PUBLICOS",
+    "HONORARIOS",
+    "TRANSPORTE",
+    "ALIMENTACION",
+    "ASEO E INSUMOS",
+    "DEVOLUCIONES A CLIENTES",
+    "OTROS",
+]
+CATEGORIA_POR_DEFECTO = "SIN CLASIFICAR"
+
+# Por encima de este monto se pide confirmación explícita. El gasto
+# legítimo más alto registrado es el arriendo ($2.100.000), así que el
+# umbral deja pasar la operación normal y solo frena lo excepcional --
+# que es justo donde aparecían importes como un sándwich de $5.500.000.
+UMBRAL_GASTO_ALTO = 2_500_000
 
 
 def format_currency_co(val):
@@ -1641,14 +1725,14 @@ def normalizar_cil_eje(cilindro, eje):
         eje = 0
     return cilindro, eje
 
-def on_subtotal_change(): st.session_state.subtotal_input = format_currency_co(st.session_state.subtotal_input)
-def on_abono_change(): st.session_state.abono_input = format_currency_co(st.session_state.abono_input)
-def on_monto_rec_change(): st.session_state.monto_rec_input = format_currency_co(st.session_state.monto_rec_input)
-def on_monto_gasto_change(): st.session_state.monto_gasto_input = format_currency_co(st.session_state.monto_gasto_input)
-def on_p_compra_change(): st.session_state.p_compra_input = format_currency_co(st.session_state.p_compra_input)
-def on_p_venta_change(): st.session_state.p_venta_input = format_currency_co(st.session_state.p_venta_input)
-def on_p_compra_m_change(): st.session_state.p_compra_m = format_currency_co(st.session_state.p_compra_m)
-def on_p_venta_m_change(): st.session_state.p_venta_m = format_currency_co(st.session_state.p_venta_m)
+def on_subtotal_change(): st.session_state.subtotal_input = formatear_campo_money(st.session_state.subtotal_input)
+def on_abono_change(): st.session_state.abono_input = formatear_campo_money(st.session_state.abono_input)
+def on_monto_rec_change(): st.session_state.monto_rec_input = formatear_campo_money(st.session_state.monto_rec_input)
+def on_monto_gasto_change(): st.session_state.monto_gasto_input = formatear_campo_money(st.session_state.monto_gasto_input)
+def on_p_compra_change(): st.session_state.p_compra_input = formatear_campo_money(st.session_state.p_compra_input)
+def on_p_venta_change(): st.session_state.p_venta_input = formatear_campo_money(st.session_state.p_venta_input)
+def on_p_compra_m_change(): st.session_state.p_compra_m = formatear_campo_money(st.session_state.p_compra_m)
+def on_p_venta_m_change(): st.session_state.p_venta_m = formatear_campo_money(st.session_state.p_venta_m)
 
 def on_descuento_change():
     raw = st.session_state.descuento_input
@@ -1697,6 +1781,9 @@ if "trigger_clear_gastos" in st.session_state and st.session_state.trigger_clear
     st.session_state.desc_gasto_input = ""
     st.session_state.monto_gasto_input = ""
     st.session_state.metodo_gasto_input = "EFECTIVO"
+    # Sin esto la confirmación quedaría marcada para el gasto siguiente,
+    # que es justo lo que la haría inútil.
+    st.session_state.confirmar_gasto_alto = False
     st.session_state.trigger_clear_gastos = False
 
 if "trigger_clear_venta_busqueda" in st.session_state and st.session_state.trigger_clear_venta_busqueda:
@@ -2545,9 +2632,9 @@ elif modulo == "🛍️ Óptica y Facturación":
                 c2.selectbox("Tipo Dcto", ["Sin Descuento", "Porcentaje (%)", "Valor Fijo ($)"], key="tipo_descuento_widget", on_change=on_tipo_descuento_change)
                 c3.text_input("Dcto Aplicado", key="descuento_input", on_change=on_descuento_change)
                 
-                sub_val = int(clean_numeric_string(st.session_state.subtotal_input) or 0)
-                abono_val = int(clean_numeric_string(st.session_state.abono_input) or 0)
-                desc_val = int(clean_numeric_string(st.session_state.descuento_input) or 0)
+                sub_val = parse_money_co(st.session_state.subtotal_input)
+                abono_val = parse_money_co(st.session_state.abono_input)
+                desc_val = parse_money_co(st.session_state.descuento_input)
                 desc_calc = int((desc_val/100.0)*sub_val) if st.session_state.get("tipo_descuento_widget") == "Porcentaje (%)" else desc_val
                 tot_neto = sub_val - desc_calc
                 sal_pend = tot_neto - abono_val
@@ -2802,7 +2889,7 @@ elif modulo == "🛍️ Óptica y Facturación":
 
                 col_rec1, col_rec2, col_rec3 = st.columns(3)
                 with col_rec1:
-                    monto_rec = int(clean_numeric_string(st.text_input("Monto a Abonar/Liquidar ($)", key="monto_rec_input", on_change=on_monto_rec_change)) or 0)
+                    monto_rec = parse_money_co(st.text_input("Monto a Abonar/Liquidar ($)", key="monto_rec_input", on_change=on_monto_rec_change))
                 with col_rec2:
                     metodo_rec = st.selectbox("Método del Cobro", METODOS_PAGO_VENTA, key="met_rec")
                 with col_rec3:
@@ -3500,57 +3587,120 @@ elif modulo == "📊 Cuadre de Caja Físico":
         if es_mensual:
             st.caption("Este gasto no se restará del cuadre de caja de hoy -- se reflejará en el "
                        "balance del mes, en la pestaña 'Gastos Mensuales'.")
+        hay_categoria = columna_existe("gastos_caja", "categoria_gasto")
+
         col_g1, col_g2, col_g3 = st.columns([2, 1, 1])
         with col_g1: desc_gasto = st.text_input("Concepto / Descripción del Gasto", placeholder="Ej: Pago mensajería laboratorio", key="desc_gasto_input").upper()
-        with col_g2: monto_gasto = int(clean_numeric_string(st.text_input("Valor ($)", key="monto_gasto_input", on_change=on_monto_gasto_change)) or 0)
+        with col_g2: monto_gasto = parse_money_co(st.text_input("Valor ($)", key="monto_gasto_input", on_change=on_monto_gasto_change))
         with col_g3: metodo_gasto = st.selectbox("Forma de Salida", METODOS_PAGO_GASTO, key="metodo_gasto_input")
-        
-        if st.button("💾 Guardar Gasto de Caja", type="primary"):
-            if not desc_gasto or monto_gasto <= 0: st.warning("⚠️ Ingresa una descripción y valor válidos.")
+
+        if hay_categoria:
+            categoria_gasto = st.selectbox(
+                "Categoría del gasto", CATEGORIAS_GASTO, key="categoria_gasto_input",
+                help="Qué CLASE de gasto es. Es independiente de si es diario o mensual: "
+                     "un pago al laboratorio puede ser cualquiera de los dos.",
+            )
+        else:
+            categoria_gasto = None
+            st.caption("ℹ️ Para clasificar por categoría (nómina, laboratorio, arriendo…) "
+                       "falta añadir la columna `categoria_gasto` en Supabase.")
+
+        # Eco del importe interpretado: la persona ve exactamente lo que se
+        # va a guardar ANTES de guardarlo. Es la defensa más simple contra
+        # un cero de más, que en un campo de texto pasa desapercibido.
+        if monto_gasto > 0:
+            if monto_gasto >= UMBRAL_GASTO_ALTO:
+                st.warning(f"🔎 Vas a registrar **${format_currency_co(monto_gasto)}**. "
+                           f"Es un importe alto: confirma que está bien escrito.")
+                confirmado = st.checkbox(
+                    f"Sí, el gasto es de ${format_currency_co(monto_gasto)}",
+                    key="confirmar_gasto_alto")
             else:
-                supabase.table("gastos_caja").insert({
+                st.caption(f"Se guardará: **${format_currency_co(monto_gasto)}**")
+                confirmado = True
+        else:
+            confirmado = True
+
+        if st.button("💾 Guardar Gasto de Caja", type="primary"):
+            if not desc_gasto or monto_gasto <= 0:
+                st.warning("⚠️ Ingresa una descripción y valor válidos.")
+            elif not confirmado:
+                st.error(f"Marca la casilla de confirmación para registrar "
+                         f"${format_currency_co(monto_gasto)}.")
+            else:
+                fila_gasto = {
                     "descripcion": desc_gasto, "monto": monto_gasto, "metodo_pago": metodo_gasto,
                     "fecha_gasto": now_co().isoformat(),
                     "tipo_gasto": "MENSUAL" if es_mensual else "DIARIO",
-                }).execute()
+                }
+                if hay_categoria:
+                    fila_gasto["categoria_gasto"] = categoria_gasto
+                supabase.table("gastos_caja").insert(fila_gasto).execute()
                 st.session_state.global_toast = "Gasto registrado correctamente."
                 st.session_state.trigger_clear_gastos = True
                 st.rerun()
 
         st.divider()
         st.markdown("#### 🔄 Reclasificar Gastos Recientes")
-        st.caption("¿Registraste un gasto con el tipo equivocado? Cámbialo aquí "
-                   "sin necesidad de borrarlo y volver a crearlo.")
+        st.caption("¿Registraste un gasto con el tipo o la categoría equivocados? "
+                   "Cámbialo aquí sin necesidad de borrarlo y volver a crearlo.")
         dias_reclasificar = st.slider("Ver gastos de los últimos N días:", 1, 30, 7, key="dias_reclasificar")
         limite_reclasificar = (now_co() - timedelta(days=dias_reclasificar)).isoformat()
         gastos_recientes = supabase.table("gastos_caja").select("*") \
             .gte("fecha_gasto", limite_reclasificar).order("fecha_gasto", desc=True).execute().data or []
 
+        # La actualización se hace por id_gasto, la clave real de la fila.
+        # Antes se identificaba por la terna fecha+descripción+monto: dos
+        # gastos idénticos el mismo día -- por ejemplo dos "ROSA NOMINA" de
+        # $40.000, que ocurren de verdad -- se modificaban AMBOS a la vez.
+        def _actualizar_gasto(gasto, cambios):
+            id_g = gasto.get("id_gasto")
+            q = supabase.table("gastos_caja").update(cambios)
+            if id_g is not None:
+                q = q.eq("id_gasto", id_g)
+            else:
+                # Respaldo para filas sin id: se conserva el criterio antiguo
+                # avisando de que puede alcanzar a más de una.
+                q = (q.eq("fecha_gasto", gasto["fecha_gasto"])
+                      .eq("descripcion", gasto["descripcion"])
+                      .eq("monto", gasto["monto"]))
+            q.execute()
+
         if gastos_recientes:
             for idx, g in enumerate(gastos_recientes):
                 tipo_actual = str(g.get("tipo_gasto") or "DIARIO").upper()
+                cat_actual = str(g.get("categoria_gasto") or CATEGORIA_POR_DEFECTO)
                 with st.container(border=True):
                     gc1, gc2, gc3 = st.columns([3, 1, 1])
                     fecha_g = hora_co(g.get("fecha_gasto"), "%d/%m/%Y %H:%M")
                     gc1.markdown(f"**{g.get('descripcion','')}** -- ${format_currency_co(g.get('monto',0))} "
-                                 f"· {fecha_g} · {'📅 Mensual' if tipo_actual == 'MENSUAL' else '🗓️ Diario'}")
-
-                    def _actualizar_tipo_gasto(gasto, nuevo_tipo):
-                        (supabase.table("gastos_caja").update({"tipo_gasto": nuevo_tipo})
-                         .eq("fecha_gasto", gasto["fecha_gasto"])
-                         .eq("descripcion", gasto["descripcion"])
-                         .eq("monto", gasto["monto"]).execute())
+                                 f"· {fecha_g} · {'📅 Mensual' if tipo_actual == 'MENSUAL' else '🗓️ Diario'}"
+                                 + (f" · 🏷️ {cat_actual}" if hay_categoria else ""))
 
                     if tipo_actual == "DIARIO":
                         if gc3.button("➡️ Pasar a Mensual", key=f"a_mensual_{idx}", use_container_width=True):
-                            _actualizar_tipo_gasto(g, "MENSUAL")
+                            _actualizar_gasto(g, {"tipo_gasto": "MENSUAL"})
                             st.session_state.global_toast = f"'{g.get('descripcion','')}' ahora es un gasto mensual."
                             st.rerun()
                     else:
                         if gc3.button("⬅️ Pasar a Diario", key=f"a_diario_{idx}", use_container_width=True):
-                            _actualizar_tipo_gasto(g, "DIARIO")
+                            _actualizar_gasto(g, {"tipo_gasto": "DIARIO"})
                             st.session_state.global_toast = f"'{g.get('descripcion','')}' ahora es un gasto diario."
                             st.rerun()
+
+                    if hay_categoria:
+                        opciones_cat = CATEGORIAS_GASTO + ([CATEGORIA_POR_DEFECTO]
+                                                           if cat_actual not in CATEGORIAS_GASTO else [])
+                        nueva_cat = gc2.selectbox(
+                            "Categoría", opciones_cat,
+                            index=opciones_cat.index(cat_actual) if cat_actual in opciones_cat else 0,
+                            key=f"cat_gasto_{idx}", label_visibility="collapsed")
+                        if nueva_cat != cat_actual:
+                            if gc2.button("💾", key=f"guardar_cat_{idx}", use_container_width=True,
+                                          help=f"Clasificar como {nueva_cat}"):
+                                _actualizar_gasto(g, {"categoria_gasto": nueva_cat})
+                                st.session_state.global_toast = f"'{g.get('descripcion','')}' → {nueva_cat}"
+                                st.rerun()
         else:
             st.info(f"No hay gastos registrados en los últimos {dias_reclasificar} día(s).")
 
@@ -3662,8 +3812,8 @@ elif modulo == "📦 Inventario":
                 inv_cant = col_m4.number_input("Cantidad a Ingresar", min_value=1, step=1, value=1, key="m_cant")
                 
                 c_pc, c_pv = st.columns(2)
-                val_compra = int(clean_numeric_string(c_pc.text_input("Precio Compra Unitario $", key="p_compra_m", on_change=on_p_compra_m_change)) or 0)
-                val_venta = int(clean_numeric_string(c_pv.text_input("Precio Venta Unitario $", key="p_venta_m", on_change=on_p_venta_m_change)) or 0)
+                val_compra = parse_money_co(c_pc.text_input("Precio Compra Unitario $", key="p_compra_m", on_change=on_p_compra_m_change))
+                val_venta = parse_money_co(c_pv.text_input("Precio Venta Unitario $", key="p_venta_m", on_change=on_p_venta_m_change))
                 
                 st.markdown("---")
                 st.markdown("**Detalle de Referencias y Colores**")
@@ -3729,8 +3879,8 @@ elif modulo == "📦 Inventario":
                     
                 c1, c2, c3 = st.columns(3)
                 inv_cant = c1.number_input("Cantidad Inicial", min_value=0, step=1, value=1)
-                val_compra = int(clean_numeric_string(c2.text_input("Precio Compra $", key="p_compra_input", on_change=on_p_compra_change)) or 0)
-                val_venta = int(clean_numeric_string(c3.text_input("Precio Venta $", key="p_venta_input", on_change=on_p_venta_change)) or 0)
+                val_compra = parse_money_co(c2.text_input("Precio Compra $", key="p_compra_input", on_change=on_p_compra_change))
+                val_venta = parse_money_co(c3.text_input("Precio Venta $", key="p_venta_input", on_change=on_p_venta_change))
                     
                 if st.button("💾 Guardar Producto", type="primary", use_container_width=True):
                     if not inv_codigo or not inv_marca or not inv_desc: 
@@ -4400,6 +4550,36 @@ elif modulo == "📈 Analítica y Estadísticas":
     def _es_venta_menor(num_factura):
         return str(num_factura or "").upper().startswith("MEN-")
 
+    def _por_categoria(lista):
+        """Agrupa gastos por categoría, de mayor a menor. Las filas sin
+        clasificar (todo el histórico migrado) caen en su propio grupo en
+        vez de desaparecer, para que el total siempre cuadre."""
+        acum = {}
+        for g in lista:
+            cat = str(g.get("categoria_gasto") or CATEGORIA_POR_DEFECTO)
+            acum[cat] = acum.get(cat, 0) + g.get("monto", 0)
+        return sorted(acum.items(), key=lambda kv: -kv[1])
+
+    def _tabla_categorias(lista, titulo):
+        """Pinta el desglose por categoría si la columna existe y hay algo
+        que mostrar. Separa además el costo de laboratorio del resto: es
+        costo de lo vendido, no gasto de operar, y mezclarlos impide ver
+        el margen."""
+        if not columna_existe("gastos_caja", "categoria_gasto"):
+            return
+        filas = _por_categoria(lista)
+        if not filas or (len(filas) == 1 and filas[0][0] == CATEGORIA_POR_DEFECTO):
+            return
+        total_cat = sum(v for _, v in filas)
+        st.markdown(f"##### {titulo}")
+        df_cat = pd.DataFrame([
+            {"Categoría": c, "Monto": v, "% del gasto": f"{v / total_cat * 100:.1f}%"}
+            for c, v in filas
+        ])
+        st.dataframe(
+            df_cat.style.format({"Monto": lambda x: f"${format_currency_co(x)}"}),
+            use_container_width=True, hide_index=True)
+
     def _money(v):
         """Formatea con el signo DELANTE del símbolo: '-$250.000' y no
         '$-250.000', que es donde queda si se antepone el '$' a secas.
@@ -4440,16 +4620,34 @@ elif modulo == "📈 Analítica y Estadísticas":
                 df_dash[_col] = _defecto
             else:
                 df_dash[_col] = df_dash[_col].fillna(_defecto)
+
+        # Fechas futuras: el histórico migrado trae facturas fechadas
+        # DESPUÉS de hoy (errores de tecleo del Excel original). Antes solo
+        # se excluían del selector de meses, así que seguían sumando en el
+        # total global, en el ticket promedio y en la cartera. Se descartan
+        # aquí, una sola vez, y así quedan fuera de todos los cálculos.
+        _ahora = now_co()
+        _futuras = df_dash[df_dash['fecha_venta'] > _ahora]
+        if len(_futuras):
+            df_dash = df_dash[df_dash['fecha_venta'] <= _ahora]
+            _ejemplos = ", ".join(
+                f"{r['numero_factura']} ({r['fecha_venta'].strftime('%d/%m/%Y')})"
+                for _, r in _futuras.head(3).iterrows())
+            st.warning(
+                f"⚠️ **{len(_futuras)} factura(s) con fecha futura** quedaron fuera del análisis "
+                f"por valor de ${format_currency_co(int(_futuras['total'].sum()))}. "
+                f"Una venta no puede ser de un día que no ha llegado: son datos corruptos "
+                f"heredados de la migración y conviene corregirlos en la base. "
+                f"Ejemplos: {_ejemplos}.")
         
         total_cartera_pendiente = df_dash['saldo'].sum()
         
         modo_analitica = st.radio("Modo de Visualización:", ["Resumen Global", "Filtrar por Mes Específico", "Comparativa Multimes"], horizontal=True)
-        # Salvaguarda: excluir meses futuros del selector. La causa real
-        # de fechas futuras que aparecían aquí (año 2027 por error de
-        # tecleo en el Excel original) ya se corrigió en el dato migrado,
-        # pero este filtro protege contra cualquier otra fecha corrupta
-        # que se cuele -- una venta jamás puede ser de un mes que no ha
-        # llegado todavía.
+        # Salvaguarda del selector. Ya no debería hacer falta, porque las
+        # filas con fecha futura se descartan más arriba, pero se mantiene
+        # como segunda barrera: cuesta nada y el dato migrado ha demostrado
+        # traer fechas imposibles (facturas de nov. y dic. de 2026 vistas
+        # en agosto de 2026), pese a que se dieran por corregidas.
         mes_actual_str = hoy_an.strftime("%Y-%m")
         meses_disponibles = sorted(
             (m for m in df_dash['mes_anio'].unique() if m <= mes_actual_str),
@@ -4494,6 +4692,22 @@ elif modulo == "📈 Analítica y Estadísticas":
                       f"${format_currency_co(df_menor['total'].mean() if len(df_menor) else 0)}",
                       help=f"{len(df_menor)} venta(s) menor(es) en el mes.")
             t3.metric("🧮 N° de facturas", f"{total_facturas}")
+
+            _tabla_categorias(gastos_filtered, f"🏷️ Gastos por categoría — {mes_sel}")
+
+            # Margen bruto: solo tiene sentido si el costo de laboratorio
+            # está identificado. Es la cifra que dice si los precios dan.
+            _lab = sum(g.get("monto", 0) for g in gastos_filtered
+                       if str(g.get("categoria_gasto") or "").startswith("LABORATORIO"))
+            if _lab > 0:
+                _margen = total_facturado - _lab
+                mb1, mb2 = st.columns(2)
+                mb1.metric("🔬 Costo de laboratorio", f"${format_currency_co(_lab)}")
+                mb2.metric("📐 Margen bruto", _money(_margen),
+                           help="Facturado menos el costo de laboratorio, antes de los "
+                                "gastos de operar. Indica si los precios están bien puestos.")
+                if total_facturado:
+                    st.caption(f"Margen bruto sobre lo facturado: **{_margen / total_facturado * 100:.1f}%**")
 
             st.info(f"📌 **Dinero de saldos por cobrar:** ${format_currency_co(total_cartera_pendiente)}")
             
@@ -4561,6 +4775,8 @@ elif modulo == "📈 Analítica y Estadísticas":
             g1.metric("🗓️ Gastos diarios", f"${format_currency_co(g_diarios)}")
             g2.metric("📅 Gastos mensuales", f"${format_currency_co(g_mensuales)}")
             g3.metric("🧮 N° de facturas", f"{total_facturas}")
+
+            _tabla_categorias(gastos_db, "🏷️ Gastos por categoría — histórico completo")
             
             st.info(f"📌 **Dinero de saldos por cobrar:** ${format_currency_co(total_cartera_pendiente)}")
             
