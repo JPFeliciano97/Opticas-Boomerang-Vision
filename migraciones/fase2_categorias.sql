@@ -148,18 +148,34 @@ select numero_factura, fecha_venta, total, titular_nombre
  where fecha_venta > now()
  order by fecha_venta;
 
--- HIPÓTESIS a verificar contra el Excel original, no aplicar a ciegas:
--- las dos vistas (nov. y dic. de 2026) encajan en el histórico si el año
--- correcto es 2025. Si lo confirmas, este UPDATE les resta un año:
+-- CONFIRMADO por el negocio: las dos facturas son de ENERO, no de
+-- noviembre ni diciembre. La hipótesis de restar un año era ERRÓNEA.
+-- Se corrigen una por una y de forma explícita -- ajusta el día si no
+-- coincide con el Excel original antes de ejecutar.
 --
 -- begin;
--- update ventas_facturacion
---    set fecha_venta = fecha_venta - interval '1 year'
---  where fecha_venta > now()
---    and numero_factura like 'LEG-%';
+-- update ventas_facturacion set fecha_venta = '2026-01-15 00:00:00-05'
+--  where numero_factura = 'LEG-TR03207';
+-- update ventas_facturacion set fecha_venta = '2026-01-13 00:00:00-05'
+--  where numero_factura = 'LEG-TR03239';
 -- select numero_factura, fecha_venta from ventas_facturacion
 --  where numero_factura in ('LEG-TR03207','LEG-TR03239');
 -- commit;   -- o rollback
+
+
+-- ---------------------------------------------------------------------
+-- 4b. Montos heredados imposibles
+-- ---------------------------------------------------------------------
+-- El fallo de parseo ya no puede generar importes inflados, pero los que
+-- entraron antes siguen en la tabla. Se concentran en ALIMENTACION y
+-- ASEO E INSUMOS, donde un refrigerio de $5.500 quedó como $5.500.000.
+-- Esta consulta los saca a la luz; NO los corrijas en bloque: revisa la
+-- descripción de cada uno y decide.
+select id_gasto, fecha_gasto, descripcion, monto, categoria_gasto
+  from gastos_caja
+ where monto > 2000000
+   and categoria_gasto in ('ALIMENTACION','ASEO E INSUMOS','TRANSPORTE')
+ order by monto desc;
 
 
 -- ---------------------------------------------------------------------
@@ -167,10 +183,14 @@ select numero_factura, fecha_venta, total, titular_nombre
 -- ---------------------------------------------------------------------
 -- Lo que quedó sin clasificar, de mayor a menor: son los conceptos que
 -- hay que revisar a mano o añadir a los patrones de arriba.
+-- Sobre la tabla completa quedó SIN CLASIFICAR el 17% del importe: los
+-- patrones se afinaron con una muestra pequeña y el histórico de nueve
+-- años trae muchos más conceptos. Esta consulta ordena por dinero, así
+-- que atacando las primeras filas se recupera la mayor parte.
 select descripcion, count(*) as veces, sum(monto) as total
   from gastos_caja
  where categoria_gasto = 'SIN CLASIFICAR'
- group by 1 order by 3 desc limit 30;
+ group by 1 order by 3 desc limit 50;
 
 -- Los dos ejes juntos: confirma que categoría y tipo son independientes.
 select categoria_gasto,
