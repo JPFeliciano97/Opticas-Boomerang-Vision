@@ -65,6 +65,15 @@ update gastos_caja set categoria_gasto = 'DEVOLUCIONES A CLIENTES'
  where categoria_gasto = 'SIN CLASIFICAR'
    and descripcion ~* '(devoluci)';
 
+-- Retiros del propietario. Mateo es el doctor y dueño, así que lo que
+-- se le paga no es un costo de operar la óptica: es reparto de utilidad.
+-- Contarlo como gasto hace que el negocio parezca menos rentable de lo
+-- que realmente es. Va antes que nómina y honorarios para que ningún
+-- "PAGO NOMINA MATEO" se cuele como personal de planta.
+update gastos_caja set categoria_gasto = 'RETIROS DEL PROPIETARIO'
+ where categoria_gasto = 'SIN CLASIFICAR'
+   and descripcion ~* '\ymateo\y';
+
 -- Arriendo y administración del local
 update gastos_caja set categoria_gasto = 'ARRIENDO Y ADMINISTRACION'
  where categoria_gasto = 'SIN CLASIFICAR'
@@ -116,12 +125,9 @@ update gastos_caja set categoria_gasto = 'ASEO E INSUMOS'
  where categoria_gasto = 'SIN CLASIFICAR'
    and descripcion ~* '(jabon|blanqueador|limpiapiso|fabuloso|papel|guantes|alcohol|vasos|escoba|impresion|copias|tinta|sharpie|folder|bolsa)';
 
--- OJO con MATEO: en el histórico aparece como "DOC MATEO" (¿un doctor?)
--- y en lo reciente como persona a la que se le paga nómina, almuerzos y
--- transporte. Se deja SIN CLASIFICAR a propósito para que decidas:
---   select descripcion, count(*), sum(monto) from gastos_caja
---    where categoria_gasto = 'SIN CLASIFICAR' and descripcion ~* 'mateo'
---    group by 1 order by 3 desc;
+-- Los pagos a GLORIA (una tía) son de 2017-2018, suman $120.000 y no
+-- traen descripción que permita saber a qué correspondían. Se dejan sin
+-- clasificar: son inmateriales y no vale la pena forzar una etiqueta.
 
 -- CONTROL: revisa este resultado ANTES de confirmar.
 select categoria_gasto, count(*) as filas, sum(monto) as total

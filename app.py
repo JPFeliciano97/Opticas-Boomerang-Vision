@@ -1136,6 +1136,7 @@ CATEGORIAS_GASTO = [
     "ALIMENTACION",
     "ASEO E INSUMOS",
     "DEVOLUCIONES A CLIENTES",
+    "RETIROS DEL PROPIETARIO",
     "OTROS",
 ]
 CATEGORIA_POR_DEFECTO = "SIN CLASIFICAR"
@@ -3602,7 +3603,10 @@ elif modulo == "📊 Cuadre de Caja Físico":
                      "un pago al laboratorio puede ser cualquiera de los dos.\n\n"
                      "· NOMINA: personal de planta (asesores).\n"
                      "· HONORARIOS POR CONSULTA: la optómetra, que cobra por paciente atendido.\n"
-                     "· HONORARIOS POR TURNO: el doctor que cubre un día completo.",
+                     "· HONORARIOS POR TURNO: el doctor que cubre un día completo.\n"
+                     "· RETIROS DEL PROPIETARIO: dinero que toma el dueño. No es "
+                     "costo de operar, es reparto de utilidad: mezclarlo hace que el "
+                     "negocio parezca menos rentable de lo que es.",
             )
         else:
             categoria_gasto = None
