@@ -183,6 +183,45 @@ update gastos_caja set categoria_gasto = 'TRANSPORTE'
    and descripcion ~* '(\ybus\y|gasolina|despinchada)';
 
 
+-- ---------------------------------------------------------------------
+-- 3c. Tercera pasada, resuelta con el criterio del negocio
+-- ---------------------------------------------------------------------
+-- Los conceptos que quedaban no se podian deducir del texto; los aclaro
+-- el propio negocio:
+--
+--   CASA OPTICA    -> es un laboratorio, no el arriendo del local
+--   CARGA TARJETA  -> recargas de la tarjeta TuLlave de Transmilenio
+--   LLEVO          -> dinero retirado de caja para gastos de la casa
+--   Quincena Mia   -> quincena del dueno
+--   GLORIA FELIC.  -> cuota de un pago (segun el negocio, sin certeza)
+
+update gastos_caja set categoria_gasto = 'LABORATORIO Y PROVEEDORES'
+ where categoria_gasto = 'SIN CLASIFICAR'
+   and descripcion ~* 'casa\s*optica';
+
+update gastos_caja set categoria_gasto = 'TRANSPORTE'
+ where categoria_gasto = 'SIN CLASIFICAR'
+   and descripcion ~* '(carga tarjeta|tullave|tu llave)';
+
+-- "LLEVO" y "Quincena Mia" son plata que sale del negocio hacia el
+-- bolsillo del dueno, no costo de operar. Van con los retiros: son 46
+-- retiros pequenos que, sumados, mueven la utilidad operativa real.
+update gastos_caja set categoria_gasto = 'RETIROS DEL PROPIETARIO'
+ where categoria_gasto = 'SIN CLASIFICAR'
+   and descripcion ~* '(\yllevo\y|quincena mia)';
+
+update gastos_caja set categoria_gasto = 'OBLIGACIONES FINANCIERAS'
+ where categoria_gasto = 'SIN CLASIFICAR'
+   and descripcion ~* 'gloria feliciano';
+
+-- SIGUEN SIN CLASIFICAR a proposito, porque nadie sabe que son:
+--   supervision ($684.400), FREDY VIP ($1.002.150)
+-- Y cinco donde se escribio el METODO DE PAGO en vez del concepto:
+--   saldo hoy, DAVIPLTA, EFECTIVO, CANCELO
+-- Esos no tienen arreglo retroactivo. Hacia adelante se evitan pidiendo
+-- una descripcion util en el formulario.
+
+
 -- CONTROL: el reparto queda ya confirmado. Revisalo.
 select categoria_gasto, count(*) as filas, sum(monto) as total
   from gastos_caja group by 1 order by 3 desc;
