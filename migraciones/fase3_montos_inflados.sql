@@ -112,3 +112,106 @@ select g.id_gasto, g.fecha_gasto, g.descripcion, g.monto,
    and g.monto > n.mediana * 20
  order by veces_la_mediana desc
  limit 60;
+
+
+-- =====================================================================
+-- SEGUNDA RONDA -- resultados de los bloques 5a y 5b
+-- =====================================================================
+-- El fallo era 'clean_numeric_string': se quedaba solo con los dígitos y
+-- tiraba el separador decimal. Así que el factor de inflado es 10 elevado
+-- al número de decimales que se escribieron: "5.500,00" daba 550000
+-- (x100) y "5.500,000" daba 5500000 (x1000). El importe solo se corrompía
+-- si se escribió con decimales; "5.500" a secas entraba bien.
+--
+-- Las 25 filas de la primera ronda son x1000, y no por suposición: al
+-- dividirlas quedan entre $2.400 y $10.000, y ahí dentro el bus da $2.400
+-- (el pasaje de TransMilenio en 2022 era $2.500) y el agua en botella
+-- $2.500. Con x100 el bus costaría $24.000. Es un bloque coherente.
+
+
+-- ---------------------------------------------------------------------
+-- 6. Segunda tanda de montos inflados
+-- ---------------------------------------------------------------------
+-- Doce filas más. Las ocho primeras son inequívocas por la descripción:
+-- unos guantes, un jabón Rey, unas bolsas blancas, un rollo de fotos,
+-- unos tornillos, unas onces con pan, unos buses. Al dividir entre 1000
+-- caen entre $1.000 y $8.900, justo por debajo del bloque anterior:
+-- es la misma caja menor.
+--
+-- Las cuatro de ROSA piden un párrafo aparte. Rosa es nómina y la mediana
+-- de la categoría son $25.000, o sea pagos diarios. Un préstamo de diez
+-- millones a una empleada no cabe en este negocio; divididos dan $10.000
+-- y $5.000, que sí encajan con el resto de sus pagos. Además caen en la
+-- misma ventana de id (777-795, noviembre y diciembre de 2021) donde
+-- prácticamente todas las filas están corrompidas.
+update gastos_caja
+   set monto = monto / 1000
+ where id_gasto in (780,726,143,777,1057,1079,768,791,   -- inequívocos
+                    795,827,792,784)                     -- pagos a Rosa
+   and monto > 900000;
+
+-- Control: doce filas, todas de cuatro cifras o menos.
+select id_gasto, fecha_gasto, descripcion, monto, categoria_gasto
+  from gastos_caja
+ where id_gasto in (780,726,143,777,1057,1079,768,791,795,827,792,784)
+ order by monto desc;
+
+-- Reversión del bloque 6, por si acaso:
+-- update gastos_caja set monto = monto * 1000
+--  where id_gasto in (780,726,143,777,1057,1079,768,791,795,827,792,784);
+
+
+-- ---------------------------------------------------------------------
+-- 7. Los siete que NO toco  [PENDIENTE DE DECIDIR]
+-- ---------------------------------------------------------------------
+-- Estos podrían ser inflados o podrían ser reales, y la diferencia
+-- importa: dividir entre 1000 un pago real de laboratorio de ocho
+-- millones sería destrozarlo.
+--
+--   783   NEXT VISION      $8.000.000   2021-11-04
+--   896   NEXT VISION      $7.500.000   2022-02-10
+--   749   PRECISION LAB    $5.200.000   2021-09-24
+--   741   PRECISION LAB    $5.200.000   2021-09-18
+--   412   doc              $9.600.000   2019-06-08
+--   102   doc              $5.000.000   2018-02-28
+--   274   ETB              $2.500.000   2018-11-22
+--
+-- A favor de que 783 y 749 sí estén inflados: caen dentro de rachas de
+-- id donde casi todo lo demás está corrompido (777-795 y 747-758). Eso
+-- sugiere que se cargaron en el mismo lote y con el mismo formato.
+-- En contra: los pagos a ZAFIRO de 2024-2026, que entraron con el parseo
+-- ya sano, van de $1.100.000 a $4.668.000. Un laboratorio de varios
+-- millones es perfectamente posible en este negocio.
+--
+-- Esta consulta lo resuelve: saca TODAS las filas de esas rachas, no solo
+-- las sospechosas. Si dentro de la ventana no hay ni una sola fila con un
+-- importe normal, el lote entero venía con decimales y 783/749 están
+-- inflados. Si conviven importes normales, entonces el fallo era fila a
+-- fila y hay que juzgar cada una por su descripción.
+select id_gasto, fecha_gasto, descripcion, monto, categoria_gasto
+  from gastos_caja
+ where id_gasto between 735 and 800
+ order by id_gasto;
+
+
+-- ---------------------------------------------------------------------
+-- 8. Lo que apareció de paso y no es un problema de monto
+-- ---------------------------------------------------------------------
+-- 8a. Una fila que no es un gasto. "saldo hoy", $954.250, 2025-12-14:
+--     parece el saldo del día registrado como si fuera un gasto. Si es
+--     eso, hay que borrarla, no corregirla -- pero decídelo tú primero.
+select id_gasto, fecha_gasto, descripcion, monto, metodo_pago, categoria_gasto
+  from gastos_caja
+ where id_gasto = 4223;
+
+-- 8b. Categorías que no corresponden a la descripción. Los importes están
+--     bien; lo que está mal es dónde suman.
+--       768   'onces Dra y pan'    está en HONORARIOS POR CONSULTA
+--                                  y es ALIMENTACION
+--       1221  'PAGO SALARIO JUAN'  está en LABORATORIO Y PROVEEDORES
+--                                  y es NOMINA
+--       1576  'PAGO JUAN PABLO'    está en LABORATORIO Y PROVEEDORES
+--                                  y probablemente es NOMINA o un retiro
+update gastos_caja set categoria_gasto = 'ALIMENTACION' where id_gasto = 768;
+update gastos_caja set categoria_gasto = 'NOMINA'       where id_gasto = 1221;
+-- 1576 queda sin tocar hasta que confirmes qué es 'PAGO JUAN PABLO'.
