@@ -382,3 +382,50 @@ select 'sin clasificar en total',
        || round(100.0 * count(*) filter (where coalesce(categoria_gasto,'SIN CLASIFICAR') = 'SIN CLASIFICAR')
                 / nullif(count(*), 0), 1)::text || '%)'
   from gastos_caja;
+
+
+-- ---------------------------------------------------------------------
+-- 12. Decisiones del negocio
+-- ---------------------------------------------------------------------
+-- Cuatro filas que solo el dueño podía resolver.
+
+-- 12a. 'PAGO JUAN PABLO' ($3.500.000) es sueldo, no un laboratorio.
+--      Va con 'PAGO SALARIO JUAN' ($3.928.000), que ya se movió antes.
+update gastos_caja
+   set categoria_gasto = 'NOMINA'
+ where id_gasto = 1576;
+
+-- 12b. 'saldo hoy' ($954.250) no es un gasto: es el saldo del día
+--      anotado por error en la tabla equivocada. No se borra -- perder
+--      la fila perdería el rastro de por qué las cuentas de ese día no
+--      cuadran -- se marca, y la analítica la ignora.
+--      Requiere el código nuevo: la app filtra 'NO ES UN GASTO' en el
+--      origen del módulo de analítica.
+update gastos_caja
+   set categoria_gasto = 'NO ES UN GASTO'
+ where id_gasto = 4223;
+
+-- 12c. 'LUZ CASA' es el recibo de la vivienda, no del local. No es costo
+--      de operar la óptica: es plata que sale para el dueño.
+update gastos_caja
+   set categoria_gasto = 'RETIROS DEL PROPIETARIO'
+ where id_gasto = 797;
+
+-- 12d. 'TV' ($400.000) se queda SIN CLASIFICAR a propósito. No se
+--      recuerda si el televisor fue para el local o para la casa, y
+--      adivinar lo mandaría o a inflar el gasto operativo o a inflar los
+--      retiros. Sin clasificar es la respuesta honesta.
+
+-- 12e. Si 'LUZ CASA' se coló, es probable que haya más recibos de la
+--      vivienda mezclados con los del local. Esta consulta los busca;
+--      NO corrige nada, porque distinguir "casa" de "local" necesita tu
+--      criterio y no un patrón de texto.
+select id_gasto, fecha_gasto, descripcion, monto, categoria_gasto
+  from gastos_caja
+ where descripcion ~* '(casa|hogar|apto|apartamento|vivienda)'
+   and coalesce(categoria_gasto, 'SIN CLASIFICAR')
+       not in ('RETIROS DEL PROPIETARIO', 'LABORATORIO Y PROVEEDORES')
+ order by fecha_gasto desc;
+-- Ojo: 'CASA OPTICA' es un laboratorio, no una casa. Por eso la consulta
+-- excluye ya LABORATORIO Y PROVEEDORES -- si no, saldrían decenas de
+-- filas suyas y taparían lo que sí importa.
