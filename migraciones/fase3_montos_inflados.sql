@@ -215,3 +215,136 @@ select id_gasto, fecha_gasto, descripcion, monto, metodo_pago, categoria_gasto
 update gastos_caja set categoria_gasto = 'ALIMENTACION' where id_gasto = 768;
 update gastos_caja set categoria_gasto = 'NOMINA'       where id_gasto = 1221;
 -- 1576 queda sin tocar hasta que confirmes qué es 'PAGO JUAN PABLO'.
+
+
+-- =====================================================================
+-- TERCERA RONDA -- la ventana 735-800 refuta la hipótesis del lote
+-- =====================================================================
+-- La consulta del bloque 7 se hizo para probar una idea: que los importes
+-- corrompidos venían en lotes, y que por tanto 741, 749 y 783 -- metidos
+-- dentro de rachas podridas -- también lo estaban.
+--
+-- No es así. En esas 66 filas conviven importes normales con importes
+-- corrompidos, fila a fila: 746 INKOPTICAL $195.000 justo antes de 747
+-- FABULOSO corrompido; 782 VASOS corrompido justo antes de 783 NEXT
+-- VISION. El fallo dependía de si ESA fila se escribió con decimales, no
+-- del lote. La cercanía de id no prueba nada y la descarto.
+--
+-- Así que 741, 749, 783, 896, 412, 102 y 274 se quedan como están. No
+-- tengo evidencia de que estén mal, y dividir entre 1000 un pago real de
+-- laboratorio sería un daño peor que dejarlo.
+--
+-- Lo que la ventana SÍ confirmó es el bloque 6, y por un camino que no
+-- había buscado: existen hermanas sanas de las filas que corregí.
+--   785  'PRESTAMO ROSA'      $20.000   <- sana
+--   827  'PRESTAMO ROSA'      $10.000   <- corregida por mí
+--   789  'Pago Rosa (380-20)' $20.000   <- sana, misma anotación (NNN-NN)
+--   795  'ROSA (345-10)'      $10.000   <- corregida por mí
+--   798  'ROSA 335-50'        $50.000   <- sana
+-- Mismo concepto, misma notación, mismo orden de magnitud. La corrección
+-- dio en el sitio.
+
+
+-- ---------------------------------------------------------------------
+-- 9. La prueba que sí puede zanjar los siete  [CONSULTA]
+-- ---------------------------------------------------------------------
+-- El método de pago lo decide. Esta caja movía cientos de miles de pesos
+-- al día: un pago de OCHO MILLONES en efectivo es imposible, la plata no
+-- estaba ahí. Por transferencia o consignación, en cambio, es
+-- perfectamente normal.
+select id_gasto, fecha_gasto, descripcion, monto, metodo_pago, categoria_gasto
+  from gastos_caja
+ where id_gasto in (783, 896, 749, 741, 412, 102, 274)
+ order by fecha_gasto;
+
+-- Y el contexto del día: cuánto se gastó en total esas fechas. Si el día
+-- del supuesto pago de ocho millones el resto de la caja se movió en
+-- decenas de miles, el importe no cabe.
+select date(fecha_gasto) as dia,
+       count(*) as movimientos,
+       sum(monto) as total_dia,
+       max(monto) as mayor_del_dia
+  from gastos_caja
+ where date(fecha_gasto) in (date '2021-11-04', date '2021-09-18',
+                             date '2021-09-24', date '2022-02-10',
+                             date '2019-06-08', date '2018-02-28',
+                             date '2018-11-22')
+ group by 1
+ order by 1;
+
+
+-- ---------------------------------------------------------------------
+-- 10. Cuarta pasada de clasificación  [hallazgo de la ventana]
+-- ---------------------------------------------------------------------
+-- Revisar 66 filas seguidas destapó algo que las pasadas anteriores no
+-- podían ver: el clasificador reconoce proveedores por su NOMBRE, pero no
+-- reconoce los PRODUCTOS. Siete filas de esta sola ventana quedaron en
+-- SIN CLASIFICAR siendo todas material óptico: MULTISOLUTER, FRESHLOOK,
+-- CY SOLUTION clear lens, POLY AR, LENS NEX, poly blue y cr ar,
+-- poly color. Son lentes y soluciones de limpieza: laboratorio.
+--
+-- Si en 66 filas hay siete, en el histórico completo hay muchas más. El
+-- orden importa: cada UPDATE solo toca lo que sigue SIN CLASIFICAR.
+--
+-- ANTES DE LOS UPDATE: esta consulta te muestra exactamente qué filas se
+-- van a mover y a dónde, sin tocar nada. Descárgala en CSV. Es tu única
+-- forma de deshacerlo, porque una vez reclasificadas ya no se distinguen
+-- de las que otras pasadas clasificaron bien.
+select id_gasto, fecha_gasto, descripcion, monto,
+       case
+         when descripcion ~* '(poly|solution|multisolut|freshlook|acuvue|biofinity|'
+                             'clear lens|lens nex|\ylens\y|antirreflejo|\yar\y|'
+                             'transition|fotocrom|cr39|cr 39|blue|progresiv|'
+                             'bifocal|monofocal|tallado|biselado|\ybisel)'
+              then 'LABORATORIO Y PROVEEDORES'
+         when descripcion ~* '(tapete|escoba|trapeador|recogedor|caneca|resma|'
+                             'toalla|servilleta|detergente|blanqueador|clorox)'
+              then 'ASEO E INSUMOS'
+         when descripcion ~* '(pickup|pick up|picup|\ydidi\y|uber|indriver|taxi|'
+                             'gasolina|peaje|parqueadero)'
+              then 'TRANSPORTE'
+         when descripcion ~* '(interes|intereses|cuota credito|cuota banco)'
+              then 'OBLIGACIONES FINANCIERAS'
+       end as categoria_propuesta
+  from gastos_caja
+ where coalesce(categoria_gasto, 'SIN CLASIFICAR') = 'SIN CLASIFICAR'
+ order by 5, descripcion;
+-- Revísala. Si alguna fila está mal asignada, dímelo y ajusto el patrón
+-- ANTES de que corras los UPDATE.
+
+update gastos_caja
+   set categoria_gasto = 'LABORATORIO Y PROVEEDORES'
+ where coalesce(categoria_gasto, 'SIN CLASIFICAR') = 'SIN CLASIFICAR'
+   and descripcion ~* '(poly|solution|multisolut|freshlook|acuvue|biofinity|'
+                      'clear lens|lens nex|\ylens\y|antirreflejo|\yar\y|'
+                      'transition|fotocrom|cr39|cr 39|blue|progresiv|'
+                      'bifocal|monofocal|tallado|biselado|\ybisel)';
+
+-- Insumos de aseo que tampoco estaban en el diccionario.
+update gastos_caja
+   set categoria_gasto = 'ASEO E INSUMOS'
+ where coalesce(categoria_gasto, 'SIN CLASIFICAR') = 'SIN CLASIFICAR'
+   and descripcion ~* '(tapete|escoba|trapeador|recogedor|caneca|resma|'
+                      'toalla|servilleta|detergente|blanqueador|clorox)';
+
+-- Transporte: 'PICKUP' es la app Picap, igual que 'PICUK' y 'picap'.
+update gastos_caja
+   set categoria_gasto = 'TRANSPORTE'
+ where coalesce(categoria_gasto, 'SIN CLASIFICAR') = 'SIN CLASIFICAR'
+   and descripcion ~* '(pickup|pick up|picup|\ydidi\y|uber|indriver|taxi|'
+                      'gasolina|peaje|parqueadero)';
+
+-- Los intereses del tío Julio ya tienen categoría en otras filas; esta se
+-- quedó fuera solo porque la descripción no lo nombra.
+update gastos_caja
+   set categoria_gasto = 'OBLIGACIONES FINANCIERAS'
+ where coalesce(categoria_gasto, 'SIN CLASIFICAR') = 'SIN CLASIFICAR'
+   and descripcion ~* '(interes|intereses|cuota credito|cuota banco)';
+
+-- Cuánto quedó sin clasificar después de esta pasada.
+select coalesce(categoria_gasto, 'SIN CLASIFICAR') as categoria,
+       count(*) as filas,
+       round(100.0 * count(*) / sum(count(*)) over (), 1) as pct
+  from gastos_caja
+ group by 1
+ order by filas desc;
