@@ -348,3 +348,37 @@ select coalesce(categoria_gasto, 'SIN CLASIFICAR') as categoria,
   from gastos_caja
  group by 1
  order by filas desc;
+
+
+-- ---------------------------------------------------------------------
+-- 11. Estado actual  [SOLO CONSULTA, no cambia nada]
+-- ---------------------------------------------------------------------
+-- Una sola consulta que dice qué bloques quedaron aplicados. Útil cuando
+-- se han corrido varios archivos en varias sesiones y ya no se recuerda
+-- dónde se quedó uno.
+select 'bloques 2 y 6 -- montos inflados' as comprobacion,
+       count(*) filter (where monto > 900000)::text || ' de 37 sin corregir'
+         as resultado
+  from gastos_caja
+ where id_gasto in (753,702,1060,927,766,662,918,754,757,781,656,747,1067,
+                    442,670,695,793,799,1102,782,920,973,763,758,978,
+                    780,726,143,777,1057,1079,768,791,795,827,792,784)
+union all
+select 'bloque 8b -- categorias corregidas',
+       'id 768 = ' || coalesce(max(categoria_gasto) filter (where id_gasto = 768), 'null')
+       || ' · id 1221 = ' || coalesce(max(categoria_gasto) filter (where id_gasto = 1221), 'null')
+  from gastos_caja
+ where id_gasto in (768, 1221)
+union all
+select 'bloque 10 -- cuarta pasada',
+       count(*)::text || ' filas de material optico siguen SIN CLASIFICAR'
+  from gastos_caja
+ where coalesce(categoria_gasto, 'SIN CLASIFICAR') = 'SIN CLASIFICAR'
+   and descripcion ~* '(poly|solution|multisolut|freshlook|lens)'
+union all
+select 'sin clasificar en total',
+       count(*) filter (where coalesce(categoria_gasto,'SIN CLASIFICAR') = 'SIN CLASIFICAR')::text
+       || ' de ' || count(*)::text || ' filas ('
+       || round(100.0 * count(*) filter (where coalesce(categoria_gasto,'SIN CLASIFICAR') = 'SIN CLASIFICAR')
+                / nullif(count(*), 0), 1)::text || '%)'
+  from gastos_caja;
