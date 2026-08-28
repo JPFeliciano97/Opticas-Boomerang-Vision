@@ -1143,8 +1143,15 @@ CATEGORIAS_GASTO = [
     "IMPUESTOS",
     "RETIROS DEL PROPIETARIO",
     "OTROS",
+    "NO ES UN GASTO",
 ]
 CATEGORIA_POR_DEFECTO = "SIN CLASIFICAR"
+# Para lo que se registró en gastos pero no es un gasto: el saldo del día
+# anotado por error, un duplicado, una nota. Borrar la fila perdería el
+# rastro de lo que pasó, así que se marca y la analítica la ignora. La
+# fila sigue ahí para quien vaya a mirar por qué las cuentas de ese día
+# no cuadran.
+CATEGORIA_NO_CONTABLE = "NO ES UN GASTO"
 
 # Por encima de este monto se pide confirmación explícita. El gasto
 # legítimo más alto registrado es el arriendo ($2.100.000), así que el
@@ -4541,6 +4548,15 @@ elif modulo == "📈 Analítica y Estadísticas":
     km4.metric("⏳ Por recaudar",       f"${format_currency_co(pendiente_mes)}")
     st.markdown("---")
     gastos_db = traer_todas_las_filas("gastos_caja")
+    # Las filas marcadas como 'NO ES UN GASTO' se quedan en la base pero
+    # no entran en ningún análisis: no son dinero que salió. Se filtran
+    # aquí, en el origen, y no en cada suma -- olvidarlo en una sola de
+    # las diez sumas de este módulo daría cifras que no cuadran entre sí.
+    _no_contables = [g for g in gastos_db
+                     if str(g.get("categoria_gasto") or "") == CATEGORIA_NO_CONTABLE]
+    if _no_contables:
+        gastos_db = [g for g in gastos_db
+                     if str(g.get("categoria_gasto") or "") != CATEGORIA_NO_CONTABLE]
 
     # -----------------------------------------------------------------
     # FASE 1 -- clasificación sin tocar la base de datos
@@ -4676,6 +4692,12 @@ elif modulo == "📈 Analítica y Estadísticas":
                        "Corre `migraciones/fase2_categorias.sql` para activar "
                        "el análisis de gastos por categoría.")
         else:
+            if _no_contables:
+                _sum_nc = sum(g.get("monto", 0) for g in _no_contables)
+                st.caption(f"Se excluyen {len(_no_contables)} registro(s) marcados "
+                           f"como «{CATEGORIA_NO_CONTABLE}» por "
+                           f"${format_currency_co(_sum_nc)}. Siguen en la base de "
+                           f"datos; simplemente no son dinero que salió.")
             _fechas = [_fecha_gasto_dt(g) for g in gastos_db]
             _gran = _granularidad(_fechas)
             _ahora = now_co()
