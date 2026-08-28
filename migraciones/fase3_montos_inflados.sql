@@ -429,3 +429,57 @@ select id_gasto, fecha_gasto, descripcion, monto, categoria_gasto
 -- Ojo: 'CASA OPTICA' es un laboratorio, no una casa. Por eso la consulta
 -- excluye ya LABORATORIO Y PROVEEDORES -- si no, saldrían decenas de
 -- filas suyas y taparían lo que sí importa.
+
+
+-- ---------------------------------------------------------------------
+-- 13. Por qué siguen 626 filas sin clasificar  [SOLO CONSULTAS]
+-- ---------------------------------------------------------------------
+-- Después de la tercera pasada el sin clasificar estaba en 6,3%. El
+-- bloque 11 lo mide ahora en 13,1% (626 de 4793). Dos mediciones que no
+-- pueden ser ambas ciertas sobre el mismo dato.
+--
+-- La sospecha: NULL y 'SIN CLASIFICAR' no son lo mismo. Todas las pasadas
+-- filtran por  categoria_gasto = 'SIN CLASIFICAR'  a secas, así que una
+-- fila con NULL nunca las cumple y ninguna pasada la ha tocado jamás.
+-- La medición del 6,3% probablemente tampoco las contaba. El bloque 11 sí
+-- las cuenta, porque usa coalesce. Si es eso, no es que la clasificación
+-- haya empeorado: es que ahora se está mirando entero.
+
+-- 13a. Separar los dos casos. Si 'nulos' es un número grande, ahí está.
+select count(*) filter (where categoria_gasto is null)             as nulos,
+       count(*) filter (where categoria_gasto = 'SIN CLASIFICAR')  as sin_clasificar,
+       count(*) filter (where categoria_gasto = '')                as cadena_vacia,
+       count(*)                                                    as total
+  from gastos_caja;
+
+-- 13b. Las nueve de material óptico que la cuarta pasada no alcanzó.
+--      Corrió, pero estas se le escaparon: quiero ver por qué.
+select id_gasto, fecha_gasto, descripcion, monto, categoria_gasto
+  from gastos_caja
+ where coalesce(categoria_gasto, 'SIN CLASIFICAR') = 'SIN CLASIFICAR'
+   and descripcion ~* '(poly|solution|multisolut|freshlook|lens)'
+ order by descripcion;
+
+-- 13c. Lo que de verdad importa de las 626: no son 626 conceptos
+--      distintos, son unos pocos repetidos muchas veces. Esta consulta
+--      los ordena por PLATA, no por número de filas -- clasificar
+--      cincuenta gastos de $2.000 mueve la aguja mucho menos que
+--      clasificar cinco de $400.000.
+select lower(trim(descripcion))     as concepto,
+       count(*)                     as veces,
+       sum(monto)                   as total,
+       min(date(fecha_gasto))       as desde,
+       max(date(fecha_gasto))       as hasta
+  from gastos_caja
+ where coalesce(categoria_gasto, 'SIN CLASIFICAR') = 'SIN CLASIFICAR'
+ group by 1
+ order by total desc
+ limit 60;
+
+-- 13d. Y cuánta plata hay ahí en total, para saber si vale la pena.
+select count(*)                             as filas,
+       sum(monto)                           as plata_sin_clasificar,
+       round(100.0 * sum(monto) /
+             (select sum(monto) from gastos_caja), 1) as pct_del_gasto
+  from gastos_caja
+ where coalesce(categoria_gasto, 'SIN CLASIFICAR') = 'SIN CLASIFICAR';
