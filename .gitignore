@@ -1,0 +1,21 @@
+# Credenciales. Nunca deben llegar al repositorio: la app lee Supabase y
+# la clave de firma de sesión desde aquí cuando corre en local.
+.env
+.env.*
+.streamlit/secrets.toml
+
+# Entornos y caché de Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Basura del sistema y del editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Salidas temporales
+*.pdf
+*.log

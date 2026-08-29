@@ -13,6 +13,8 @@ from dotenv import load_dotenv
 from fpdf import FPDF
 from datetime import datetime, timezone, timedelta
 import bcrypt
+import hmac
+import hashlib
 
 # =====================================================================
 # 1. CONFIGURACIÓN INICIAL DE PÁGINA Y ESTILOS (MODO CLARO CON ACENTOS SUAVES)
@@ -616,16 +618,69 @@ def get_image_base64(path):
             return base64.b64encode(img_file.read()).decode()
     return None
 
+# ── Token de sesión ───────────────────────────────────────────────────
+# El token anterior era base64("usuario||fecha"). Base64 no es cifrado:
+# es una forma de escribir, y se revierte sin ninguna clave. Cualquiera
+# podía fabricar el de otro usuario y entrar sin contraseña -- y el
+# usuario administrador es la cédula que va impresa como NIT en todas las
+# facturas, así que la llave estaba en manos de cualquier paciente.
+#
+# Ahora el token lleva una firma HMAC-SHA256 con una clave que solo
+# conoce el servidor. El contenido sigue siendo legible (no hace falta
+# esconderlo) pero ya no se puede fabricar uno válido sin la clave.
+def _clave_firma():
+    """Clave para firmar la sesión. Sin ella no se acepta ningún token."""
+    try:
+        return st.secrets["AUTH_SECRET"]
+    except Exception:
+        return os.getenv("AUTH_SECRET", "")
+
+
+def _firmar_token(user_id):
+    cuerpo = f"{user_id}||{now_co().strftime('%Y-%m-%d')}"
+    clave = _clave_firma()
+    if not clave:
+        return ""
+    firma = hmac.new(clave.encode(), cuerpo.encode(), hashlib.sha256).hexdigest()
+    return base64.urlsafe_b64encode(f"{cuerpo}||{firma}".encode()).decode()
+
+
+def _verificar_token(token):
+    """Devuelve el usuario del token, o None. Ante la duda, None.
+
+    Si no hay clave configurada NO se acepta nada: es preferible que
+    alguien tenga que volver a escribir su contraseña a que un token
+    falsificado entre porque el servidor está a medio configurar."""
+    clave = _clave_firma()
+    if not clave or not token:
+        return None
+    try:
+        crudo = base64.urlsafe_b64decode(token.encode()).decode("utf-8")
+        user_id, fecha, firma = crudo.split("||")
+    except Exception:
+        return None
+    if fecha != now_co().strftime("%Y-%m-%d") or user_id not in USUARIOS_PERMITIDOS:
+        return None
+    esperada = hmac.new(clave.encode(), f"{user_id}||{fecha}".encode(),
+                        hashlib.sha256).hexdigest()
+    # compare_digest y no '==': comparar cadenas normalmente tarda más
+    # cuanto más coincidan, y ese tiempo deja adivinar la firma carácter
+    # a carácter.
+    if not hmac.compare_digest(firma, esperada):
+        return None
+    return USUARIOS_PERMITIDOS[user_id]
+
+
 if "user_info" not in st.session_state: st.session_state.user_info = None
 
 if st.session_state.user_info is None and "auth_token" in st.query_params:
-    try:
-        token = st.query_params["auth_token"]
-        decoded_token = base64.b64decode(token).decode("utf-8")
-        token_user_id, token_date = decoded_token.split("||")
-        if token_date == now_co().strftime("%Y-%m-%d") and token_user_id in USUARIOS_PERMITIDOS:
-            st.session_state.user_info = USUARIOS_PERMITIDOS[token_user_id]
-    except Exception: pass
+    _usuario_token = _verificar_token(st.query_params.get("auth_token"))
+    if _usuario_token:
+        st.session_state.user_info = _usuario_token
+    else:
+        # Token inválido, caducado o firmado con otra clave: se descarta
+        # para que no quede pegado en la URL intentándolo en cada recarga.
+        del st.query_params["auth_token"]
 
 if not st.session_state.user_info:
     st.markdown("<br><br><br>", unsafe_allow_html=True)
@@ -647,11 +702,16 @@ if not st.session_state.user_info:
                 user_clean = user_input.strip().lower()
                 if user_clean in USUARIOS_PERMITIDOS and bcrypt.checkpw(pass_input.strip().encode(), USUARIOS_PERMITIDOS[user_clean]["hash"].encode()):
                     st.session_state.user_info = USUARIOS_PERMITIDOS[user_clean]
-                    nuevo_token = base64.b64encode(f"{user_clean}||{now_co().strftime('%Y-%m-%d')}".encode("utf-8")).decode("utf-8")
-                    st.query_params["auth_token"] = nuevo_token
+                    nuevo_token = _firmar_token(user_clean)
+                    if nuevo_token:
+                        st.query_params["auth_token"] = nuevo_token
                     st.rerun()
                 else:
                     st.error("⚠️ Usuario o contraseña incorrectos.")
+            if not _clave_firma():
+                st.caption("⚠️ Falta configurar `AUTH_SECRET`. Puedes entrar con "
+                           "usuario y contraseña, pero la sesión no se recordará "
+                           "al recargar.")
     st.stop()
 
 # =====================================================================
@@ -1159,6 +1219,15 @@ CATEGORIA_NO_CONTABLE = "NO ES UN GASTO"
 # que es justo donde aparecían importes como un sándwich de $5.500.000.
 UMBRAL_GASTO_ALTO = 2_500_000
 
+# Agudeza visual con la que llegan prellenados los campos. No es un
+# invento: es lo que el negocio venía registrando de hecho -- la factura
+# imprimía "20/20" fijo en el PDF, sin mirar el dato -- así que un campo
+# editable con ese valor por defecto es estrictamente más honesto que un
+# texto quemado. Aun así es un valor por defecto, no una medición: si el
+# optómetra midió otra cosa, hay que cambiarlo.
+AV_LEJOS_DEFECTO = "20/20"
+AV_CERCA_DEFECTO = "0.50M"
+
 
 def format_currency_co(val):
     """
@@ -1473,10 +1542,17 @@ def dibujar_media_carta(pdf, paciente, historia, venta, tipo_documento, logo_pat
     pdf.cell(70, 5, f"RX FINAL: {paciente['nombre_completo']}", border="L,T,B")
     pdf.set_font("helvetica", "B", 8); pdf.cell(40, 5, "AV", border="T,B", ln=1, align="C")
     
+    # La AV se imprimía quemada como "20/20" en ambos ojos, ignorando lo
+    # que se hubiera registrado: una factura decía 20/20 aunque el
+    # optómetra hubiera anotado 20/40. Ahora sale el dato real, y solo si
+    # no hay ninguno se cae al valor por defecto.
+    av_od_fc = str(venta.get('av_od') or historia.get('av_od') or AV_LEJOS_DEFECTO).upper()
+    av_oi_fc = str(venta.get('av_oi') or historia.get('av_oi') or AV_LEJOS_DEFECTO).upper()
+
     pdf.set_font("helvetica", "", 8); pdf.set_xy(10, 91)
-    pdf.cell(70, 5, f"OD: {format_rx_ui(historia.get('rx_final_od', 'N/A'))}", border="L,B"); pdf.cell(40, 5, "20/20", border="B", ln=1, align="C")
+    pdf.cell(70, 5, f"OD: {format_rx_ui(historia.get('rx_final_od', 'N/A'))}", border="L,B"); pdf.cell(40, 5, av_od_fc, border="B", ln=1, align="C")
     
-    pdf.set_xy(10, 96); pdf.cell(70, 5, f"OI: {format_rx_ui(historia.get('rx_final_oi', 'N/A'))}", border="L,B"); pdf.cell(40, 5, "20/20", border="B", ln=1, align="C")
+    pdf.set_xy(10, 96); pdf.cell(70, 5, f"OI: {format_rx_ui(historia.get('rx_final_oi', 'N/A'))}", border="L,B"); pdf.cell(40, 5, av_oi_fc, border="B", ln=1, align="C")
     
     add_str = format_add(historia.get('adicion'))
     add_text = f" ADD: {add_str}" if add_str else ""
@@ -1782,8 +1858,26 @@ if "trigger_clear_factura" in st.session_state and st.session_state.trigger_clea
     for k in ["subtotal_input", "abono_input", "descuento_input", "altura_focal_input"]: st.session_state[k] = ""
     for k in ["esf_od_ext", "cil_od_ext", "esf_oi_ext", "cil_oi_ext", "add_ext"]: st.session_state[k] = 0.0
     for k in ["eje_od_ext", "eje_oi_ext"]: st.session_state[k] = 0
-    for k in ["av_od_ext", "dp_od_ext", "av_oi_ext", "dp_oi_ext", "av_cerca_od_input", "av_cerca_oi_input"]: st.session_state[k] = ""
+    for k in ["dp_od_ext", "dp_oi_ext"]: st.session_state[k] = ""
+    # La AV vuelve a su valor por defecto, no a vacío: si volviera vacía,
+    # la siguiente factura saldría sin agudeza y nadie lo notaría.
+    for k in ["av_od_ext", "av_oi_ext"]: st.session_state[k] = AV_LEJOS_DEFECTO
+    for k in ["av_cerca_od_ext", "av_cerca_oi_ext"]: st.session_state[k] = AV_CERCA_DEFECTO
     st.session_state.trigger_clear_factura = False
+
+# Los campos de AV usan 'key' y no 'value', así que Streamlit ignora
+# cualquier valor inicial que se les pase: la única forma de prellenarlos
+# es sembrar el session_state antes de crear el widget.
+for _k, _v in (("av_od_ext", AV_LEJOS_DEFECTO), ("av_oi_ext", AV_LEJOS_DEFECTO),
+               ("av_cerca_od_ext", AV_CERCA_DEFECTO),
+               ("av_cerca_oi_ext", AV_CERCA_DEFECTO),
+               # El eje se sembraba solo al limpiar el formulario DESPUÉS de
+               # una venta, así que en la primera factura de cada sesión el
+               # widget arrancaba en su min_value (-5) y, si había cilindro,
+               # la fórmula salía como "x -5°" -- un eje que no existe, y así
+               # se iba a la receta y a la orden de laboratorio.
+               ("eje_od_ext", 0), ("eje_oi_ext", 0)):
+    st.session_state.setdefault(_k, _v)
 
 if "trigger_clear_recaudo" in st.session_state and st.session_state.trigger_clear_recaudo:
     st.session_state.monto_rec_input = ""
@@ -2557,13 +2651,23 @@ elif modulo == "🛍️ Óptica y Facturación":
                 
                 num_factura = st.text_input("N° de Factura", value=str(sugerido))
                 
+                # Si la comprobación de duplicado falla, se BLOQUEA. Antes
+                # era 'except: pass', así que un fallo de red la daba por
+                # buena y se creaba la factura repetida sin que nadie se
+                # enterara -- y dos facturas con el mismo número son un
+                # problema contable, no una molestia.
                 factura_existe = False
                 if num_factura:
                     try:
                         if len(supabase.table("ventas_facturacion").select("numero_factura").eq("numero_factura", num_factura).execute().data) > 0:
                             st.error(f"⚠️ El número de factura **{num_factura}** ya existe.")
                             factura_existe = True
-                    except: pass
+                    except Exception:
+                        st.error("⚠️ No se pudo comprobar si el número de factura ya "
+                                 "existe (sin conexión con la base de datos). No se "
+                                 "puede facturar a ciegas: revisa la conexión y "
+                                 "vuelve a intentarlo.")
+                        factura_existe = True
 
                 st.markdown("##### Origen de los Lentes")
                 opc_rx = ["Fórmula del Sistema"] if historias_data else []
@@ -2578,20 +2682,26 @@ elif modulo == "🛍️ Óptica y Facturación":
                                "(no como texto libre), para que la receta y las órdenes de "
                                "laboratorio los lean correctamente.")
                     st.markdown("**Ojo Derecho (OD)**")
-                    ext1, ext2, ext3, ext4, ext5 = st.columns(5)
+                    ext1, ext2, ext3, ext4, ext5, ext6 = st.columns(6)
                     esf_od_ext = ext1.number_input("Esfera OD", step=0.25, format="%.2f", key="esf_od_ext")
                     cil_od_ext = ext2.number_input("Cilindro OD", step=0.25, format="%.2f", key="cil_od_ext", on_change=force_negative_cyl, args=("cil_od_ext",))
                     eje_od_ext = ext3.number_input("Eje OD", min_value=-5, max_value=180, step=5, key="eje_od_ext", on_change=wrap_eje, args=("eje_od_ext",))
-                    av_od_ext = ext4.text_input("AV OD", key="av_od_ext").upper()
-                    dp_od_ext = ext5.text_input("DP OD (mm)", key="dp_od_ext").upper()
+                    av_od_ext = ext4.text_input("AV VL OD", key="av_od_ext",
+                                                help="Agudeza visual de lejos.").upper()
+                    av_cerca_od_ext = ext5.text_input("AV VP OD", key="av_cerca_od_ext",
+                                                      help="Agudeza visual de cerca.").upper()
+                    dp_od_ext = ext6.text_input("DP OD (mm)", key="dp_od_ext").upper()
 
                     st.markdown("**Ojo Izquierdo (OI)**")
-                    ext6, ext7, ext8, ext9, ext10 = st.columns(5)
-                    esf_oi_ext = ext6.number_input("Esfera OI", step=0.25, format="%.2f", key="esf_oi_ext")
-                    cil_oi_ext = ext7.number_input("Cilindro OI", step=0.25, format="%.2f", key="cil_oi_ext", on_change=force_negative_cyl, args=("cil_oi_ext",))
-                    eje_oi_ext = ext8.number_input("Eje OI", min_value=-5, max_value=180, step=5, key="eje_oi_ext", on_change=wrap_eje, args=("eje_oi_ext",))
-                    av_oi_ext = ext9.text_input("AV OI", key="av_oi_ext").upper()
-                    dp_oi_ext = ext10.text_input("DP OI (mm)", key="dp_oi_ext").upper()
+                    ext7, ext8, ext9, ext10, ext11, ext12 = st.columns(6)
+                    esf_oi_ext = ext7.number_input("Esfera OI", step=0.25, format="%.2f", key="esf_oi_ext")
+                    cil_oi_ext = ext8.number_input("Cilindro OI", step=0.25, format="%.2f", key="cil_oi_ext", on_change=force_negative_cyl, args=("cil_oi_ext",))
+                    eje_oi_ext = ext9.number_input("Eje OI", min_value=-5, max_value=180, step=5, key="eje_oi_ext", on_change=wrap_eje, args=("eje_oi_ext",))
+                    av_oi_ext = ext10.text_input("AV VL OI", key="av_oi_ext",
+                                                 help="Agudeza visual de lejos.").upper()
+                    av_cerca_oi_ext = ext11.text_input("AV VP OI", key="av_cerca_oi_ext",
+                                                       help="Agudeza visual de cerca.").upper()
+                    dp_oi_ext = ext12.text_input("DP OI (mm)", key="dp_oi_ext").upper()
 
                     add_ext = st.number_input("Adición (ADD)", min_value=0.00, step=0.25, format="%.2f", key="add_ext")
 
@@ -2603,6 +2713,7 @@ elif modulo == "🛍️ Óptica y Facturación":
                         "adicion": f"{add_ext:+.2f}" if add_ext > 0.0 else "",
                         "dp": dp_ext_combined, "observaciones": "FÓRMULA EXTERNA",
                         "av_od": av_od_ext, "av_oi": av_oi_ext,
+                        "av_cerca_od": av_cerca_od_ext, "av_cerca_oi": av_cerca_oi_ext,
                     }
                 else:
                     historia = {"rx_final_od": "N/A", "rx_final_oi": "N/A", "adicion": "", "dp": "", "observaciones": "NO APLICA RX"}
@@ -2688,10 +2799,17 @@ elif modulo == "🛍️ Óptica y Facturación":
                     filtro = col_rx1.selectbox("Filtro", ["SIN FILTRO", "ANTIRREFLEJO", "FOTOSENSIBLE", "ANTIRREFLEJO + FOTOSENSIBLE"])
                     uso = col_rx2.selectbox("Uso", ["PERMANENTE", "PROLONGADO", "ESFUERZO VISUAL", "PROTECCIÓN"])
                     prox_control = col_rx2.text_input("Próximo Control").upper()
-                    av_od = col_rx1.text_input("AV Lejos OD", value=historia.get("av_od", "")).upper()
-                    av_oi = col_rx2.text_input("AV Lejos OI", value=historia.get("av_oi", "")).upper()
-                    av_cerca_od = col_rx1.text_input("AV Cerca OD", key="av_cerca_od_input").upper()
-                    av_cerca_oi = col_rx2.text_input("AV Cerca OI", key="av_cerca_oi_input").upper()
+                    # Sin 'key': el valor viene de la fórmula de arriba, y con
+                    # key Streamlit ignoraría el value y estos campos nunca se
+                    # enterarían de lo que se escribió en la fórmula externa.
+                    av_od = col_rx1.text_input(
+                        "AV VL OD", value=historia.get("av_od") or AV_LEJOS_DEFECTO).upper()
+                    av_oi = col_rx2.text_input(
+                        "AV VL OI", value=historia.get("av_oi") or AV_LEJOS_DEFECTO).upper()
+                    av_cerca_od = col_rx1.text_input(
+                        "AV VP OD", value=historia.get("av_cerca_od") or AV_CERCA_DEFECTO).upper()
+                    av_cerca_oi = col_rx2.text_input(
+                        "AV VP OI", value=historia.get("av_cerca_oi") or AV_CERCA_DEFECTO).upper()
                     detalles_rx = {"tipo_lente": tipo_lente, "filtro": filtro, "uso": uso, "prox_control": prox_control,
                                     "av_od": av_od, "av_oi": av_oi, "av_cerca_od": av_cerca_od, "av_cerca_oi": av_cerca_oi}
                 
@@ -2713,7 +2831,14 @@ elif modulo == "🛍️ Óptica y Facturación":
                             "numero_factura": num_factura, "titular_nombre": titular_nombre, "titular_doc": titular_doc, "titular_tel": titular_tel,
                             "descripcion": desc_producto, "subtotal": sub_val, "descuento": desc_calc, "total": tot_neto, 
                             "abono": abono_val, "saldo": sal_pend, "fecha_entrega": fecha_entrega, "altura_focal": altura_focal,
-                            "metodo_pago": metodo_pago
+                            "metodo_pago": metodo_pago,
+                            # La AV va aquí para que el PDF imprima exactamente lo
+                            # mismo que se guarda en la base: es el dato que el
+                            # usuario acabó de escribir en el expander, no el que
+                            # traía la historia clínica.
+                            "av_od": detalles_rx.get("av_od", ""), "av_oi": detalles_rx.get("av_oi", ""),
+                            "av_cerca_od": detalles_rx.get("av_cerca_od", ""),
+                            "av_cerca_oi": detalles_rx.get("av_cerca_oi", ""),
                         }
                         # Se calcula antes del insert para poder persistir la
                         # fórmula usada en la venta (ya no vive solo en el PDF).
@@ -3114,20 +3239,25 @@ elif modulo == "🛍️ Óptica y Facturación":
                     dp_od_prev, dp_oi_prev = (dp_prev.split("/") + [""])[:2] if "/" in dp_prev else (dp_prev, dp_prev)
 
                     st.markdown("**OD**")
-                    eo1, eo2, eo3, eo4, eo5 = st.columns(5)
+                    eo1, eo2, eo3, eo4, eo5, eo6 = st.columns(6)
                     e_esf_od = eo1.number_input("Esfera OD", step=0.25, format="%.2f", value=esf_od_prev, key=f"e_esf_od_{venta_e['numero_factura']}")
                     e_cil_od = eo2.number_input("Cilindro OD", step=0.25, format="%.2f", value=cil_od_prev, key=f"e_cil_od_{venta_e['numero_factura']}")
                     e_eje_od = eo3.number_input("Eje OD", min_value=-5, max_value=180, step=5, value=eje_od_prev, key=f"e_eje_od_{venta_e['numero_factura']}")
-                    e_av_od = eo4.text_input("AV OD", value=(venta_e.get("av_od") or "")).upper()
-                    e_dp_od = eo5.text_input("DP OD", value=dp_od_prev.strip()).upper()
+                    # Las facturas viejas no guardaron AV: se muestra el valor por
+                    # defecto para poder corregirlo, no para dar por medido algo
+                    # que nadie midió.
+                    e_av_od = eo4.text_input("AV VL OD", value=(venta_e.get("av_od") or AV_LEJOS_DEFECTO)).upper()
+                    e_av_cerca_od = eo5.text_input("AV VP OD", value=(venta_e.get("av_cerca_od") or AV_CERCA_DEFECTO)).upper()
+                    e_dp_od = eo6.text_input("DP OD", value=dp_od_prev.strip()).upper()
 
                     st.markdown("**OI**")
-                    ei1, ei2, ei3, ei4, ei5 = st.columns(5)
+                    ei1, ei2, ei3, ei4, ei5, ei6 = st.columns(6)
                     e_esf_oi = ei1.number_input("Esfera OI", step=0.25, format="%.2f", value=esf_oi_prev, key=f"e_esf_oi_{venta_e['numero_factura']}")
                     e_cil_oi = ei2.number_input("Cilindro OI", step=0.25, format="%.2f", value=cil_oi_prev, key=f"e_cil_oi_{venta_e['numero_factura']}")
                     e_eje_oi = ei3.number_input("Eje OI", min_value=-5, max_value=180, step=5, value=eje_oi_prev, key=f"e_eje_oi_{venta_e['numero_factura']}")
-                    e_av_oi = ei4.text_input("AV OI", value=(venta_e.get("av_oi") or "")).upper()
-                    e_dp_oi = ei5.text_input("DP OI", value=dp_oi_prev.strip()).upper()
+                    e_av_oi = ei4.text_input("AV VL OI", value=(venta_e.get("av_oi") or AV_LEJOS_DEFECTO)).upper()
+                    e_av_cerca_oi = ei5.text_input("AV VP OI", value=(venta_e.get("av_cerca_oi") or AV_CERCA_DEFECTO)).upper()
+                    e_dp_oi = ei6.text_input("DP OI", value=dp_oi_prev.strip()).upper()
 
                     add_prev = 0.0
                     try:
@@ -3173,6 +3303,7 @@ elif modulo == "🛍️ Óptica y Facturación":
                                 "adicion": f"{e_add:+.2f}" if e_add > 0.0 else "",
                                 "dp": f"{e_dp_od}/{e_dp_oi}",
                                 "av_od": e_av_od, "av_oi": e_av_oi,
+                                "av_cerca_od": e_av_cerca_od, "av_cerca_oi": e_av_cerca_oi,
                                 "titular_nombre": e_pac_nombre, "titular_doc": e_pac_doc, "titular_tel": e_pac_tel,
                                 "paciente_documento": e_pac_doc if e_pac_doc else venta_e.get("paciente_documento"),
                                 **sello_auditoria(),
