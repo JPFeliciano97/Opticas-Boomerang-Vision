@@ -2858,6 +2858,12 @@ elif modulo == "🛍️ Óptica y Facturación":
                                 "av_od": detalles_rx.get("av_od", ""), "av_oi": detalles_rx.get("av_oi", ""),
                                 "av_cerca_od": detalles_rx.get("av_cerca_od", ""), "av_cerca_oi": detalles_rx.get("av_cerca_oi", ""),
                                 "origen_rx": origen_rx,
+                                # La migración rellenó 'tipo_venta' en todo el
+                                # histórico, pero el insert nunca lo escribía:
+                                # cada venta nueva entraba con la columna en
+                                # blanco y el relleno se quedaba congelado en
+                                # la fecha de la migración.
+                                "tipo_venta": "GAFAS",
                                 "montura_codigo": selected_frame_code if (origen_montura == "Montura de Vitrina" and selected_frame_code) else None,
                                 "recargo_pct": recargo_pct if recargo_pct > 0 else None,
                                 "recargo_valor": recargo_valor,
@@ -2976,6 +2982,7 @@ elif modulo == "🛍️ Óptica y Facturación":
                     "estado_lab": "Entregado",
                     "fecha_venta": now_co().isoformat(),
                     "laboratorio": "", "origen": "ACTUAL",
+                    "tipo_venta": "MENOR",
                     "recargo_pct": recargo_pct_menor if recargo_pct_menor > 0 else None,
                     "recargo_valor": recargo_valor_menor,
                 }).execute()
