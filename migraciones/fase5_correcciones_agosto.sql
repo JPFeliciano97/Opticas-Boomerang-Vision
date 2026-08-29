@@ -77,11 +77,42 @@ select id_gasto,
  where id_gasto between 4350 and 4372
  order by id_gasto;
 
--- Con el día que salga de ahí, descomenta y pon la fecha. NO se corrigen
--- a ciegas: un abono de $700.000 movido al mes equivocado desordena dos
--- meses en vez de uno.
--- update gastos_caja set fecha_gasto = 'AAAA-MM-DD 00:00:00-05'
---  where id_gasto in (4360, 4361, 4362);
+-- 3c. Resuelto: son del 13 de FEBRERO de 2026
+-- La ventana no deja lugar a duda. La fila 4359 es del 11 de febrero y la
+-- 4363 del 14, y entre ellas solo caben el 12 y el 13. El dato corrupto
+-- dice '2026-11-13': el DÍA sobrevivió y lo que se estropeó fue el mes,
+-- 02 leído como 11. Trece está dentro de la ventana; doce no explicaría
+-- de dónde salió ese día.
+update gastos_caja
+   set fecha_gasto = '2026-02-13 00:00:00-05'
+ where id_gasto in (4360, 4361, 4362);
+
+-- Control: las tres deben quedar entre la 4359 y la 4363, en orden.
+select id_gasto, to_char(fecha_gasto at time zone 'America/Bogota', 'YYYY-MM-DD') as dia,
+       descripcion, monto
+  from gastos_caja
+ where id_gasto between 4358 and 4364
+ order by id_gasto;
+
+
+-- ---------------------------------------------------------------------
+-- 3d. Dos abonos idénticos a COOAPA en la misma semana  [CONSULTA]
+-- ---------------------------------------------------------------------
+-- Al mirar la ventana aparece algo que no venía buscando: la fila 4351 es
+-- 'ABONO A COOAPA' de $700.000 el 9 de febrero, y la 4361 es 'ABONO
+-- COOAPA' de $700.000 el 13. Mismo importe redondo, mismo acreedor,
+-- cuatro días de diferencia. Puede ser real -- dos cuotas seguidas -- o
+-- puede ser la misma fila cargada dos veces por la migración.
+--
+-- NO lo corrijo: $700.000 borrados por equivocación son $700.000. Esta
+-- consulta saca todos los abonos a COOAPA para que veas el ritmo normal;
+-- si siempre hay uno al mes, dos en la misma semana sobran.
+select id_gasto,
+       to_char(fecha_gasto at time zone 'America/Bogota', 'YYYY-MM-DD') as dia,
+       descripcion, monto, metodo_pago
+  from gastos_caja
+ where descripcion ~* 'coapa'
+ order by fecha_gasto;
 
 
 -- ---------------------------------------------------------------------
