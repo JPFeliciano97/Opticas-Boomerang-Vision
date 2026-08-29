@@ -11,7 +11,12 @@ textColor = "#111111"
 font = "sans serif"
 
 [client]
-showErrorDetails = true
+# Antes: true. Cualquier error mostraba la traza de Python completa a
+# quien estuviera usando la app -- rutas del servidor, nombres de tabla y
+# el fragmento de consulta que falló. El personal no puede hacer nada con
+# eso y a un extraño le sirve de mapa. Los errores siguen apareciendo en
+# los logs de Streamlit Cloud, que es donde hay que mirarlos.
+showErrorDetails = false
 toolbarMode = "minimal"
 
 [server]

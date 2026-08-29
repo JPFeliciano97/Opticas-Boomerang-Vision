@@ -13,6 +13,8 @@ from dotenv import load_dotenv
 from fpdf import FPDF
 from datetime import datetime, timezone, timedelta
 import bcrypt
+import hmac
+import hashlib
 
 # =====================================================================
 # 1. CONFIGURACIÓN INICIAL DE PÁGINA Y ESTILOS (MODO CLARO CON ACENTOS SUAVES)
@@ -616,16 +618,69 @@ def get_image_base64(path):
             return base64.b64encode(img_file.read()).decode()
     return None
 
+# ── Token de sesión ───────────────────────────────────────────────────
+# El token anterior era base64("usuario||fecha"). Base64 no es cifrado:
+# es una forma de escribir, y se revierte sin ninguna clave. Cualquiera
+# podía fabricar el de otro usuario y entrar sin contraseña -- y el
+# usuario administrador es la cédula que va impresa como NIT en todas las
+# facturas, así que la llave estaba en manos de cualquier paciente.
+#
+# Ahora el token lleva una firma HMAC-SHA256 con una clave que solo
+# conoce el servidor. El contenido sigue siendo legible (no hace falta
+# esconderlo) pero ya no se puede fabricar uno válido sin la clave.
+def _clave_firma():
+    """Clave para firmar la sesión. Sin ella no se acepta ningún token."""
+    try:
+        return st.secrets["AUTH_SECRET"]
+    except Exception:
+        return os.getenv("AUTH_SECRET", "")
+
+
+def _firmar_token(user_id):
+    cuerpo = f"{user_id}||{now_co().strftime('%Y-%m-%d')}"
+    clave = _clave_firma()
+    if not clave:
+        return ""
+    firma = hmac.new(clave.encode(), cuerpo.encode(), hashlib.sha256).hexdigest()
+    return base64.urlsafe_b64encode(f"{cuerpo}||{firma}".encode()).decode()
+
+
+def _verificar_token(token):
+    """Devuelve el usuario del token, o None. Ante la duda, None.
+
+    Si no hay clave configurada NO se acepta nada: es preferible que
+    alguien tenga que volver a escribir su contraseña a que un token
+    falsificado entre porque el servidor está a medio configurar."""
+    clave = _clave_firma()
+    if not clave or not token:
+        return None
+    try:
+        crudo = base64.urlsafe_b64decode(token.encode()).decode("utf-8")
+        user_id, fecha, firma = crudo.split("||")
+    except Exception:
+        return None
+    if fecha != now_co().strftime("%Y-%m-%d") or user_id not in USUARIOS_PERMITIDOS:
+        return None
+    esperada = hmac.new(clave.encode(), f"{user_id}||{fecha}".encode(),
+                        hashlib.sha256).hexdigest()
+    # compare_digest y no '==': comparar cadenas normalmente tarda más
+    # cuanto más coincidan, y ese tiempo deja adivinar la firma carácter
+    # a carácter.
+    if not hmac.compare_digest(firma, esperada):
+        return None
+    return USUARIOS_PERMITIDOS[user_id]
+
+
 if "user_info" not in st.session_state: st.session_state.user_info = None
 
 if st.session_state.user_info is None and "auth_token" in st.query_params:
-    try:
-        token = st.query_params["auth_token"]
-        decoded_token = base64.b64decode(token).decode("utf-8")
-        token_user_id, token_date = decoded_token.split("||")
-        if token_date == now_co().strftime("%Y-%m-%d") and token_user_id in USUARIOS_PERMITIDOS:
-            st.session_state.user_info = USUARIOS_PERMITIDOS[token_user_id]
-    except Exception: pass
+    _usuario_token = _verificar_token(st.query_params.get("auth_token"))
+    if _usuario_token:
+        st.session_state.user_info = _usuario_token
+    else:
+        # Token inválido, caducado o firmado con otra clave: se descarta
+        # para que no quede pegado en la URL intentándolo en cada recarga.
+        del st.query_params["auth_token"]
 
 if not st.session_state.user_info:
     st.markdown("<br><br><br>", unsafe_allow_html=True)
@@ -647,11 +702,16 @@ if not st.session_state.user_info:
                 user_clean = user_input.strip().lower()
                 if user_clean in USUARIOS_PERMITIDOS and bcrypt.checkpw(pass_input.strip().encode(), USUARIOS_PERMITIDOS[user_clean]["hash"].encode()):
                     st.session_state.user_info = USUARIOS_PERMITIDOS[user_clean]
-                    nuevo_token = base64.b64encode(f"{user_clean}||{now_co().strftime('%Y-%m-%d')}".encode("utf-8")).decode("utf-8")
-                    st.query_params["auth_token"] = nuevo_token
+                    nuevo_token = _firmar_token(user_clean)
+                    if nuevo_token:
+                        st.query_params["auth_token"] = nuevo_token
                     st.rerun()
                 else:
                     st.error("⚠️ Usuario o contraseña incorrectos.")
+            if not _clave_firma():
+                st.caption("⚠️ Falta configurar `AUTH_SECRET`. Puedes entrar con "
+                           "usuario y contraseña, pero la sesión no se recordará "
+                           "al recargar.")
     st.stop()
 
 # =====================================================================
@@ -2591,13 +2651,23 @@ elif modulo == "🛍️ Óptica y Facturación":
                 
                 num_factura = st.text_input("N° de Factura", value=str(sugerido))
                 
+                # Si la comprobación de duplicado falla, se BLOQUEA. Antes
+                # era 'except: pass', así que un fallo de red la daba por
+                # buena y se creaba la factura repetida sin que nadie se
+                # enterara -- y dos facturas con el mismo número son un
+                # problema contable, no una molestia.
                 factura_existe = False
                 if num_factura:
                     try:
                         if len(supabase.table("ventas_facturacion").select("numero_factura").eq("numero_factura", num_factura).execute().data) > 0:
                             st.error(f"⚠️ El número de factura **{num_factura}** ya existe.")
                             factura_existe = True
-                    except: pass
+                    except Exception:
+                        st.error("⚠️ No se pudo comprobar si el número de factura ya "
+                                 "existe (sin conexión con la base de datos). No se "
+                                 "puede facturar a ciegas: revisa la conexión y "
+                                 "vuelve a intentarlo.")
+                        factura_existe = True
 
                 st.markdown("##### Origen de los Lentes")
                 opc_rx = ["Fórmula del Sistema"] if historias_data else []
