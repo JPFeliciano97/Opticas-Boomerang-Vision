@@ -107,11 +107,18 @@ select id_gasto, to_char(fecha_gasto at time zone 'America/Bogota', 'YYYY-MM-DD'
 -- NO lo corrijo: $700.000 borrados por equivocación son $700.000. Esta
 -- consulta saca todos los abonos a COOAPA para que veas el ritmo normal;
 -- si siempre hay uno al mes, dos en la misma semana sobran.
+-- CORRECCIÓN: la primera versión de esta consulta buscaba 'coapa', con
+-- una sola O, y la cooperativa es COOAPA, con dos. Devolvió cero filas y
+-- eso parecía una respuesta -- «no hay duplicados» -- cuando en realidad
+-- era el patrón que estaba mal. Una consulta vacía no es un dato hasta
+-- que se comprueba que la consulta era correcta.
+-- Ahora el patrón tolera las variantes: co+apa acepta COAPA, COOAPA y
+-- cualquier número de oes, por si alguna fila se escribió con un dedazo.
 select id_gasto,
        to_char(fecha_gasto at time zone 'America/Bogota', 'YYYY-MM-DD') as dia,
        descripcion, monto, metodo_pago
   from gastos_caja
- where descripcion ~* 'coapa'
+ where descripcion ~* 'c[o]+apa'
  order by fecha_gasto;
 
 
