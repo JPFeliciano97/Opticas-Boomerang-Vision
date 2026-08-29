@@ -2824,8 +2824,11 @@ elif modulo == "🛍️ Óptica y Facturación":
                     elif desc_calc > sub_val:
                         st.warning("⚠️ El descuento no puede ser mayor que el subtotal.")
                     elif abono_val > tot_neto:
-                        st.warning(f"⚠️ El abono (${format_currency_co(abono_val)}) no puede ser mayor que el total "
-                                   f"a pagar (${format_currency_co(tot_neto)}). Revisa los valores.")
+                        # El '$' va escapado: dos sin escapar en el mismo
+                        # texto los toma Streamlit como delimitadores de
+                        # fórmula LaTeX y se come lo que hay en medio.
+                        st.warning(f"⚠️ El abono (\${format_currency_co(abono_val)}) no puede ser mayor que el total "
+                                   f"a pagar (\${format_currency_co(tot_neto)}). Revisa los valores.")
                     else:
                         venta_data = {
                             "numero_factura": num_factura, "titular_nombre": titular_nombre, "titular_doc": titular_doc, "titular_tel": titular_tel,
@@ -3278,8 +3281,8 @@ elif modulo == "🛍️ Óptica y Facturación":
 
                 if guardar_edicion:
                     if e_abono > e_total:
-                        st.error(f"⚠️ El abono (${format_currency_co(int(e_abono))}) no puede ser mayor que el "
-                                 f"total (${format_currency_co(int(e_total))}). Corrige los valores y guarda de nuevo.")
+                        st.error(f"⚠️ El abono (\${format_currency_co(int(e_abono))}) no puede ser mayor que el "
+                                 f"total (\${format_currency_co(int(e_total))}). Corrige los valores y guarda de nuevo.")
                     elif e_pac_doc and not es_documento_numerico(e_pac_doc):
                         st.error(f"⚠️ El documento solo debe contener números. '{e_pac_doc}' no es válido.")
                     else:
@@ -4798,6 +4801,12 @@ elif modulo == "📈 Analítica y Estadísticas":
                 ant[cat] = ant.get(cat, 0) + monto
         return act, ant, ini_act, ini_ant, dias_corridos, parcial
 
+    def _money_md(v):
+        """_money para texto markdown. Streamlit lee $...$ como LaTeX, así
+        que dos importes en una misma frase hacen pareja y se comen lo que
+        va en medio -- incluidas las negritas. Escapado no pasa."""
+        return _money(v).replace("$", "\\$")
+
     def _money(v):
         """Formatea con el signo DELANTE del símbolo: '-$250.000' y no
         '$-250.000', que es donde queda si se antepone el '$' a secas.
@@ -4809,8 +4818,8 @@ elif modulo == "📈 Analítica y Estadísticas":
     # Nombres propios: 'tab_gastos' ya existe en Cuadre de Caja. No hay
     # conflicto real -- son ramas excluyentes del if de módulos -- pero en
     # un archivo de 5.000 líneas conviene que no se llamen igual.
-    tab_an_ventas, tab_an_gastos, tab_an_respaldo = st.tabs(
-        ["📈 Ventas y resultado", "💸 Gastos", "💾 Respaldo"])
+    tab_an_ventas, tab_an_gastos, tab_an_mensual, tab_an_respaldo = st.tabs(
+        ["📈 Ventas y resultado", "💸 Gastos", "📆 Gasto mensual", "💾 Respaldo"])
 
     # =================================================================
     # PESTAÑA: GASTOS
@@ -5032,6 +5041,149 @@ elif modulo == "📈 Analítica y Estadísticas":
                 st.altair_chart(chart_dm, use_container_width=True)
                 st.caption("Si la carga fija crece más rápido que la operación, el punto de "
                            "equilibrio sube aunque las ventas no cambien.")
+
+    # =================================================================
+    # PESTAÑA: GASTO MENSUAL CLASIFICADO
+    # =================================================================
+    # La pestaña de Gastos responde "cómo va la cosa": qué cambió, si la
+    # tendencia sube, a quién le pagas más. Esta responde otra pregunta,
+    # la de sentarse a mirar las cuentas: cuánto fue exactamente la nómina
+    # en julio. Eso es una tabla, no un gráfico -- de un apilado no se lee
+    # una cifra. Y a diferencia del gráfico de evolución, aquí NO se
+    # agrupa nada en OTROS ni se esconden los retiros: la pregunta es en
+    # qué se va la plata, y responderla escondiendo cuatro categorías
+    # sería no responderla.
+    with tab_an_mensual:
+        if not gastos_db:
+            st.info("Todavía no hay gastos registrados.")
+        elif not columna_existe("gastos_caja", "categoria_gasto"):
+            st.warning("⚠️ Falta la columna `categoria_gasto` en Supabase. "
+                       "Corre `migraciones/fase2_categorias.sql`.")
+        else:
+            _hoy_m = now_co()
+            n_meses = st.slider("Meses a mostrar", min_value=3, max_value=24, value=12,
+                                key="meses_gasto_mensual")
+            _desde_m = (_hoy_m - pd.DateOffset(months=n_meses - 1)).replace(
+                day=1, hour=0, minute=0, second=0, microsecond=0)
+
+            filas_m = []
+            for g in gastos_db:
+                f = _fecha_gasto_dt(g)
+                if not f or f < _desde_m or f > _hoy_m:
+                    continue
+                filas_m.append({"Mes": f.strftime("%Y-%m"),
+                                "Categoría": str(g.get("categoria_gasto")
+                                                 or CATEGORIA_POR_DEFECTO),
+                                "Monto": g.get("monto", 0)})
+
+            if not filas_m:
+                st.info(f"No hay gastos en los últimos {n_meses} meses.")
+            else:
+                df_m = pd.DataFrame(filas_m)
+                meses_orden = sorted(df_m["Mes"].unique())
+                total_periodo = df_m["Monto"].sum()
+                _oper_m = df_m[~df_m["Categoría"].isin(CATS_NO_OPERATIVAS)]["Monto"].sum()
+                _noop_m = total_periodo - _oper_m
+
+                mm1, mm2, mm3 = st.columns(3)
+                mm1.metric("💸 Costo de operar", _money(_oper_m),
+                           help="Todo lo que cuesta tener la óptica abierta.")
+                mm2.metric("🏦 Retiros, deuda e impuestos", _money(_noop_m),
+                           help="Sale del negocio, pero no es costo de operar.")
+                # Con un solo mes el promedio es el mismo número repetido:
+                # ocupa un hueco sin decir nada. Ahí sirve más saber cuántos
+                # movimientos hubo.
+                if len(meses_orden) > 1:
+                    mm3.metric("📊 Promedio mensual", _money(_oper_m / len(meses_orden)),
+                               help=f"Costo de operar repartido entre los "
+                                    f"{len(meses_orden)} meses con datos.")
+                else:
+                    mm3.metric("🧾 Movimientos", f"{len(df_m)}",
+                               help="Gastos registrados en el periodo.")
+
+                def _tabla_mes(categorias, titulo, nota):
+                    """Categorías en filas, meses en columnas, con total y peso."""
+                    sub = df_m[df_m["Categoría"].isin(categorias)]
+                    if sub.empty:
+                        return 0
+                    piv = (sub.pivot_table(index="Categoría", columns="Mes",
+                                           values="Monto", aggfunc="sum")
+                              .reindex(columns=meses_orden).fillna(0))
+                    piv["TOTAL"] = piv.sum(axis=1)
+                    piv = piv.sort_values("TOTAL", ascending=False)
+                    # El peso se calcula sobre el gasto TOTAL del periodo, no
+                    # sobre el de la tabla: si cada bloque sumara 100% por su
+                    # cuenta, los dos porcentajes no se podrían comparar.
+                    piv["% del gasto"] = piv["TOTAL"] / total_periodo * 100
+                    fila_total = piv.sum(numeric_only=True)
+                    fila_total["% del gasto"] = piv["TOTAL"].sum() / total_periodo * 100
+                    piv.loc["TOTAL"] = fila_total
+                    st.markdown(f"#### {titulo}")
+                    st.caption(nota)
+                    # Un mes sin gasto en una categoría se deja en blanco y
+                    # no como "$0": con catorce columnas, una rejilla llena
+                    # de ceros esconde las cifras que sí importan.
+                    def _celda(x):
+                        return "" if not x else f"${format_currency_co(x)}"
+                    fmt = {c: _celda for c in list(meses_orden) + ["TOTAL"]}
+                    fmt["% del gasto"] = "{:.1f}%"
+                    st.dataframe(piv.style.format(fmt), use_container_width=True)
+                    return piv.loc["TOTAL", "TOTAL"]
+
+                _cats_oper = [c for c in df_m["Categoría"].unique()
+                              if c not in CATS_NO_OPERATIVAS]
+                _tabla_mes(_cats_oper, "🏪 Lo que cuesta operar",
+                           "Ordenado de mayor a menor. La columna del final dice "
+                           "cuánto pesa cada categoría sobre TODO lo que salió, "
+                           "operativo y no operativo, para que los dos bloques "
+                           "se puedan comparar entre sí.")
+
+                if _noop_m:
+                    st.markdown("")
+                    _tabla_mes(CATS_NO_OPERATIVAS, "🏦 Sale del negocio, pero no es costo de operar",
+                               "Repartir utilidad, pagar deuda y pagar impuestos no es "
+                               "el precio de tener la óptica abierta. Mezclarlo con lo "
+                               "de arriba haría creer que operar cuesta más de lo que "
+                               "cuesta.")
+
+                st.divider()
+
+                # ---------- ranking de un mes ----------
+                mes_sel = st.selectbox("Ver el detalle de un mes", meses_orden[::-1],
+                                       key="mes_detalle_gasto")
+                df_mes = (df_m[df_m["Mes"] == mes_sel]
+                          .groupby("Categoría", as_index=False)["Monto"].sum()
+                          .sort_values("Monto", ascending=False))
+                if not df_mes.empty:
+                    st.markdown(f"### 🔎 En qué se fue la plata en {mes_sel}")
+                    # Barras horizontales y de un solo color: aquí la pregunta
+                    # es el tamaño y el orden, no de quién es cada barra --
+                    # el nombre va escrito al lado. Pintar catorce colores
+                    # distintos añadiría ruido sin añadir información.
+                    orden_mes = list(df_mes["Categoría"])
+                    chart_mes = alt.Chart(df_mes).mark_bar(
+                        height=20, cornerRadiusTopRight=4, cornerRadiusBottomRight=4,
+                        color="#2a78d6"
+                    ).encode(
+                        y=alt.Y("Categoría:N", sort=orden_mes, title=None),
+                        x=alt.X("Monto:Q", title="Gasto del mes ($)",
+                                axis=alt.Axis(format="~s")),
+                        tooltip=[alt.Tooltip("Categoría:N"),
+                                 alt.Tooltip("Monto:Q", format=",.0f")],
+                    ).properties(height=max(140, 26 * len(df_mes)))
+                    st.altair_chart(chart_mes, use_container_width=True)
+                    _top = df_mes.iloc[0]
+                    _tot_mes = df_mes["Monto"].sum()
+                    st.caption(f"El mayor gasto de {mes_sel} fue **{_top['Categoría']}** "
+                               f"con {_money_md(_top['Monto'])}, el "
+                               f"**{_top['Monto'] / _tot_mes * 100:.1f}%** de "
+                               f"{_money_md(_tot_mes)}.")
+
+                    _sin_clas = df_mes[df_mes["Categoría"] == CATEGORIA_POR_DEFECTO]
+                    if not _sin_clas.empty:
+                        st.caption(f"⚠️ {_money_md(_sin_clas.iloc[0]['Monto'])} de ese mes "
+                                   f"están sin clasificar. Puedes corregirlos en "
+                                   f"Cuadre de Caja → Reclasificar Gastos Recientes.")
 
     # =================================================================
     # PESTAÑA: VENTAS Y RESULTADO
