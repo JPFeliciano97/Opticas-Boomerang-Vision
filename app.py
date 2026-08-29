@@ -5760,6 +5760,11 @@ elif modulo == "📈 Analítica y Estadísticas":
     with tab_an_respaldo:
         st.markdown("### 💾 Respaldo Total de Base de Datos (Master Backup)")
         st.caption("Descarga un archivo Excel con todas las tablas críticas del sistema para tu respaldo local.")
+        st.warning("🔒 Este archivo lleva la historia clínica y los datos personales "
+                   "de tus pacientes. Es para tu respaldo, en tu computador. "
+                   "**No lo compartas con nadie** -- ni conmigo, ni por correo, ni "
+                   "por WhatsApp. Si lo que quieres es que alguien revise las "
+                   "cifras, usa la exportación de abajo.")
         if st.button("📥 Generar Respaldo Completo en Excel", type="primary"):
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -5784,6 +5789,91 @@ elif modulo == "📈 Analítica y Estadísticas":
                 data=excel_bytes,
                 file_name=f"MasterBackup_BoomerangVision_{now_co().strftime('%d-%m-%Y')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
+
+        st.divider()
+
+        # -------------------------------------------------------------
+        # Exportación para revisión externa
+        # -------------------------------------------------------------
+        # El Master Backup de arriba sirve para respaldar, no para
+        # compartir: lleva pacientes e historias clínicas. Esto es lo
+        # contrario -- lo mínimo para que alguien revise las cuentas,
+        # con las columnas elegidas una por una.
+        #
+        # La lista de ventas es BLANCA, no negra: se nombran las columnas
+        # que SÍ salen. Si mañana la tabla gana una columna nueva -- una
+        # dirección, un diagnóstico -- queda fuera por defecto en vez de
+        # colarse en el archivo sin que nadie se dé cuenta.
+        COLS_VENTA_REVISION = [
+            "numero_factura", "fecha_venta", "subtotal", "descuento", "total",
+            "abono", "saldo", "metodo_pago", "estado", "estado_lab",
+            "laboratorio", "origen_rx", "tipo_venta", "origen_registro",
+            "recargo_pct", "recargo_valor", "fecha_entrega",
+        ]
+        COLS_GASTO_REVISION = [
+            "id_gasto", "fecha_gasto", "descripcion", "monto", "tipo_gasto",
+            "categoria_gasto", "metodo_pago",
+        ]
+
+        st.markdown("### 🔍 Exportar para revisión")
+        st.caption("Para cuando quieras que alguien de fuera mire las cifras. "
+                   "Sale lo justo para entender el dinero: **ni un dato de "
+                   "paciente, ni una fórmula, ni un diagnóstico**. De las "
+                   "ventas salen los importes y el estado, nunca de quién son.")
+
+        meses_exp = st.slider("Meses a exportar", 1, 24, 3, key="meses_export_rev",
+                              help="Cuantos menos meses, más fácil de revisar. "
+                                   "Tres suele bastar para ver lo reciente.")
+        _corte_exp = (now_co() - pd.DateOffset(months=meses_exp)).replace(
+            hour=0, minute=0, second=0, microsecond=0)
+
+        def _csv_recortado(filas, columnas, campo_fecha):
+            """Filas del periodo, solo con las columnas de la lista blanca."""
+            if not filas:
+                return None, 0
+            df = pd.DataFrame(filas)
+            if campo_fecha in df.columns:
+                _f = pd.to_datetime(df[campo_fecha], format="ISO8601",
+                                    errors="coerce", utc=True)
+                df = df[_f >= pd.Timestamp(_corte_exp).tz_convert("UTC")]
+            # reindex y no [columnas]: si una columna aún no existe en la
+            # base, sale vacía en vez de reventar la exportación entera.
+            df = df.reindex(columns=columnas)
+            return df.to_csv(index=False).encode("utf-8-sig"), len(df)
+
+        _hoy_txt = now_co().strftime("%Y-%m-%d")
+        exp1, exp2 = st.columns(2)
+
+        csv_g, n_g = _csv_recortado(gastos_db, COLS_GASTO_REVISION, "fecha_gasto")
+        if csv_g is not None:
+            exp1.download_button(
+                f"📥 Gastos ({n_g} filas)", data=csv_g,
+                file_name=f"gastos_revision_{_hoy_txt}.csv", mime="text/csv",
+                use_container_width=True)
+        else:
+            exp1.caption("Sin gastos en el periodo.")
+
+        csv_v, n_v = _csv_recortado(ventas_db, COLS_VENTA_REVISION, "fecha_venta")
+        if csv_v is not None:
+            exp2.download_button(
+                f"📥 Ventas ({n_v} filas)", data=csv_v,
+                file_name=f"ventas_revision_{_hoy_txt}.csv", mime="text/csv",
+                use_container_width=True)
+        else:
+            exp2.caption("Sin ventas en el periodo.")
+
+        with st.expander("¿Qué sale exactamente en cada archivo?"):
+            st.markdown(
+                "**Gastos:** " + ", ".join(f"`{c}`" for c in COLS_GASTO_REVISION)
+                + "\n\n**Ventas:** " + ", ".join(f"`{c}`" for c in COLS_VENTA_REVISION)
+                + "\n\nNo sale **ninguna** columna de la tabla de pacientes ni de "
+                  "historias clínicas. De las ventas quedan fuera a propósito el "
+                  "nombre, el documento y el teléfono del titular, y toda la "
+                  "fórmula: `rx_final_od`, `rx_final_oi`, `adicion`, `dp`, `av_*`. "
+                  "Las descripciones de los gastos sí llevan nombres de tu equipo "
+                  "(«nómina Rosa»), porque sin ellas no se puede clasificar nada."
             )
 
 # =====================================================================
