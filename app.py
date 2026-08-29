@@ -4801,6 +4801,56 @@ elif modulo == "📈 Analítica y Estadísticas":
                 ant[cat] = ant.get(cat, 0) + monto
         return act, ant, ini_act, ini_ant, dias_corridos, parcial
 
+    # -----------------------------------------------------------------
+    # Personas detrás del gasto de personal
+    # -----------------------------------------------------------------
+    # El orden es el que manda: lo más específico primero. Los patrones
+    # salieron de leer las descripciones REALES de 18 meses, no de
+    # suponer cómo se escriben los nombres -- por eso 'nelson' no lleva
+    # \b de cierre: en la base hay 'rosa30 nelson30' y con el límite de
+    # palabra esa fila se perdía.
+    #
+    # La seguridad social va primero a propósito: 'colsanitas nelson rosa'
+    # es un pago de EPS, no el sueldo de dos personas, y contarlo como
+    # sueldo inflaría lo que cuesta cada uno.
+    PERSONAS_GASTO = [
+        ("SEGURIDAD SOCIAL",   r"(\beps\b|colsanitas|\bsanitas\b)"),
+        ("DRA. ASTRID",        r"astrid"),
+        ("DRA. NORMA",         r"\bnorma\b"),
+        ("ALEJANDRA",          r"alejandra"),
+        ("ALCIRA",             r"alcira"),
+        ("ANA LEON",           r"ana\s+le[oó]n"),
+        ("NELSON Y ROSA",      r"(?=.*\bnelson)(?=.*\brosa)"),
+        ("NELSON",             r"\bnelson"),
+        ("ROSA",               r"\brosa"),
+        ("EXTERNO SIN NOMBRE", r"(optometra|\bdra\b|consulta|doctor|\bturno\b)"),
+    ]
+    PERSONA_COMPARTIDA = "NELSON Y ROSA"
+    PERSONA_SIN_ID = "SIN IDENTIFICAR"
+    # Las categorías cuyo gasto es, en el fondo, pagarle a alguien.
+    CATS_PERSONAL = ["NOMINA", "HONORARIOS POR CONSULTA", "HONORARIOS POR TURNO"]
+
+    def _persona_gasto(descripcion):
+        """Quién hay detrás de un gasto de personal. None si no aplica."""
+        d = str(descripcion or "")
+        for nombre, patron in PERSONAS_GASTO:
+            if re.search(patron, d, re.I):
+                return nombre
+        return PERSONA_SIN_ID
+
+    def _registrado_en_sistema(g):
+        """True si el gasto se registró EN la app, no en la migración.
+
+        Las filas migradas entraron con la fecha a secas, así que quedaron
+        todas a las 00:00:00 hora Colombia; las que registra la app llevan
+        la hora real del momento. Un gasto registrado justo a medianoche
+        se contaría como migrado, que es un caso que no ocurre en la
+        práctica y cuyo peor efecto es dejar una fila fuera."""
+        f = _fecha_gasto_dt(g)
+        if not f:
+            return False
+        return not (f.hour == 0 and f.minute == 0 and f.second == 0)
+
     def _money_md(v):
         """_money para texto markdown. Streamlit lee $...$ como LaTeX, así
         que dos importes en una misma frase hacen pareja y se comen lo que
@@ -5184,6 +5234,149 @@ elif modulo == "📈 Analítica y Estadísticas":
                         st.caption(f"⚠️ {_money_md(_sin_clas.iloc[0]['Monto'])} de ese mes "
                                    f"están sin clasificar. Puedes corregirlos en "
                                    f"Cuadre de Caja → Reclasificar Gastos Recientes.")
+
+
+                st.divider()
+
+                # ---------- costo de personal, por persona ----------
+                # La tabla de arriba dice que NOMINA fueron X pesos. Esto
+                # dice de quién. Incluye honorarios porque un optómetra
+                # externo también es costo de personal aunque no sea
+                # nómina; lo que NO incluye son los retiros del dueño, que
+                # siguen siendo reparto de utilidad y no sueldo.
+                st.markdown("### 👥 A quién le pagas")
+                solo_sistema = st.toggle(
+                    "Solo lo registrado en el sistema", value=True,
+                    key="personal_solo_sistema",
+                    help="Lo anterior a la app viene de una migración donde "
+                         "es probable que falten gastos. Actívalo para no "
+                         "sacar conclusiones de datos incompletos.")
+
+                # Respeta el mismo "Meses a mostrar" de arriba: un solo
+                # control para toda la pestaña. Si esta tabla ignorara el
+                # selector, dos tablas de la misma pantalla estarían
+                # hablando de periodos distintos sin decirlo.
+                base_p = [g for g in gastos_db
+                          if str(g.get("categoria_gasto") or "") in CATS_PERSONAL]
+                if solo_sistema:
+                    base_p = [g for g in base_p if _registrado_en_sistema(g)]
+
+                filas_p = []
+                for g in base_p:
+                    f = _fecha_gasto_dt(g)
+                    if not f or f < _desde_m or f > _hoy_m:
+                        continue
+                    filas_p.append({"Mes": f.strftime("%Y-%m"),
+                                    "Persona": _persona_gasto(g.get("descripcion")),
+                                    "Monto": g.get("monto", 0),
+                                    "Categoría": str(g.get("categoria_gasto") or ""),
+                                    "Concepto": str(g.get("descripcion") or ""),
+                                    "Fecha": f.strftime("%d/%m/%Y")})
+
+                if not filas_p:
+                    st.info("No hay gastos de personal registrados en la app "
+                            "todavía. Quita el filtro para ver el histórico.")
+                else:
+                    df_p = pd.DataFrame(filas_p)
+                    meses_p = sorted(df_p["Mes"].unique())
+                    total_p = df_p["Monto"].sum()
+                    st.caption(f"{len(df_p)} pagos entre {meses_p[0]} y {meses_p[-1]}, "
+                               f"por {_money_md(total_p)} en total.")
+
+                    piv_p = (df_p.pivot_table(index="Persona", columns="Mes",
+                                              values="Monto", aggfunc="sum")
+                                 .reindex(columns=meses_p).fillna(0))
+                    piv_p["TOTAL"] = piv_p.sum(axis=1)
+                    piv_p = piv_p.sort_values("TOTAL", ascending=False)
+                    piv_p["% del personal"] = piv_p["TOTAL"] / total_p * 100
+                    # Nómina y honorarios no son lo mismo: la primera se paga
+                    # esté como esté el mes, los segundos solo si hubo
+                    # consultas. Meterlos en la misma cifra hace creer que el
+                    # costo fijo de personal es mayor de lo que es.
+                    def _vinculo(persona):
+                        # La seguridad social va en la tabla porque es costo
+                        # de tener personal, pero no es una persona: dejarla
+                        # como "Nómina" la haría parecer un empleado más.
+                        if persona == "SEGURIDAD SOCIAL":
+                            return "Aporte de ley"
+                        cats = set(df_p[df_p["Persona"] == persona]["Categoría"])
+                        tiene_nom = "NOMINA" in cats
+                        tiene_hon = any(c.startswith("HONORARIOS") for c in cats)
+                        if tiene_nom and tiene_hon:
+                            return "Mixto"
+                        if tiene_hon:
+                            return "Por consulta o turno"
+                        return "Nómina"
+                    piv_p.insert(0, "Vínculo",
+                                 [_vinculo(i) for i in piv_p.index])
+                    _ft = piv_p.sum(numeric_only=True)
+                    _ft["% del personal"] = 100.0
+                    _ft["Vínculo"] = ""
+                    piv_p.loc["TOTAL"] = _ft
+                    def _celda_p(x):
+                        return "" if not x else f"${format_currency_co(x)}"
+                    _fmt_p = {c: _celda_p for c in list(meses_p) + ["TOTAL"]}
+                    _fmt_p["% del personal"] = "{:.1f}%"
+                    st.dataframe(piv_p.style.format(_fmt_p), use_container_width=True)
+
+                    _fijo = df_p[df_p["Categoría"] == "NOMINA"]["Monto"].sum()
+                    _var = total_p - _fijo
+                    if _fijo and _var:
+                        st.caption(f"De ese total, {_money_md(_fijo)} son nómina "
+                                   f"-- se paga vaya como vaya el mes -- y "
+                                   f"{_money_md(_var)} son honorarios por consulta "
+                                   f"o turno, que solo se pagan si hubo trabajo.")
+
+                    if PERSONA_COMPARTIDA in piv_p.index:
+                        _comp = piv_p.loc[PERSONA_COMPARTIDA, "TOTAL"]
+                        st.caption(f"⚠️ {_money_md(_comp)} están en registros que "
+                                   f"nombran a los dos («nelson y rosa», «rosa30 "
+                                   f"nelson30»). No los reparto entre ellos porque "
+                                   f"la descripción no dice cuánto fue de cada uno: "
+                                   f"inventar un 50/50 daría dos cifras falsas en "
+                                   f"vez de una verdadera. Si separas esos pagos al "
+                                   f"registrarlos, esta fila desaparece sola.")
+                    if PERSONA_SIN_ID in piv_p.index:
+                        st.caption(f"{_money_md(piv_p.loc[PERSONA_SIN_ID, 'TOTAL'])} "
+                                   f"en pagos cuya descripción no nombra a nadie.")
+
+                    # ---------- una persona ----------
+                    _personas = [i for i in piv_p.index if i != "TOTAL"]
+                    persona_sel = st.selectbox("Ver el detalle de una persona",
+                                               _personas, key="persona_detalle")
+                    df_uno = df_p[df_p["Persona"] == persona_sel]
+                    _tot_uno = df_uno["Monto"].sum()
+
+                    pu1, pu2, pu3 = st.columns(3)
+                    pu1.metric("💰 Total", _money(_tot_uno))
+                    pu2.metric("🧾 Pagos", f"{len(df_uno)}")
+                    pu3.metric("📅 Promedio por mes",
+                               _money(_tot_uno / max(1, df_uno['Mes'].nunique())))
+
+                    df_uno_mes = (df_uno.groupby("Mes", as_index=False)["Monto"].sum()
+                                        .sort_values("Mes"))
+                    if len(df_uno_mes) > 1:
+                        # Una sola serie: un color, sin leyenda. El título ya
+                        # dice de quién es.
+                        chart_uno = alt.Chart(df_uno_mes).mark_bar(
+                            size=30, cornerRadiusTopLeft=4, cornerRadiusTopRight=4,
+                            color="#2a78d6"
+                        ).encode(
+                            x=alt.X("Mes:N", title=None, sort=None,
+                                    axis=alt.Axis(labelAngle=0)),
+                            y=alt.Y("Monto:Q", title="Pagado ($)",
+                                    axis=alt.Axis(format="~s")),
+                            tooltip=[alt.Tooltip("Mes:N"),
+                                     alt.Tooltip("Monto:Q", format=",.0f")],
+                        ).properties(height=240)
+                        st.altair_chart(chart_uno, use_container_width=True)
+
+                    with st.expander(f"Ver los {len(df_uno)} pagos de {persona_sel}"):
+                        st.dataframe(
+                            df_uno.sort_values("Mes", ascending=False)[
+                                ["Fecha", "Concepto", "Monto"]]
+                                .style.format({"Monto": _celda_p}),
+                            use_container_width=True, hide_index=True)
 
     # =================================================================
     # PESTAÑA: VENTAS Y RESULTADO
