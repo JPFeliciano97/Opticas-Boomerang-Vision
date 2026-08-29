@@ -27,15 +27,11 @@ update gastos_caja
    set categoria_gasto = 'LABORATORIO Y PROVEEDORES'
  where id_gasto = 4718;
 
--- '6 UNIDADES COLA RATON' se deja SIN CLASIFICAR a propósito, pendiente
--- de confirmar qué es. En una óptica «cola de ratón» es el cordón para
--- colgar las gafas, que sería mercancía; pero también puede ser cola
--- para ratones, que sería aseo. Son categorías distintas y la
--- descripción no lo resuelve. Cuando lo confirmes:
---   update gastos_caja set categoria_gasto = 'LABORATORIO Y PROVEEDORES'
---    where id_gasto = 4748;   -- si es cordón para gafas
---   update gastos_caja set categoria_gasto = 'ASEO E INSUMOS'
---    where id_gasto = 4748;   -- si es cola para ratones
+-- '6 UNIDADES COLA RATON': confirmado por el negocio que es un accesorio
+-- antideslizante de silicona para las gafas. Es mercancía, no aseo.
+update gastos_caja
+   set categoria_gasto = 'LABORATORIO Y PROVEEDORES'
+ where id_gasto = 4748;
 
 
 -- ---------------------------------------------------------------------
@@ -65,12 +61,27 @@ select id_gasto, fecha_gasto, descripcion, monto, categoria_gasto
  where fecha_gasto > now()
  order by fecha_gasto;
 
--- Mira en el Excel original de qué día son y descomenta con la fecha
--- correcta. NO se corrigen a ciegas: un abono de $700.000 movido al mes
--- equivocado desordena dos meses en vez de uno.
--- update gastos_caja set fecha_gasto = '2026-01-13 00:00:00-05' where id_gasto = 4360;
--- update gastos_caja set fecha_gasto = '2026-01-13 00:00:00-05' where id_gasto = 4361;
--- update gastos_caja set fecha_gasto = '2026-01-13 00:00:00-05' where id_gasto = 4362;
+-- 3b. De qué día son en realidad  [CONSULTA]
+-- No hace falta abrir el Excel. Las tres filas son consecutivas -- 4360,
+-- 4361 y 4362 -- así que entraron juntas en la migración, y la migración
+-- cargó los gastos en orden de fecha. Sus vecinas de id delatan el día:
+-- si la 4359 es del 12 de enero y la 4363 del 13, las tres del medio son
+-- de esa misma fecha y no de noviembre.
+select id_gasto,
+       fecha_gasto,
+       to_char(fecha_gasto at time zone 'America/Bogota', 'YYYY-MM-DD') as dia,
+       descripcion,
+       monto,
+       case when id_gasto between 4360 and 4362 then '<<< LAS TRES' end as marca
+  from gastos_caja
+ where id_gasto between 4350 and 4372
+ order by id_gasto;
+
+-- Con el día que salga de ahí, descomenta y pon la fecha. NO se corrigen
+-- a ciegas: un abono de $700.000 movido al mes equivocado desordena dos
+-- meses en vez de uno.
+-- update gastos_caja set fecha_gasto = 'AAAA-MM-DD 00:00:00-05'
+--  where id_gasto in (4360, 4361, 4362);
 
 
 -- ---------------------------------------------------------------------
@@ -83,8 +94,8 @@ select id_gasto, fecha_gasto, descripcion, monto, metodo_pago
   from gastos_caja
  where id_gasto in (4789, 4790);
 
--- Si confirmas que fue un solo pago, se borra el segundo:
--- delete from gastos_caja where id_gasto = 4790;
+-- CONFIRMADO por el negocio: fue un solo pago. Se borra el segundo.
+delete from gastos_caja where id_gasto = 4790;
 
 
 -- ---------------------------------------------------------------------
