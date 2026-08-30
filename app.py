@@ -6,6 +6,7 @@ import base64
 import io
 import urllib.parse
 import re
+import unicodedata
 import calendar
 import pandas as pd
 import altair as alt
@@ -4847,10 +4848,12 @@ elif modulo == "📈 Analítica y Estadísticas":
         ("DRA. NORMA",         r"\bnorma\b"),
         ("ALEJANDRA",          r"alejandra"),
         ("ALCIRA",             r"alcira"),
-        ("ANA LEON",           r"ana\s+le[oó]n"),
-        ("NELSON Y ROSA",      r"(?=.*\bnelson)(?=.*\brosa)"),
+        # Rosa y "Ana Leon" son la MISMA persona: se llama Ana Rosa León.
+        # Estaban contadas como dos, así que su nómina aparecía partida en
+        # dos filas y ninguna de las dos decía lo que cobra de verdad.
+        ("NELSON Y ROSA",      r"(?=.*\bnelson)(?=.*(\brosa|ana\s+le[oó]n))"),
         ("NELSON",             r"\bnelson"),
-        ("ROSA",               r"\brosa"),
+        ("ROSA",               r"(\brosa|ana\s+le[oó]n)"),
         ("EXTERNO SIN NOMBRE", r"(optometra|\bdra\b|consulta|doctor|\bturno\b)"),
     ]
     PERSONA_COMPARTIDA = "NELSON Y ROSA"
@@ -4899,8 +4902,10 @@ elif modulo == "📈 Analítica y Estadísticas":
     # De lo general a lo particular. Antes se abría por ventas, que es solo
     # la mitad de la historia: se veía cuánto se facturó sin saber si el
     # mes dio ganancia. Ahora lo primero es el resultado.
-    tab_an_resumen, tab_an_ventas, tab_an_gastos, tab_an_mensual, tab_an_respaldo = st.tabs(
-        ["📊 Resumen", "📈 Ventas", "💸 Gastos", "📆 Las cuentas", "💾 Respaldo"])
+    (tab_an_resumen, tab_an_ventas, tab_an_gastos, tab_an_mensual,
+     tab_an_nomina, tab_an_respaldo) = st.tabs(
+        ["📊 Resumen", "📈 Ventas", "💸 Gastos", "📆 Las cuentas",
+         "👥 Nómina", "💾 Respaldo"])
 
     # =================================================================
     # PESTAÑA: RESUMEN
@@ -5286,204 +5291,221 @@ elif modulo == "📈 Analítica y Estadísticas":
                                    f"Cuadre de Caja → Reclasificar Gastos Recientes.")
 
 
+
+    # =================================================================
+    # PESTAÑA: NÓMINA
+    # =================================================================
+    # Estaba dentro de "Las cuentas", debajo de las tablas de categorías.
+    # Es una pregunta propia -- cuánto le pago a cada uno -- y merece su
+    # sitio en vez de estar al final de otra pantalla.
+    with tab_an_nomina:
+        if not gastos_db:
+            st.info("Todavía no hay gastos registrados.")
+        elif not columna_existe("gastos_caja", "categoria_gasto"):
+            st.warning("⚠️ Falta la columna `categoria_gasto` en Supabase. "
+                       "Corre `migraciones/fase2_categorias.sql`.")
+        else:
+            _hoy_m = now_co()
+            n_meses = st.slider("Meses a mostrar", min_value=3, max_value=24, value=12,
+                                key="meses_nomina")
+            _desde_m = (_hoy_m - pd.DateOffset(months=n_meses - 1)).replace(
+                day=1, hour=0, minute=0, second=0, microsecond=0)
+            # ---------- costo de personal, por persona ----------
+            # La tabla de arriba dice que NOMINA fueron X pesos. Esto
+            # dice de quién. Incluye honorarios porque un optómetra
+            # externo también es costo de personal aunque no sea
+            # nómina; lo que NO incluye son los retiros del dueño, que
+            # siguen siendo reparto de utilidad y no sueldo.
+            st.markdown("### 👥 A quién le pagas")
+            solo_sistema = st.toggle(
+                "Solo lo registrado en el sistema", value=True,
+                key="personal_solo_sistema",
+                help="Lo anterior a la app viene de una migración donde "
+                     "es probable que falten gastos. Actívalo para no "
+                     "sacar conclusiones de datos incompletos.")
+
+            # Respeta el mismo "Meses a mostrar" de arriba: un solo
+            # control para toda la pestaña. Si esta tabla ignorara el
+            # selector, dos tablas de la misma pantalla estarían
+            # hablando de periodos distintos sin decirlo.
+            base_p = [g for g in gastos_db
+                      if str(g.get("categoria_gasto") or "") in CATS_PERSONAL]
+            if solo_sistema:
+                base_p = [g for g in base_p if _registrado_en_sistema(g)]
+
+            filas_p = []
+            for g in base_p:
+                f = _fecha_gasto_dt(g)
+                if not f or f < _desde_m or f > _hoy_m:
+                    continue
+                filas_p.append({"Mes": f.strftime("%Y-%m"),
+                                "Persona": _persona_gasto(g.get("descripcion")),
+                                "Monto": g.get("monto", 0),
+                                "Categoría": str(g.get("categoria_gasto") or ""),
+                                "Concepto": str(g.get("descripcion") or ""),
+                                "Fecha": f.strftime("%d/%m/%Y")})
+
+            if not filas_p:
+                st.info("No hay gastos de personal registrados en la app "
+                        "todavía. Quita el filtro para ver el histórico.")
+            else:
+                df_p = pd.DataFrame(filas_p)
+                meses_p = sorted(df_p["Mes"].unique())
+                total_p = df_p["Monto"].sum()
+                st.caption(f"{len(df_p)} pagos entre {meses_p[0]} y {meses_p[-1]}, "
+                           f"por {_money_md(total_p)} en total.")
+
+                piv_p = (df_p.pivot_table(index="Persona", columns="Mes",
+                                          values="Monto", aggfunc="sum")
+                             .reindex(columns=meses_p).fillna(0))
+                piv_p["TOTAL"] = piv_p.sum(axis=1)
+                piv_p = piv_p.sort_values("TOTAL", ascending=False)
+                piv_p["% del personal"] = piv_p["TOTAL"] / total_p * 100
+                # Nómina y honorarios no son lo mismo: la primera se paga
+                # esté como esté el mes, los segundos solo si hubo
+                # consultas. Meterlos en la misma cifra hace creer que el
+                # costo fijo de personal es mayor de lo que es.
+                def _vinculo(persona):
+                    # La seguridad social va en la tabla porque es costo
+                    # de tener personal, pero no es una persona: dejarla
+                    # como "Nómina" la haría parecer un empleado más.
+                    if persona == "SEGURIDAD SOCIAL":
+                        return "Aporte de ley"
+                    cats = set(df_p[df_p["Persona"] == persona]["Categoría"])
+                    tiene_nom = "NOMINA" in cats
+                    tiene_hon = any(c.startswith("HONORARIOS") for c in cats)
+                    if tiene_nom and tiene_hon:
+                        return "Mixto"
+                    if tiene_hon:
+                        return "Por consulta o turno"
+                    return "Nómina"
+                piv_p.insert(0, "Vínculo",
+                             [_vinculo(i) for i in piv_p.index])
+                _ft = piv_p.sum(numeric_only=True)
+                _ft["% del personal"] = 100.0
+                _ft["Vínculo"] = ""
+                piv_p.loc["TOTAL"] = _ft
+                def _celda_p(x):
+                    return "" if not x else f"${format_currency_co(x)}"
+                _fmt_p = {c: _celda_p for c in list(meses_p) + ["TOTAL"]}
+                _fmt_p["% del personal"] = "{:.1f}%"
+                st.dataframe(piv_p.style.format(_fmt_p), use_container_width=True)
+
+                _fijo = df_p[df_p["Categoría"] == "NOMINA"]["Monto"].sum()
+                _var = total_p - _fijo
+                if _fijo and _var:
+                    st.caption(f"De ese total, {_money_md(_fijo)} son nómina "
+                               f"-- se paga vaya como vaya el mes -- y "
+                               f"{_money_md(_var)} son honorarios por consulta "
+                               f"o turno, que solo se pagan si hubo trabajo.")
+
+                if PERSONA_COMPARTIDA in piv_p.index:
+                    _comp = piv_p.loc[PERSONA_COMPARTIDA, "TOTAL"]
+                    st.caption(f"⚠️ {_money_md(_comp)} están en registros que "
+                               f"nombran a los dos («nelson y rosa», «rosa30 "
+                               f"nelson30»). No los reparto entre ellos porque "
+                               f"la descripción no dice cuánto fue de cada uno: "
+                               f"inventar un 50/50 daría dos cifras falsas en "
+                               f"vez de una verdadera. Si separas esos pagos al "
+                               f"registrarlos, esta fila desaparece sola.")
+                if PERSONA_SIN_ID in piv_p.index:
+                    st.caption(f"{_money_md(piv_p.loc[PERSONA_SIN_ID, 'TOTAL'])} "
+                               f"en pagos cuya descripción no nombra a nadie.")
+
+                # ---------- todo el equipo a la vez ----------
+                # La tabla de arriba da las cifras exactas; esto da la
+                # forma: quién sube, quién baja, quién es estable. Son
+                # dos preguntas distintas y ninguna sustituye a la otra.
+                _rank = [i for i in piv_p.index if i != "TOTAL"]
+                # Máximo seis series con color propio: a partir de ahí
+                # el color deja de identificar y estorba. El resto se
+                # junta en OTROS, que no es una persona -- es el resto.
+                _top6 = _rank[:6]
+                _hay_otros = len(_rank) > 6
+                df_eq = df_p.copy()
+                df_eq["Serie"] = df_eq["Persona"].apply(
+                    lambda x: x if x in _top6 else "OTROS")
+                df_eq = (df_eq.groupby(["Mes", "Serie"], as_index=False)["Monto"].sum()
+                         .rename(columns={"Monto": "Pagado"}).sort_values("Mes"))
+                _dom = _top6 + (["OTROS"] if _hay_otros else [])
+                _rango = COLORES_SERIE[:len(_dom)]
+                if len(meses_p) > 1:
+                    st.markdown("#### 📈 Cómo evoluciona cada uno")
+                    chart_eq = alt.Chart(df_eq).mark_line(
+                        point=alt.OverlayMarkDef(size=60, filled=True), strokeWidth=2
+                    ).encode(
+                        x=alt.X("Mes:N", title=None, sort=None,
+                                axis=alt.Axis(labelAngle=-45)),
+                        y=alt.Y("Pagado:Q", title="Pagado ($)",
+                                axis=alt.Axis(format="~s")),
+                        color=alt.Color("Serie:N", title=None,
+                                        scale=alt.Scale(domain=_dom, range=_rango),
+                                        legend=alt.Legend(orient="top", columns=3)),
+                        tooltip=[alt.Tooltip("Mes:N"), alt.Tooltip("Serie:N", title="Persona"),
+                                 alt.Tooltip("Pagado:Q", format=",.0f")],
+                    ).properties(height=300)
+                    st.altair_chart(chart_eq, use_container_width=True)
+                    st.caption("El color va con la persona, no con su puesto en el "
+                               "ranking: si un mes cambia el orden, las líneas no "
+                               "se repintan.")
+                else:
+                    st.markdown("#### 📊 Lo pagado a cada uno")
+                    chart_eq = alt.Chart(df_eq).mark_bar(
+                        size=30, cornerRadiusTopLeft=4, cornerRadiusTopRight=4
+                    ).encode(
+                        x=alt.X("Serie:N", sort=_dom, title=None,
+                                axis=alt.Axis(labelAngle=-30)),
+                        y=alt.Y("Pagado:Q", title="Pagado ($)",
+                                axis=alt.Axis(format="~s")),
+                        color=alt.Color("Serie:N", sort=_dom, legend=None,
+                                        scale=alt.Scale(domain=_dom, range=_rango)),
+                        tooltip=[alt.Tooltip("Serie:N", title="Persona"),
+                                 alt.Tooltip("Pagado:Q", format=",.0f")],
+                    ).properties(height=280)
+                    st.altair_chart(chart_eq, use_container_width=True)
+                    st.caption("Con un solo mes de datos no hay evolución que mostrar. "
+                               "Cuando haya dos o más, esto pasa a ser un gráfico de "
+                               "líneas con la trayectoria de cada uno.")
+
                 st.divider()
 
-                # ---------- costo de personal, por persona ----------
-                # La tabla de arriba dice que NOMINA fueron X pesos. Esto
-                # dice de quién. Incluye honorarios porque un optómetra
-                # externo también es costo de personal aunque no sea
-                # nómina; lo que NO incluye son los retiros del dueño, que
-                # siguen siendo reparto de utilidad y no sueldo.
-                st.markdown("### 👥 A quién le pagas")
-                solo_sistema = st.toggle(
-                    "Solo lo registrado en el sistema", value=True,
-                    key="personal_solo_sistema",
-                    help="Lo anterior a la app viene de una migración donde "
-                         "es probable que falten gastos. Actívalo para no "
-                         "sacar conclusiones de datos incompletos.")
+                # ---------- una persona ----------
+                _personas = [i for i in piv_p.index if i != "TOTAL"]
+                persona_sel = st.selectbox("Ver el detalle de una persona",
+                                           _personas, key="persona_detalle")
+                df_uno = df_p[df_p["Persona"] == persona_sel]
+                _tot_uno = df_uno["Monto"].sum()
 
-                # Respeta el mismo "Meses a mostrar" de arriba: un solo
-                # control para toda la pestaña. Si esta tabla ignorara el
-                # selector, dos tablas de la misma pantalla estarían
-                # hablando de periodos distintos sin decirlo.
-                base_p = [g for g in gastos_db
-                          if str(g.get("categoria_gasto") or "") in CATS_PERSONAL]
-                if solo_sistema:
-                    base_p = [g for g in base_p if _registrado_en_sistema(g)]
+                pu1, pu2, pu3 = st.columns(3)
+                pu1.metric("💰 Total", _money(_tot_uno))
+                pu2.metric("🧾 Pagos", f"{len(df_uno)}")
+                pu3.metric("📅 Promedio por mes",
+                           _money(_tot_uno / max(1, df_uno['Mes'].nunique())))
 
-                filas_p = []
-                for g in base_p:
-                    f = _fecha_gasto_dt(g)
-                    if not f or f < _desde_m or f > _hoy_m:
-                        continue
-                    filas_p.append({"Mes": f.strftime("%Y-%m"),
-                                    "Persona": _persona_gasto(g.get("descripcion")),
-                                    "Monto": g.get("monto", 0),
-                                    "Categoría": str(g.get("categoria_gasto") or ""),
-                                    "Concepto": str(g.get("descripcion") or ""),
-                                    "Fecha": f.strftime("%d/%m/%Y")})
+                df_uno_mes = (df_uno.groupby("Mes", as_index=False)["Monto"].sum()
+                                    .sort_values("Mes"))
+                if len(df_uno_mes) > 1:
+                    # Una sola serie: un color, sin leyenda. El título ya
+                    # dice de quién es.
+                    chart_uno = alt.Chart(df_uno_mes).mark_bar(
+                        size=30, cornerRadiusTopLeft=4, cornerRadiusTopRight=4,
+                        color="#2a78d6"
+                    ).encode(
+                        x=alt.X("Mes:N", title=None, sort=None,
+                                axis=alt.Axis(labelAngle=0)),
+                        y=alt.Y("Monto:Q", title="Pagado ($)",
+                                axis=alt.Axis(format="~s")),
+                        tooltip=[alt.Tooltip("Mes:N"),
+                                 alt.Tooltip("Monto:Q", format=",.0f")],
+                    ).properties(height=240)
+                    st.altair_chart(chart_uno, use_container_width=True)
 
-                if not filas_p:
-                    st.info("No hay gastos de personal registrados en la app "
-                            "todavía. Quita el filtro para ver el histórico.")
-                else:
-                    df_p = pd.DataFrame(filas_p)
-                    meses_p = sorted(df_p["Mes"].unique())
-                    total_p = df_p["Monto"].sum()
-                    st.caption(f"{len(df_p)} pagos entre {meses_p[0]} y {meses_p[-1]}, "
-                               f"por {_money_md(total_p)} en total.")
-
-                    piv_p = (df_p.pivot_table(index="Persona", columns="Mes",
-                                              values="Monto", aggfunc="sum")
-                                 .reindex(columns=meses_p).fillna(0))
-                    piv_p["TOTAL"] = piv_p.sum(axis=1)
-                    piv_p = piv_p.sort_values("TOTAL", ascending=False)
-                    piv_p["% del personal"] = piv_p["TOTAL"] / total_p * 100
-                    # Nómina y honorarios no son lo mismo: la primera se paga
-                    # esté como esté el mes, los segundos solo si hubo
-                    # consultas. Meterlos en la misma cifra hace creer que el
-                    # costo fijo de personal es mayor de lo que es.
-                    def _vinculo(persona):
-                        # La seguridad social va en la tabla porque es costo
-                        # de tener personal, pero no es una persona: dejarla
-                        # como "Nómina" la haría parecer un empleado más.
-                        if persona == "SEGURIDAD SOCIAL":
-                            return "Aporte de ley"
-                        cats = set(df_p[df_p["Persona"] == persona]["Categoría"])
-                        tiene_nom = "NOMINA" in cats
-                        tiene_hon = any(c.startswith("HONORARIOS") for c in cats)
-                        if tiene_nom and tiene_hon:
-                            return "Mixto"
-                        if tiene_hon:
-                            return "Por consulta o turno"
-                        return "Nómina"
-                    piv_p.insert(0, "Vínculo",
-                                 [_vinculo(i) for i in piv_p.index])
-                    _ft = piv_p.sum(numeric_only=True)
-                    _ft["% del personal"] = 100.0
-                    _ft["Vínculo"] = ""
-                    piv_p.loc["TOTAL"] = _ft
-                    def _celda_p(x):
-                        return "" if not x else f"${format_currency_co(x)}"
-                    _fmt_p = {c: _celda_p for c in list(meses_p) + ["TOTAL"]}
-                    _fmt_p["% del personal"] = "{:.1f}%"
-                    st.dataframe(piv_p.style.format(_fmt_p), use_container_width=True)
-
-                    _fijo = df_p[df_p["Categoría"] == "NOMINA"]["Monto"].sum()
-                    _var = total_p - _fijo
-                    if _fijo and _var:
-                        st.caption(f"De ese total, {_money_md(_fijo)} son nómina "
-                                   f"-- se paga vaya como vaya el mes -- y "
-                                   f"{_money_md(_var)} son honorarios por consulta "
-                                   f"o turno, que solo se pagan si hubo trabajo.")
-
-                    if PERSONA_COMPARTIDA in piv_p.index:
-                        _comp = piv_p.loc[PERSONA_COMPARTIDA, "TOTAL"]
-                        st.caption(f"⚠️ {_money_md(_comp)} están en registros que "
-                                   f"nombran a los dos («nelson y rosa», «rosa30 "
-                                   f"nelson30»). No los reparto entre ellos porque "
-                                   f"la descripción no dice cuánto fue de cada uno: "
-                                   f"inventar un 50/50 daría dos cifras falsas en "
-                                   f"vez de una verdadera. Si separas esos pagos al "
-                                   f"registrarlos, esta fila desaparece sola.")
-                    if PERSONA_SIN_ID in piv_p.index:
-                        st.caption(f"{_money_md(piv_p.loc[PERSONA_SIN_ID, 'TOTAL'])} "
-                                   f"en pagos cuya descripción no nombra a nadie.")
-
-                    # ---------- todo el equipo a la vez ----------
-                    # La tabla de arriba da las cifras exactas; esto da la
-                    # forma: quién sube, quién baja, quién es estable. Son
-                    # dos preguntas distintas y ninguna sustituye a la otra.
-                    _rank = [i for i in piv_p.index if i != "TOTAL"]
-                    # Máximo seis series con color propio: a partir de ahí
-                    # el color deja de identificar y estorba. El resto se
-                    # junta en OTROS, que no es una persona -- es el resto.
-                    _top6 = _rank[:6]
-                    _hay_otros = len(_rank) > 6
-                    df_eq = df_p.copy()
-                    df_eq["Serie"] = df_eq["Persona"].apply(
-                        lambda x: x if x in _top6 else "OTROS")
-                    df_eq = (df_eq.groupby(["Mes", "Serie"], as_index=False)["Monto"].sum()
-                             .rename(columns={"Monto": "Pagado"}).sort_values("Mes"))
-                    _dom = _top6 + (["OTROS"] if _hay_otros else [])
-                    _rango = COLORES_SERIE[:len(_dom)]
-                    if len(meses_p) > 1:
-                        st.markdown("#### 📈 Cómo evoluciona cada uno")
-                        chart_eq = alt.Chart(df_eq).mark_line(
-                            point=alt.OverlayMarkDef(size=60, filled=True), strokeWidth=2
-                        ).encode(
-                            x=alt.X("Mes:N", title=None, sort=None,
-                                    axis=alt.Axis(labelAngle=-45)),
-                            y=alt.Y("Pagado:Q", title="Pagado ($)",
-                                    axis=alt.Axis(format="~s")),
-                            color=alt.Color("Serie:N", title=None,
-                                            scale=alt.Scale(domain=_dom, range=_rango),
-                                            legend=alt.Legend(orient="top", columns=3)),
-                            tooltip=[alt.Tooltip("Mes:N"), alt.Tooltip("Serie:N", title="Persona"),
-                                     alt.Tooltip("Pagado:Q", format=",.0f")],
-                        ).properties(height=300)
-                        st.altair_chart(chart_eq, use_container_width=True)
-                        st.caption("El color va con la persona, no con su puesto en el "
-                                   "ranking: si un mes cambia el orden, las líneas no "
-                                   "se repintan.")
-                    else:
-                        st.markdown("#### 📊 Lo pagado a cada uno")
-                        chart_eq = alt.Chart(df_eq).mark_bar(
-                            size=30, cornerRadiusTopLeft=4, cornerRadiusTopRight=4
-                        ).encode(
-                            x=alt.X("Serie:N", sort=_dom, title=None,
-                                    axis=alt.Axis(labelAngle=-30)),
-                            y=alt.Y("Pagado:Q", title="Pagado ($)",
-                                    axis=alt.Axis(format="~s")),
-                            color=alt.Color("Serie:N", sort=_dom, legend=None,
-                                            scale=alt.Scale(domain=_dom, range=_rango)),
-                            tooltip=[alt.Tooltip("Serie:N", title="Persona"),
-                                     alt.Tooltip("Pagado:Q", format=",.0f")],
-                        ).properties(height=280)
-                        st.altair_chart(chart_eq, use_container_width=True)
-                        st.caption("Con un solo mes de datos no hay evolución que mostrar. "
-                                   "Cuando haya dos o más, esto pasa a ser un gráfico de "
-                                   "líneas con la trayectoria de cada uno.")
-
-                    st.divider()
-
-                    # ---------- una persona ----------
-                    _personas = [i for i in piv_p.index if i != "TOTAL"]
-                    persona_sel = st.selectbox("Ver el detalle de una persona",
-                                               _personas, key="persona_detalle")
-                    df_uno = df_p[df_p["Persona"] == persona_sel]
-                    _tot_uno = df_uno["Monto"].sum()
-
-                    pu1, pu2, pu3 = st.columns(3)
-                    pu1.metric("💰 Total", _money(_tot_uno))
-                    pu2.metric("🧾 Pagos", f"{len(df_uno)}")
-                    pu3.metric("📅 Promedio por mes",
-                               _money(_tot_uno / max(1, df_uno['Mes'].nunique())))
-
-                    df_uno_mes = (df_uno.groupby("Mes", as_index=False)["Monto"].sum()
-                                        .sort_values("Mes"))
-                    if len(df_uno_mes) > 1:
-                        # Una sola serie: un color, sin leyenda. El título ya
-                        # dice de quién es.
-                        chart_uno = alt.Chart(df_uno_mes).mark_bar(
-                            size=30, cornerRadiusTopLeft=4, cornerRadiusTopRight=4,
-                            color="#2a78d6"
-                        ).encode(
-                            x=alt.X("Mes:N", title=None, sort=None,
-                                    axis=alt.Axis(labelAngle=0)),
-                            y=alt.Y("Monto:Q", title="Pagado ($)",
-                                    axis=alt.Axis(format="~s")),
-                            tooltip=[alt.Tooltip("Mes:N"),
-                                     alt.Tooltip("Monto:Q", format=",.0f")],
-                        ).properties(height=240)
-                        st.altair_chart(chart_uno, use_container_width=True)
-
-                    with st.expander(f"Ver los {len(df_uno)} pagos de {persona_sel}"):
-                        st.dataframe(
-                            df_uno.sort_values("Mes", ascending=False)[
-                                ["Fecha", "Concepto", "Monto"]]
-                                .style.format({"Monto": _celda_p}),
-                            use_container_width=True, hide_index=True)
+                with st.expander(f"Ver los {len(df_uno)} pagos de {persona_sel}"):
+                    st.dataframe(
+                        df_uno.sort_values("Mes", ascending=False)[
+                            ["Fecha", "Concepto", "Monto"]]
+                            .style.format({"Monto": _celda_p}),
+                        use_container_width=True, hide_index=True)
 
     # =================================================================
     # PESTAÑA: VENTAS
@@ -5541,13 +5563,23 @@ elif modulo == "📈 Analítica y Estadísticas":
                 f"heredados de la migración y conviene corregirlos en la base. "
                 f"Ejemplos: {_ejemplos}.")
         
-        total_cartera_pendiente = df_dash['saldo'].sum()
+        # La cartera contaba TODO el histórico y daba $300 millones, con el
+        # 98% en el tramo de más de 90 días. No es que no cobres: es que las
+        # facturas migradas entraron con su saldo original y sin los pagos
+        # que se hicieron después, así que figuran eternamente pendientes.
+        # En agosto, facturando por la app, solo 7 de 70 quedan con saldo.
+        # Sumar las dos cosas convierte una cifra de gestión en un número
+        # que no significa nada.
+        #
+        # Se distinguen por la hora: las migradas entraron con la fecha a
+        # secas y quedaron a medianoche; las de la app llevan la hora real.
+        _hora_v = df_dash['fecha_venta'].dt
+        df_dash['_del_sistema'] = ~((_hora_v.hour == 0) & (_hora_v.minute == 0)
+                                    & (_hora_v.second == 0))
+        df_sistema = df_dash[df_dash['_del_sistema']]
+        total_cartera_pendiente = df_sistema['saldo'].sum()
+        _cartera_migrada = df_dash.loc[~df_dash['_del_sistema'], 'saldo'].sum()
         
-        # El selector de tres modos escondía dos tercios del contenido tras
-        # un control que casi nadie tocaba, y "Comparativa Multimes" quedó
-        # cubierta por el gráfico de facturado contra recaudado por mes. Se
-        # quita: la vista global se ve siempre, y mirar un mes concreto pasa
-        # a ser un desplegable opcional.
         mes_actual_str = hoy_an.strftime("%Y-%m")
         # Salvaguarda: las filas con fecha futura ya se descartan más
         # arriba, pero el dato migrado ha demostrado traer fechas
@@ -5557,46 +5589,70 @@ elif modulo == "📈 Analítica y Estadísticas":
             (m for m in df_dash['mes_anio'].unique() if m <= mes_actual_str),
             reverse=True)
 
+        # El mes en curso arriba y visible, no escondido en un desplegable:
+        # es lo que se viene a mirar. El selector queda encima por si se
+        # quiere otro mes.
         if meses_disponibles:
-            with st.expander("🔎 Ver un mes en concreto"):
-                mes_sel = st.selectbox("Mes:", meses_disponibles, key="mes_ventas_sel")
-                df_filtered = df_dash[df_dash['mes_anio'] == mes_sel]
-                total_facturado_m = df_filtered['total'].sum()
-                total_cobrado_m = df_filtered['abono'].sum()
+            _idx_actual = (meses_disponibles.index(mes_actual_str)
+                           if mes_actual_str in meses_disponibles else 0)
+            mes_sel = st.selectbox("Mes a ver:", meses_disponibles,
+                                   index=_idx_actual, key="mes_ventas_sel")
+            df_filtered = df_dash[df_dash['mes_anio'] == mes_sel]
+            total_facturado_m = df_filtered['total'].sum()
+            total_cobrado_m = df_filtered['abono'].sum()
 
-                m1, m2, m3 = st.columns(3)
-                m1.metric("🧾 Facturado", f"${format_currency_co(total_facturado_m)}")
-                m2.metric("✅ Recaudado", f"${format_currency_co(total_cobrado_m)}")
-                m3.metric("⏳ Por cobrar del mes",
-                          _money(total_facturado_m - total_cobrado_m))
+            st.markdown(f"### 🎯 Ventas de {mes_sel}")
+            m1, m2, m3 = st.columns(3)
+            m1.metric("🧾 Facturado", f"${format_currency_co(total_facturado_m)}")
+            m2.metric("✅ Recaudado", f"${format_currency_co(total_cobrado_m)}")
+            m3.metric("⏳ Por cobrar del mes",
+                      _money(total_facturado_m - total_cobrado_m))
 
-                # Ticket promedio separado: un estuche de $8.000 y unas
-                # progresivas de $900.000 promediados no informan de nada.
-                df_gafas = df_filtered[~df_filtered['numero_factura'].apply(_es_venta_menor)]
-                df_menor = df_filtered[df_filtered['numero_factura'].apply(_es_venta_menor)]
-                t1, t2, t3 = st.columns(3)
-                t1.metric("👓 Ticket promedio gafas",
-                          f"${format_currency_co(df_gafas['total'].mean() if len(df_gafas) else 0)}",
-                          help=f"{len(df_gafas)} factura(s) de gafas en el mes.")
-                t2.metric("🧦 Ticket promedio venta menor",
-                          f"${format_currency_co(df_menor['total'].mean() if len(df_menor) else 0)}",
-                          help=f"{len(df_menor)} venta(s) menor(es) en el mes.")
-                t3.metric("🧮 N° de facturas", f"{len(df_filtered)}")
+            # Ticket promedio separado: un estuche de $8.000 y unas
+            # progresivas de $900.000 promediados no informan de nada.
+            df_gafas = df_filtered[~df_filtered['numero_factura'].apply(_es_venta_menor)]
+            df_menor = df_filtered[df_filtered['numero_factura'].apply(_es_venta_menor)]
+            t1, t2, t3 = st.columns(3)
+            t1.metric("👓 Ticket promedio gafas",
+                      f"${format_currency_co(df_gafas['total'].mean() if len(df_gafas) else 0)}",
+                      help=f"{len(df_gafas)} factura(s) de gafas en el mes.")
+            t2.metric("🧦 Ticket promedio venta menor",
+                      f"${format_currency_co(df_menor['total'].mean() if len(df_menor) else 0)}",
+                      help=f"{len(df_menor)} venta(s) menor(es) en el mes.")
+            t3.metric("🧮 N° de facturas", f"{len(df_filtered)}")
+
+            st.divider()
 
         if True:
-            total_facturado = df_dash['total'].sum()
-            total_cobrado = df_dash['abono'].sum()
-            total_facturas = len(df_dash)
-            st.markdown("### 🎯 Ventas — histórico completo")
+            # Doce meses y no todo el histórico: el total de seis años no
+            # es una cifra de gestión, es un dato de archivo, y mezclado con
+            # el resto hacía parecer que la óptica factura mil seiscientos
+            # millones al año.
+            _desde_anual = (hoy_an - pd.DateOffset(months=11)).replace(
+                day=1, hour=0, minute=0, second=0, microsecond=0)
+            df_anual = df_dash[(df_dash['fecha_venta'] >= _desde_anual)
+                               & (df_dash['fecha_venta'] <= hoy_an)]
+            total_facturado = df_anual['total'].sum()
+            total_cobrado = df_anual['abono'].sum()
+            total_facturas = len(df_anual)
+            st.markdown("### 📆 Los últimos 12 meses")
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("🧾 Facturado", f"${format_currency_co(total_facturado)}")
             m2.metric("✅ Recaudado", f"${format_currency_co(total_cobrado)}")
-            m3.metric("⏳ Cartera", _money(total_cartera_pendiente))
+            m3.metric("⏳ Cartera", _money(total_cartera_pendiente),
+                      help="Solo de facturas emitidas por la app. Las migradas "
+                           "figuran pendientes para siempre porque entraron sin "
+                           "los pagos posteriores.")
             m4.metric("🧮 N° de facturas", f"{total_facturas}")
             if total_facturado:
                 st.caption(f"Recaudas el **{total_cobrado / total_facturado * 100:.1f}%** de lo "
                            f"que facturas. El resto financia al cliente con tu propio flujo.")
-            
+            if _cartera_migrada:
+                st.caption(f"Aparte hay {_money_md(_cartera_migrada)} de saldo en facturas "
+                           f"migradas. No se cuentan como cartera: entraron sin los "
+                           f"pagos que se hicieron después, así que figuran pendientes "
+                           f"aunque se hayan cobrado.")
+
             st.divider()
             # =============================================================
             # FASE C -- cartera y mezcla de venta
@@ -5657,7 +5713,11 @@ elif modulo == "📈 Analítica y Estadísticas":
 
             # ---------- antigüedad de la cartera ----------
             st.markdown("### ⏳ Antigüedad de la cartera")
-            df_deuda = df_dash[df_dash['saldo'] > 0].copy()
+            st.caption("Solo facturas emitidas por la app. Las migradas entraron "
+                       "con su saldo original y sin los pagos posteriores, así "
+                       "que figuran pendientes para siempre: mezclarlas convertía "
+                       "esta gráfica en una sola barra de «más de 90 días».")
+            df_deuda = df_sistema[df_sistema['saldo'] > 0].copy()
             if len(df_deuda):
                 _hoy_c = now_co()
                 df_deuda['dias'] = df_deuda['fecha_venta'].apply(
@@ -5774,12 +5834,22 @@ elif modulo == "📈 Analítica y Estadísticas":
             # un tercio del efectivo -- y es de los que cobran comisión.
             st.markdown("### 💳 Por dónde entra el dinero")
             if 'metodo_pago' in df_dash.columns:
+                # Las facturas sin método son el 99% del histórico y todas
+                # vienen de la migración: dejarlas dentro aplastaba el
+                # gráfico contra el eje y hacía que el porcentaje de lo que
+                # entra con comisión saliera 0%. Se excluyen del gráfico y
+                # se cuentan aparte, en una línea de texto.
                 df_mp = df_dash.copy()
-                df_mp['Método'] = (df_mp['metodo_pago'].fillna("").astype(str)
-                                   .str.strip().replace("", "SIN REGISTRAR"))
+                df_mp['Método'] = (df_mp['metodo_pago'].fillna("")
+                                   .astype(str).str.strip().str.upper())
+                _sin_metodo = df_mp[df_mp['Método'] == ""]
+                df_mp = df_mp[df_mp['Método'] != ""]
                 df_mp = (df_mp.groupby('Método', as_index=False)
                          .agg(Monto=('total', 'sum'), Facturas=('total', 'size'))
                          .sort_values('Monto', ascending=False))
+                if not len(df_mp):
+                    st.info("Ninguna factura tiene método de pago registrado "
+                            "todavía. Las que se facturan por la app sí lo llevan.")
                 _orden_mp = list(df_mp['Método'])
                 chart_pagos = alt.Chart(df_mp).mark_bar(
                     size=22, cornerRadiusTopRight=4, cornerRadiusBottomRight=4,
@@ -5803,24 +5873,62 @@ elif modulo == "📈 Analítica y Estadísticas":
                                f"facturado — entró por medios que te cobran comisión "
                                f"({', '.join(_con_recargo['Método'])}). Ese porcentaje no "
                                f"lo ves en el precio, pero sale de tu margen.")
-                _sin = df_mp[df_mp['Método'] == "SIN REGISTRAR"]
-                if len(_sin):
-                    st.caption(f"⚠️ {_money_md(_sin.iloc[0]['Monto'])} en "
-                               f"{int(_sin.iloc[0]['Facturas'])} factura(s) sin método de "
-                               f"pago registrado. Vienen de la migración; las que se "
-                               f"facturan por la app siempre lo llevan.")
+                if len(_sin_metodo):
+                    st.caption(f"Quedan fuera {_money_md(_sin_metodo['total'].sum())} en "
+                               f"{len(_sin_metodo)} factura(s) sin método de pago: son "
+                               f"de la migración. Las que se facturan por la app "
+                               f"siempre lo llevan.")
 
             st.divider()
 
             # ---------- laboratorios ----------
             st.markdown("### 🏭 A qué laboratorios les mandas trabajo")
             if 'laboratorio' in df_dash.columns:
-                _gafas_lab = df_dash[~df_dash['numero_factura'].apply(_es_venta_menor)]
-                _asignadas = _gafas_lab[_gafas_lab['laboratorio'].fillna("").astype(str).str.strip() != ""]
+                _gafas_lab = df_dash[~df_dash['numero_factura'].apply(_es_venta_menor)].copy()
+                # El campo es texto libre, así que el mismo laboratorio
+                # aparece escrito de varias formas -- CERLENS y CERLENTS,
+                # con tilde y sin ella, con espacios de más. Sin normalizar,
+                # un proveedor grande sale partido en tres barras pequeñas y
+                # parece que le mandas menos trabajo del que le mandas.
+                # Prefijo -> nombre con el que se muestra. El prefijo se corta
+                # donde las variantes dejan de coincidir: 'CERLEN' y no
+                # 'CERLENT', porque en la base están CERLENS, CERLENTS y
+                # CERLENTES y con el prefijo largo las dos primeras seguían
+                # separadas -- justo lo que esto viene a evitar.
+                ALIAS_LAB = [
+                    ("CERLEN",        "CERLENS"),
+                    ("FALCON",        "FALCON"),
+                    ("QARZO",         "QARZO"),
+                    ("GIRBRO",        "GIRBRO"),
+                    ("GIRALEN",       "GIRALENS"),
+                    ("ZEISS",         "ZEISS"),
+                    ("ZAFIR",         "ZAFIRO"),
+                    ("DAMILU",        "DAMILU"),
+                    ("DANMILU",       "DAMILU"),
+                    ("AUSTRALEN",     "AUSTRALENS"),
+                    ("NEXT VISION",   "NEXT VISION"),
+                    ("PRECISION LAB", "PRECISION LAB"),
+                    ("INKOPTICAL",    "INKOPTICAL"),
+                    ("MF COMPANY",    "MF COMPANY"),
+                    ("CASA OPTICA",   "CASA OPTICA"),
+                    ("J N",           "J+N"),
+                ]
+
+                def _norm_lab(x):
+                    t = unicodedata.normalize("NFKD", str(x or ""))
+                    t = "".join(c for c in t if not unicodedata.combining(c))
+                    t = re.sub(r"[^A-Z0-9]+", " ", t.upper()).strip()
+                    for prefijo, nombre in ALIAS_LAB:
+                        if t.startswith(prefijo):
+                            return nombre
+                    return t
+                _gafas_lab['_lab'] = _gafas_lab['laboratorio'].apply(_norm_lab)
+                _asignadas = _gafas_lab[_gafas_lab['_lab'] != ""]
                 if len(_asignadas):
-                    labs_count = (_asignadas['laboratorio'].astype(str).str.strip()
-                                  .value_counts().reset_index())
+                    labs_count = _asignadas['_lab'].value_counts().reset_index()
                     labs_count.columns = ['laboratorio', 'count']
+                    _variantes = (_asignadas.groupby('_lab')['laboratorio']
+                                  .apply(lambda x: sorted(set(str(v).strip() for v in x))))
                     chart_labs = alt.Chart(labs_count).mark_bar(
                         size=22, cornerRadiusTopRight=4, cornerRadiusBottomRight=4,
                         color="#2a78d6"
@@ -5829,18 +5937,37 @@ elif modulo == "📈 Analítica y Estadísticas":
                                 title=None, scale=alt.Scale(paddingInner=0.3)),
                         # Son trabajos contados, no pesos: el eje no puede
                         # ofrecer "2,5 trabajos".
+                        # tickMinStep=1 a secas pinta una marca por trabajo:
+                        # con cuarenta trabajos son cuarenta etiquetas. Se
+                        # limita el número de marcas y siguen siendo enteras.
                         x=alt.X('count:Q', title='Trabajos asignados',
-                                axis=alt.Axis(format='d', tickMinStep=1)),
+                                axis=alt.Axis(format='d', tickMinStep=1,
+                                              tickCount=min(8, int(labs_count['count'].max())))),
                         tooltip=[alt.Tooltip('laboratorio:N', title='Laboratorio'),
                                  alt.Tooltip('count:Q', title='Trabajos')],
                     ).properties(height=max(160, 40 * len(labs_count)))
                     st.altair_chart(chart_labs, use_container_width=True)
                     _cob = len(_asignadas) / len(_gafas_lab) * 100 if len(_gafas_lab) else 0
-                    st.caption(f"Cuenta trabajos, no dinero. Y solo mira las "
-                               f"**{len(_asignadas)} de {len(_gafas_lab)}** facturas de gafas "
-                               f"que tienen laboratorio asignado (**{_cob:.0f}%**): el resto "
-                               f"no aparece aquí. Lo que le pagas a cada uno está en "
-                               f"**Gastos → A qué proveedores les pagas más**.")
+                    _top_lab = labs_count.iloc[0]
+                    st.caption(f"**{_top_lab['laboratorio']}** se lleva "
+                               f"{int(_top_lab['count'])} de los {int(labs_count['count'].sum())} "
+                               f"trabajos asignados — el "
+                               f"{_top_lab['count'] / labs_count['count'].sum() * 100:.0f}%. "
+                               f"Cuenta trabajos, no dinero: lo que le pagas a cada uno "
+                               f"está en **Gastos → A qué proveedores les pagas más**.")
+                    st.caption(f"Solo mira las **{len(_asignadas)} de {len(_gafas_lab)}** "
+                               f"facturas de gafas que tienen laboratorio asignado "
+                               f"(**{_cob:.0f}%**): el resto no aparece aquí.")
+                    _multi = {k: v for k, v in _variantes.items() if len(v) > 1}
+                    if _multi:
+                        with st.expander(f"Se agruparon {len(_multi)} nombre(s) escritos de varias formas"):
+                            st.caption("El campo es texto libre, así que el mismo "
+                                       "laboratorio entra escrito de maneras distintas. "
+                                       "Aquí se cuentan como uno solo.")
+                            st.dataframe(
+                                pd.DataFrame({"Se cuenta como": list(_multi.keys()),
+                                              "Escrito como": [" · ".join(v) for v in _multi.values()]}),
+                                use_container_width=True, hide_index=True)
                 else:
                     st.info("Aún no has asignado facturas a laboratorios externos.")
 
