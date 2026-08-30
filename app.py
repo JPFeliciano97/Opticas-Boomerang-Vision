@@ -1891,11 +1891,14 @@ for _k, _v in (("av_od_ext", AV_LEJOS_DEFECTO), ("av_oi_ext", AV_LEJOS_DEFECTO),
                ("av_cerca_od_ext", AV_CERCA_DEFECTO),
                ("av_cerca_oi_ext", AV_CERCA_DEFECTO),
                # El eje se sembraba solo al limpiar el formulario DESPUÉS de
-               # una venta, así que en la primera factura de cada sesión el
-               # widget arrancaba en su min_value (-5) y, si había cilindro,
-               # la fórmula salía como "x -5°" -- un eje que no existe, y así
-               # se iba a la receta y a la orden de laboratorio.
-               ("eje_od_ext", 0), ("eje_oi_ext", 0)):
+               # una venta o de una historia, así que en la primera del día
+               # el widget arrancaba en su min_value (-5) y, si había
+               # cilindro, la fórmula salía como "x -5°" -- un eje que no
+               # existe, y así se iba a la receta y a la orden de
+               # laboratorio. El -5 es el margen que necesita wrap_eje para
+               # poder dar la vuelta de 0 a 175; nunca es un valor válido.
+               ("eje_od_ext", 0), ("eje_oi_ext", 0),
+               ("eje_od", 0), ("eje_oi", 0)):
     st.session_state.setdefault(_k, _v)
 
 if "trigger_clear_recaudo" in st.session_state and st.session_state.trigger_clear_recaudo:
