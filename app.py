@@ -1891,11 +1891,14 @@ for _k, _v in (("av_od_ext", AV_LEJOS_DEFECTO), ("av_oi_ext", AV_LEJOS_DEFECTO),
                ("av_cerca_od_ext", AV_CERCA_DEFECTO),
                ("av_cerca_oi_ext", AV_CERCA_DEFECTO),
                # El eje se sembraba solo al limpiar el formulario DESPUÉS de
-               # una venta, así que en la primera factura de cada sesión el
-               # widget arrancaba en su min_value (-5) y, si había cilindro,
-               # la fórmula salía como "x -5°" -- un eje que no existe, y así
-               # se iba a la receta y a la orden de laboratorio.
-               ("eje_od_ext", 0), ("eje_oi_ext", 0)):
+               # una venta o de una historia, así que en la primera del día
+               # el widget arrancaba en su min_value (-5) y, si había
+               # cilindro, la fórmula salía como "x -5°" -- un eje que no
+               # existe, y así se iba a la receta y a la orden de
+               # laboratorio. El -5 es el margen que necesita wrap_eje para
+               # poder dar la vuelta de 0 a 175; nunca es un valor válido.
+               ("eje_od_ext", 0), ("eje_oi_ext", 0),
+               ("eje_od", 0), ("eje_oi", 0)):
     st.session_state.setdefault(_k, _v)
 
 if "trigger_clear_recaudo" in st.session_state and st.session_state.trigger_clear_recaudo:
@@ -4621,9 +4624,14 @@ elif modulo == "🧾 Pagos a Laboratorios":
 
                 fd1, fd2, fd3 = st.columns(3)
                 _fecha_f = fd1.date_input("Fecha de la factura", value=_hoy_lab)
-                _fecha_v = fd2.date_input("Vence el", value=None,
-                                          help="Opcional. Sirve para saber qué "
-                                               "se está pasando de plazo.")
+                # Quince días desde hoy por defecto: es el plazo habitual, y
+                # dejarlo vacío hacía que casi ninguna factura tuviera
+                # vencimiento -- con lo que el aviso de "vencida" no avisaba
+                # de nada. Se puede cambiar factura por factura.
+                _fecha_v = fd2.date_input("Vence el",
+                                          value=_hoy_lab + timedelta(days=15),
+                                          help="Quince días desde hoy. Cámbialo si "
+                                               "el laboratorio te da otro plazo.")
                 _total_txt = fd3.text_input("Total de la factura ($)")
                 _obs_lab = st.text_input("Observaciones (opcional)",
                                          placeholder="Ej: cubre los trabajos del 5 al 18 de agosto")
