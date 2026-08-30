@@ -146,3 +146,66 @@ select coalesce(categoria_gasto, 'SIN CLASIFICAR') as categoria,
  where fecha_gasto >= date '2026-08-01'
  group by 1
  order by total desc;
+
+
+-- ---------------------------------------------------------------------
+-- 6. El abono a COOAPA de $1.270
+-- ---------------------------------------------------------------------
+-- El negocio lo da por un $1.270.000 al que se le perdieron los ceros.
+-- Encaja: el resto de sus abonos a COOAPA va de $100.000 a $2.400.000, y
+-- mil doscientos setenta pesos no es un abono a un crédito.
+--
+-- OJO CON EL PORQUÉ, porque cambia lo que se puede hacer después. Esto NO
+-- es el fallo de parseo que se limpió en la fase 3. Aquel INFLABA importes
+-- (se comía el separador decimal y "5.500,00" entraba como 550000); este
+-- los deja CORTOS, así que es otra cosa -- un dedazo al teclear o una
+-- celda truncada en la migración. Y eso importa: el fallo de parseo se
+-- podía cazar con un patrón porque siempre multiplicaba por la misma
+-- potencia de diez. Un dedazo no deja huella. Si hay más como este, no
+-- hay consulta que los encuentre a todos.
+update gastos_caja
+   set monto = 1270000
+ where id_gasto = 3918
+   and monto = 1270;
+
+-- Control.
+select id_gasto,
+       to_char(fecha_gasto at time zone 'America/Bogota', 'YYYY-MM-DD') as dia,
+       descripcion, monto
+  from gastos_caja
+ where id_gasto = 3918;
+
+-- Los dos pagos de $400.000 del 3 de diciembre se quedan como están: el
+-- negocio no puede confirmar que sobre uno, y ante la duda no se borra.
+
+
+-- ---------------------------------------------------------------------
+-- 7. Buscar otros importes que se hayan quedado cortos  [CONSULTA]
+-- ---------------------------------------------------------------------
+-- El espejo de la búsqueda del bloque 5b de la fase 3, que cazaba los
+-- importes demasiado GRANDES para su categoría. Este busca los demasiado
+-- PEQUEÑOS: un arriendo de $2.000, una nómina de $400, un laboratorio de
+-- $150. No prueba que estén mal -- puede haber un ajuste pequeño de
+-- verdad -- pero es donde estarían si les faltan ceros.
+with normal as (
+    select categoria_gasto,
+           percentile_cont(0.5) within group (order by monto) as mediana
+      from gastos_caja
+     where monto > 0
+     group by categoria_gasto
+)
+select g.id_gasto,
+       to_char(g.fecha_gasto at time zone 'America/Bogota', 'YYYY-MM-DD') as dia,
+       g.descripcion, g.monto, g.categoria_gasto, n.mediana,
+       round((n.mediana / nullif(g.monto, 0))::numeric, 0) as veces_por_debajo
+  from gastos_caja g
+  join normal n using (categoria_gasto)
+ where n.mediana > 0
+   and g.monto > 0
+   and g.monto < n.mediana / 20
+   -- Las categorías de gasto menudo quedan fuera: ahí un importe de tres
+   -- cifras es lo normal y saldrían decenas de filas correctas tapando
+   -- las pocas que importan.
+   and g.categoria_gasto not in ('ALIMENTACION', 'TRANSPORTE', 'ASEO E INSUMOS')
+ order by veces_por_debajo desc
+ limit 40;
