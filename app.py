@@ -3920,12 +3920,7 @@ elif modulo == "📊 Cuadre de Caja Físico":
                 [c for c, _ in CONCEPTOS_FRECUENTES],
                 index=None, accept_new_options=True,
                 key="desc_gasto_input", on_change=on_concepto_gasto,
-                placeholder="Escribe el concepto, o elige uno de los que se repiten",
-                help="Escribe lo que quieras. Si es uno de los gastos de "
-                     "siempre, aparecerá en la lista al teclear y su "
-                     "categoría se rellenará sola.\n\n"
-                     "Las facturas de laboratorio van por «Pagos a "
-                     "Laboratorios», que ya crea el gasto solo.",
+                placeholder="Escribe o elige el concepto",
             )
             desc_gasto = str(_concepto or "").strip().upper()
         with col_g2: monto_gasto = parse_money_co(st.text_input("Valor ($)", key="monto_gasto_input", on_change=on_monto_gasto_change))
@@ -3936,19 +3931,26 @@ elif modulo == "📊 Cuadre de Caja Físico":
             categoria_gasto = col_cat.selectbox(
                 "Categoría del gasto",
                 [CATEGORIA_SIN_ELEGIR] + CATEGORIAS_GASTO,
-                key="categoria_gasto_input",
-                help="Qué CLASE de gasto es. Es independiente de si es diario o mensual: "
-                     "un pago al laboratorio puede ser cualquiera de los dos.\n\n"
-                     "· NOMINA: personal de planta (asesores).\n"
-                     "· HONORARIOS POR CONSULTA: la optómetra, que cobra por paciente atendido.\n"
-                     "· HONORARIOS POR TURNO: el doctor que cubre un día completo.\n"
-                     "· OBLIGACIONES FINANCIERAS: cuotas y abonos de créditos "
-                     "(cooperativa, préstamos familiares). Amortizan deuda, no son "
-                     "costo de operar.\n"
-                     "· RETIROS DEL PROPIETARIO: dinero que toma el dueño. No es "
-                     "costo de operar, es reparto de utilidad: mezclarlo hace que el "
-                     "negocio parezca menos rentable de lo que es.",
-            )
+                key="categoria_gasto_input")
+            with st.expander("¿Qué significa cada categoría?"):
+                st.markdown(
+                    "Qué CLASE de gasto es. Es independiente de si es diario "
+                    "o mensual: un pago al laboratorio puede ser cualquiera "
+                    "de los dos.\n\n"
+                    "- **NOMINA** — personal de planta (asesores).\n"
+                    "- **HONORARIOS POR CONSULTA** — la optómetra, que cobra "
+                    "por paciente atendido.\n"
+                    "- **HONORARIOS POR TURNO** — el doctor que cubre un día "
+                    "completo.\n"
+                    "- **OBLIGACIONES FINANCIERAS** — cuotas y abonos de "
+                    "créditos (cooperativa, préstamos familiares). Amortizan "
+                    "deuda, no son costo de operar.\n"
+                    "- **RETIROS DEL PROPIETARIO** — dinero que toma el "
+                    "dueño. No es costo de operar, es reparto de utilidad: "
+                    "mezclarlo hace que el negocio parezca menos rentable de "
+                    "lo que es.\n"
+                    "- **NO ES UN GASTO** — lo que se anotó aquí por error. "
+                    "La analítica lo ignora, pero la fila no se pierde.")
         else:
             categoria_gasto = None
             st.caption("ℹ️ Para clasificar por categoría (nómina, laboratorio, arriendo…) "
@@ -4779,7 +4781,11 @@ elif modulo == "🧾 Pagos a Laboratorios":
         # -------------------------------------------------------------
         with tab_lab_nueva:
             st.caption("La factura que te pasa el laboratorio por los trabajos "
-                       "que le mandaste. Los abonos van luego contra ella.")
+                       "que le mandaste. Los abonos van luego contra ella. "
+                       "En la lista de laboratorios salen primero los que más "
+                       "facturas tienen; elegirlo de ahí en vez de escribirlo "
+                       "evita que el mismo entre dos veces con una letra "
+                       "distinta y su deuda salga partida en dos.")
             # La lista sale ordenada por número de facturas: el laboratorio
             # al que más le compras es el que más veces vas a registrar, así
             # que es el que debe estar arriba. Los del catálogo que todavía
@@ -4795,7 +4801,7 @@ elif modulo == "🧾 Pagos a Laboratorios":
             _sin_facturas = sorted(set(LABORATORIOS_CONOCIDOS) - set(_cuenta_lab))
             _opciones_lab = _con_facturas + _sin_facturas
             with st.form("form_nueva_factura_lab"):
-                fc1, fc2 = st.columns(2)
+                fc1, fc2 = st.columns([3, 2])
                 # Un solo campo que acepta nombres nuevos. Antes había un
                 # desplegable con la opción "➕ Otro (escribir)" que
                 # destapaba un campo de texto -- pero dentro de un st.form
@@ -4809,17 +4815,12 @@ elif modulo == "🧾 Pagos a Laboratorios":
                     "Laboratorio", _opciones_lab,
                     index=None, accept_new_options=True,
                     key="lab_nueva_factura_sel",
-                    placeholder="Elige el laboratorio",
-                    help="Los que más facturas tienen salen primero. Escribir "
-                         "el nombre a mano sigue siendo posible, para un "
-                         "laboratorio nuevo, pero elegirlo de la lista es lo "
-                         "que evita que el mismo entre dos veces con una letra "
-                         "distinta y su deuda salga partida en dos.")
+                    placeholder="Elige el laboratorio")
                 _lab_final = str(_lab_sel or "").strip().upper()
                 _num_lab = fc2.text_input("N° de factura del laboratorio",
                                           key="num_factura_lab_input").strip().upper()
 
-                fd1, fd2, fd3 = st.columns(3)
+                fd1, fd2, fd3 = st.columns([2, 2, 3])
                 _fecha_f = fd1.date_input("Fecha de la factura", value=_hoy_lab,
                                           key="fecha_factura_lab_input")
                 # Quince días desde hoy por defecto: es el plazo habitual, y
@@ -4828,11 +4829,11 @@ elif modulo == "🧾 Pagos a Laboratorios":
                 # de nada. Se puede cambiar factura por factura.
                 _fecha_v = fd2.date_input("Vence el",
                                           value=_hoy_lab + timedelta(days=15),
-                                          key="fecha_venc_lab_input",
-                                          help="Quince días desde hoy. Cámbialo si "
-                                               "el laboratorio te da otro plazo.")
+                                          key="fecha_venc_lab_input")
                 _total_txt = fd3.text_input("Total de la factura ($)",
                                             key="total_factura_lab_input")
+                st.caption("El vencimiento viene a 15 días, que es el plazo "
+                           "habitual. Cámbialo si el laboratorio te da otro.")
                 _obs_lab = st.text_input("Observaciones (opcional)",
                                          key="obs_factura_lab_input",
                                          placeholder="Ej: cubre los trabajos del 5 al 18 de agosto")
