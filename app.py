@@ -1218,6 +1218,53 @@ CATEGORIAS_GASTO = [
     "OTROS",
     "NO ES UN GASTO",
 ]
+# Nombre con el que se muestra cada laboratorio, y los prefijos por los
+# que se le reconoce. El campo venía siendo texto libre, así que el mismo
+# laboratorio aparecía escrito de varias formas -- CERLENTS, CERLENS,
+# CERLENTES, con tilde y sin ella -- y salía partido en tres proveedores
+# pequeños en vez de uno grande.
+#
+# El prefijo se corta donde las variantes dejan de coincidir: 'CERLEN' y
+# no 'CERLENT', porque en la base están las tres formas y con el prefijo
+# largo las dos primeras seguían separadas.
+#
+# Esta lista es además la que se ofrece al registrar una factura: elegir
+# de una lista es lo que evita que un laboratorio entre por cuarta vez
+# con una letra distinta.
+ALIAS_LAB = [
+    ("CERLEN",        "CERLENTS"),
+    ("FALCON",        "FALCON"),
+    ("QARZO",         "QARZO"),
+    ("GIRBRO",        "GIRBRO"),
+    ("GIRALEN",       "GIRALENS"),
+    ("ZEISS",         "ZEISS"),
+    ("ZAFIR",         "ZAFIRO"),
+    ("DAMILU",        "DAMILU"),
+    ("DANMILU",       "DAMILU"),
+    ("AUSTRALEN",     "AUSTRALENS"),
+    ("NEXT VISION",   "NEXT VISION"),
+    ("PRECISION LAB", "PRECISION LAB"),
+    ("INKOPTICAL",    "INKOPTICAL"),
+    ("MF COMPANY",    "MF COMPANY"),
+    ("CASA OPTICA",   "CASA OPTICA"),
+    ("J N",           "J+N"),
+]
+# Sin duplicados y en orden alfabético: DAMILU aparece dos veces arriba
+# porque tiene dos prefijos, pero es un solo laboratorio.
+LABORATORIOS_CONOCIDOS = sorted({nombre for _, nombre in ALIAS_LAB})
+
+
+def normalizar_lab(x):
+    """Nombre canónico de un laboratorio a partir de como se escribió."""
+    t = unicodedata.normalize("NFKD", str(x or ""))
+    t = "".join(c for c in t if not unicodedata.combining(c))
+    t = re.sub(r"[^A-Z0-9]+", " ", t.upper()).strip()
+    for prefijo, nombre in ALIAS_LAB:
+        if t.startswith(prefijo):
+            return nombre
+    return t
+
+
 CATEGORIA_POR_DEFECTO = "SIN CLASIFICAR"
 # Para lo que se registró en gastos pero no es un gasto: el saldo del día
 # anotado por error, un duplicado, una nota. Borrar la fila perdería el
@@ -4724,11 +4771,20 @@ elif modulo == "🧾 Pagos a Laboratorios":
         with tab_lab_nueva:
             st.caption("La factura que te pasa el laboratorio por los trabajos "
                        "que le mandaste. Los abonos van luego contra ella.")
-            # Los laboratorios que ya existen se ofrecen para no volver a
-            # escribirlos: cada forma nueva de escribir el mismo nombre
-            # parte su deuda en dos.
-            _labs_vistos = sorted({str(f.get("laboratorio") or "").strip().upper()
-                                   for f in _facturas_lab if f.get("laboratorio")})
+            # La lista sale ordenada por número de facturas: el laboratorio
+            # al que más le compras es el que más veces vas a registrar, así
+            # que es el que debe estar arriba. Los del catálogo que todavía
+            # no tienen ninguna factura van al final, en orden alfabético,
+            # para que su nombre bien escrito esté disponible desde el
+            # principio -- que es donde se cuelan los errores de digitación.
+            _cuenta_lab = {}
+            for _f in _facturas_lab:
+                _n = normalizar_lab(_f.get("laboratorio"))
+                if _n:
+                    _cuenta_lab[_n] = _cuenta_lab.get(_n, 0) + 1
+            _con_facturas = sorted(_cuenta_lab, key=lambda n: (-_cuenta_lab[n], n))
+            _sin_facturas = sorted(set(LABORATORIOS_CONOCIDOS) - set(_cuenta_lab))
+            _opciones_lab = _con_facturas + _sin_facturas
             with st.form("form_nueva_factura_lab"):
                 fc1, fc2 = st.columns(2)
                 # Un solo campo que acepta nombres nuevos. Antes había un
@@ -4741,12 +4797,15 @@ elif modulo == "🧾 Pagos a Laboratorios":
                 # tres laboratorios distintos acabaron las tres a nombre
                 # del primero que se registró.
                 _lab_sel = fc1.selectbox(
-                    "Laboratorio", _labs_vistos,
+                    "Laboratorio", _opciones_lab,
                     index=None, accept_new_options=True,
                     key="lab_nueva_factura_sel",
-                    placeholder="Escribe el laboratorio, o elige uno de la lista",
-                    help="Si el laboratorio ya tiene facturas, aparecerá al "
-                         "teclear. Si es nuevo, escríbelo y se añade.")
+                    placeholder="Elige el laboratorio",
+                    help="Los que más facturas tienen salen primero. Escribir "
+                         "el nombre a mano sigue siendo posible, para un "
+                         "laboratorio nuevo, pero elegirlo de la lista es lo "
+                         "que evita que el mismo entre dos veces con una letra "
+                         "distinta y su deuda salga partida en dos.")
                 _lab_final = str(_lab_sel or "").strip().upper()
                 _num_lab = fc2.text_input("N° de factura del laboratorio",
                                           key="num_factura_lab_input").strip().upper()
@@ -6421,44 +6480,12 @@ elif modulo == "📈 Analítica y Estadísticas":
             st.markdown("### 🏭 A qué laboratorios les mandas trabajo")
             if 'laboratorio' in df_dash.columns:
                 _gafas_lab = df_dash[~df_dash['numero_factura'].apply(_es_venta_menor)].copy()
-                # El campo es texto libre, así que el mismo laboratorio
-                # aparece escrito de varias formas -- CERLENS y CERLENTS,
-                # con tilde y sin ella, con espacios de más. Sin normalizar,
-                # un proveedor grande sale partido en tres barras pequeñas y
-                # parece que le mandas menos trabajo del que le mandas.
-                # Prefijo -> nombre con el que se muestra. El prefijo se corta
-                # donde las variantes dejan de coincidir: 'CERLEN' y no
-                # 'CERLENT', porque en la base están CERLENS, CERLENTS y
-                # CERLENTES y con el prefijo largo las dos primeras seguían
-                # separadas -- justo lo que esto viene a evitar.
-                ALIAS_LAB = [
-                    ("CERLEN",        "CERLENS"),
-                    ("FALCON",        "FALCON"),
-                    ("QARZO",         "QARZO"),
-                    ("GIRBRO",        "GIRBRO"),
-                    ("GIRALEN",       "GIRALENS"),
-                    ("ZEISS",         "ZEISS"),
-                    ("ZAFIR",         "ZAFIRO"),
-                    ("DAMILU",        "DAMILU"),
-                    ("DANMILU",       "DAMILU"),
-                    ("AUSTRALEN",     "AUSTRALENS"),
-                    ("NEXT VISION",   "NEXT VISION"),
-                    ("PRECISION LAB", "PRECISION LAB"),
-                    ("INKOPTICAL",    "INKOPTICAL"),
-                    ("MF COMPANY",    "MF COMPANY"),
-                    ("CASA OPTICA",   "CASA OPTICA"),
-                    ("J N",           "J+N"),
-                ]
-
-                def _norm_lab(x):
-                    t = unicodedata.normalize("NFKD", str(x or ""))
-                    t = "".join(c for c in t if not unicodedata.combining(c))
-                    t = re.sub(r"[^A-Z0-9]+", " ", t.upper()).strip()
-                    for prefijo, nombre in ALIAS_LAB:
-                        if t.startswith(prefijo):
-                            return nombre
-                    return t
-                _gafas_lab['_lab'] = _gafas_lab['laboratorio'].apply(_norm_lab)
+                # El campo venía siendo texto libre y el mismo laboratorio
+                # aparece escrito de varias formas. Se normaliza con el
+                # catálogo compartido (ALIAS_LAB), el mismo que se ofrece al
+                # registrar una factura: si aquí y allí se llamaran distinto,
+                # el mismo proveedor saldría con dos nombres según la pestaña.
+                _gafas_lab['_lab'] = _gafas_lab['laboratorio'].apply(normalizar_lab)
                 _asignadas = _gafas_lab[_gafas_lab['_lab'] != ""]
                 if len(_asignadas):
                     labs_count = _asignadas['_lab'].value_counts().reset_index()
