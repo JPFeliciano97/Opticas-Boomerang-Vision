@@ -1218,6 +1218,62 @@ CATEGORIAS_GASTO = [
     "OTROS",
     "NO ES UN GASTO",
 ]
+# Nombre con el que se muestra cada laboratorio, y los prefijos por los
+# que se le reconoce. El campo venía siendo texto libre, así que el mismo
+# laboratorio aparecía escrito de varias formas -- CERLENTS, CERLENS,
+# CERLENTES, con tilde y sin ella -- y salía partido en tres proveedores
+# pequeños en vez de uno grande.
+#
+# El prefijo se corta donde las variantes dejan de coincidir: 'CERLEN' y
+# no 'CERLENT', porque en la base están las tres formas y con el prefijo
+# largo las dos primeras seguían separadas.
+#
+# Esta lista es para LEER lo que ya está escrito, así que están todos los
+# laboratorios que alguna vez aparecieron, incluidos aquellos con los que
+# ya no se trabaja. Quitar uno no borraría su historia: la dejaría sin
+# normalizar, y ese proveedor volvería a salir partido en varias
+# variantes en la analítica.
+ALIAS_LAB = [
+    ("CERLEN",        "CERLENTS"),
+    ("FALCON",        "FALCON"),
+    ("QARZO",         "QARZO"),
+    ("GIRBRO",        "GIRBRO"),
+    ("GIRALEN",       "GIRALENS"),
+    ("ZEISS",         "ZEISS"),
+    ("ZAFIR",         "ZAFIRO"),
+    ("DANMILU",       "DANMILU"),
+    ("DAMILU",        "DANMILU"),
+    ("AUSTRALEN",     "AUSTRALENS"),
+    ("NEXT VISION",   "NEXT VISION"),
+    ("PRECISION LAB", "PRECISION LAB"),
+    ("INKOPTICAL",    "INKOPTICAL"),
+    ("MF COMPANY",    "MF COMPANY"),
+    ("CASA OPTICA",   "CASA OPTICA"),
+    ("J N",           "J+N"),
+]
+# Con los que se trabaja HOY. Es una lista distinta de ALIAS_LAB a
+# propósito: aquella sirve para leer toda la historia, esta para ofrecer
+# opciones al registrar una factura. Ofrecer los quince de la historia
+# llenaría el desplegable de laboratorios a los que ya no se les compra,
+# y una lista larga se deja de leer.
+#
+# Un laboratorio que tenga facturas registradas aparece igual aunque no
+# esté aquí -- se añaden a esta lista, no la sustituyen.
+LABORATORIOS_CONOCIDOS = ["QARZO", "CERLENTS", "FALCON",
+                          "GIRALENS", "GIRBRO", "ZEISS"]
+
+
+def normalizar_lab(x):
+    """Nombre canónico de un laboratorio a partir de como se escribió."""
+    t = unicodedata.normalize("NFKD", str(x or ""))
+    t = "".join(c for c in t if not unicodedata.combining(c))
+    t = re.sub(r"[^A-Z0-9]+", " ", t.upper()).strip()
+    for prefijo, nombre in ALIAS_LAB:
+        if t.startswith(prefijo):
+            return nombre
+    return t
+
+
 CATEGORIA_POR_DEFECTO = "SIN CLASIFICAR"
 # Para lo que se registró en gastos pero no es un gasto: el saldo del día
 # anotado por error, un duplicado, una nota. Borrar la fila perdería el
@@ -1265,7 +1321,6 @@ CONCEPTOS_FRECUENTES = [
     ("PARQUEADERO",               "TRANSPORTE"),
     ("BUSES Y TRANSMILENIO",      "TRANSPORTE"),
 ]
-CONCEPTO_LIBRE = "✍️ Escribir el concepto a mano"
 CAT_POR_CONCEPTO = dict(CONCEPTOS_FRECUENTES)
 
 # Palabras que ocupan el campo sin decir en qué se fue el dinero. Un
@@ -1902,17 +1957,13 @@ def normalizar_cil_eje(cilindro, eje):
 def on_subtotal_change(): st.session_state.subtotal_input = formatear_campo_money(st.session_state.subtotal_input)
 def on_abono_change(): st.session_state.abono_input = formatear_campo_money(st.session_state.abono_input)
 def on_monto_rec_change(): st.session_state.monto_rec_input = formatear_campo_money(st.session_state.monto_rec_input)
-def on_concepto_frecuente():
+def on_concepto_gasto():
     """
-    Al escoger un atajo, escribe el concepto y su categoría. Las dos
-    quedan editables: el atajo ahorra teclas y unifica la escritura, no
-    decide por nadie.
+    Si lo escrito coincide con un concepto conocido, rellena su
+    categoría. La categoría queda editable: esto ahorra un clic en lo
+    que se repite, no decide por nadie.
     """
-    sel = st.session_state.get("concepto_frecuente_sel", CONCEPTO_LIBRE)
-    if sel == CONCEPTO_LIBRE:
-        return
-    st.session_state.desc_gasto_input = sel
-    cat = CAT_POR_CONCEPTO.get(sel)
+    cat = CAT_POR_CONCEPTO.get(str(st.session_state.get("desc_gasto_input") or "").strip().upper())
     if cat:
         st.session_state.categoria_gasto_input = cat
 
@@ -1940,7 +1991,7 @@ def on_altura_focal_change():
     digits = "".join(c for c in st.session_state.altura_focal_input if c.isdigit())
     st.session_state.altura_focal_input = f"{digits} mm" if digits else ""
 
-for k in ["subtotal_input", "abono_input", "descuento_input", "altura_focal_input", "monto_rec_input", "monto_gasto_input", "p_compra_input", "p_venta_input", "p_compra_m", "p_venta_m", "desc_gasto_input"]:
+for k in ["subtotal_input", "abono_input", "descuento_input", "altura_focal_input", "monto_rec_input", "monto_gasto_input", "p_compra_input", "p_venta_input", "p_compra_m", "p_venta_m"]:
     if k not in st.session_state: st.session_state[k] = ""
 if "last_fac_search" not in st.session_state: st.session_state.last_fac_search = ""
 
@@ -1988,13 +2039,12 @@ if "trigger_clear_recaudo" in st.session_state and st.session_state.trigger_clea
     st.session_state.trigger_clear_recaudo = False
 
 if "trigger_clear_gastos" in st.session_state and st.session_state.trigger_clear_gastos:
-    st.session_state.desc_gasto_input = ""
+    st.session_state.desc_gasto_input = None
     st.session_state.monto_gasto_input = ""
     st.session_state.metodo_gasto_input = "EFECTIVO"
     # El atajo y la categoría vuelven a su estado neutro: si se quedaran
     # con lo del gasto anterior, el siguiente heredaría una categoría que
     # nadie eligió, que es el problema que esto viene a resolver.
-    st.session_state.concepto_frecuente_sel = CONCEPTO_LIBRE
     st.session_state.categoria_gasto_input = CATEGORIA_SIN_ELEGIR
     # Sin esto la confirmación quedaría marcada para el gasto siguiente,
     # que es justo lo que la haría inútil.
@@ -3859,24 +3909,31 @@ elif modulo == "📊 Cuadre de Caja Físico":
                        "balance del mes, en la pestaña 'Gastos Mensuales'.")
         hay_categoria = columna_existe("gastos_caja", "categoria_gasto")
 
-        st.selectbox(
-            "Atajo para gastos que se repiten",
-            [CONCEPTO_LIBRE] + [c for c, _ in CONCEPTOS_FRECUENTES],
-            key="concepto_frecuente_sel", on_change=on_concepto_frecuente,
-            help="Rellena el concepto y su categoría de una vez. Las dos se "
-                 "pueden cambiar después. Sirve para que la misma nómina no "
-                 "acabe escrita de cuatro formas distintas.\n\n"
-                 "Las facturas de laboratorio van por «Pagos a Laboratorios», "
-                 "que ya crea el gasto solo.",
-        )
-
         col_g1, col_g2, col_g3 = st.columns([2, 1, 1])
-        with col_g1: desc_gasto = st.text_input("Concepto / Descripción del Gasto", placeholder="Ej: Pago mensajería laboratorio", key="desc_gasto_input").upper()
+        with col_g1:
+            # Un solo campo, no dos: se escribe como siempre y, mientras
+            # se escribe, se ofrecen los conceptos que ya se repiten. Un
+            # desplegable de "atajos" aparte ocupaba media pantalla para
+            # algo opcional y obligaba a decidir por dónde empezar.
+            _concepto = st.selectbox(
+                "Concepto / Descripción del Gasto",
+                [c for c, _ in CONCEPTOS_FRECUENTES],
+                index=None, accept_new_options=True,
+                key="desc_gasto_input", on_change=on_concepto_gasto,
+                placeholder="Escribe el concepto, o elige uno de los que se repiten",
+                help="Escribe lo que quieras. Si es uno de los gastos de "
+                     "siempre, aparecerá en la lista al teclear y su "
+                     "categoría se rellenará sola.\n\n"
+                     "Las facturas de laboratorio van por «Pagos a "
+                     "Laboratorios», que ya crea el gasto solo.",
+            )
+            desc_gasto = str(_concepto or "").strip().upper()
         with col_g2: monto_gasto = parse_money_co(st.text_input("Valor ($)", key="monto_gasto_input", on_change=on_monto_gasto_change))
         with col_g3: metodo_gasto = st.selectbox("Forma de Salida", METODOS_PAGO_GASTO, key="metodo_gasto_input")
 
+        col_cat, _col_hueco = st.columns([2, 2])
         if hay_categoria:
-            categoria_gasto = st.selectbox(
+            categoria_gasto = col_cat.selectbox(
                 "Categoría del gasto",
                 [CATEGORIA_SIN_ELEGIR] + CATEGORIAS_GASTO,
                 key="categoria_gasto_input",
@@ -4546,6 +4603,19 @@ elif modulo == "🧾 Pagos a Laboratorios":
 
         _hoy_lab = now_co().date()
 
+        # Los campos se vacían SOLO cuando la factura se guardó de verdad.
+        # Si se limpiaran también al fallar una validación, quien escribió
+        # mal el total perdería todo lo demás y volvería a teclearlo.
+        if st.session_state.get("trigger_clear_factura_lab"):
+            for _k, _v in (("lab_nueva_factura_sel", None),
+                           ("num_factura_lab_input", ""),
+                           ("total_factura_lab_input", ""),
+                           ("obs_factura_lab_input", ""),
+                           ("fecha_factura_lab_input", _hoy_lab),
+                           ("fecha_venc_lab_input", _hoy_lab + timedelta(days=15))):
+                st.session_state[_k] = _v
+            st.session_state.trigger_clear_factura_lab = False
+
         def _dias_vencida(f):
             v = f.get("fecha_vencimiento")
             if not v:
@@ -4710,35 +4780,61 @@ elif modulo == "🧾 Pagos a Laboratorios":
         with tab_lab_nueva:
             st.caption("La factura que te pasa el laboratorio por los trabajos "
                        "que le mandaste. Los abonos van luego contra ella.")
-            # Los laboratorios que ya existen se ofrecen para no volver a
-            # escribirlos: cada forma nueva de escribir el mismo nombre
-            # parte su deuda en dos.
-            _labs_vistos = sorted({str(f.get("laboratorio") or "").strip().upper()
-                                   for f in _facturas_lab if f.get("laboratorio")})
+            # La lista sale ordenada por número de facturas: el laboratorio
+            # al que más le compras es el que más veces vas a registrar, así
+            # que es el que debe estar arriba. Los del catálogo que todavía
+            # no tienen ninguna factura van al final, en orden alfabético,
+            # para que su nombre bien escrito esté disponible desde el
+            # principio -- que es donde se cuelan los errores de digitación.
+            _cuenta_lab = {}
+            for _f in _facturas_lab:
+                _n = normalizar_lab(_f.get("laboratorio"))
+                if _n:
+                    _cuenta_lab[_n] = _cuenta_lab.get(_n, 0) + 1
+            _con_facturas = sorted(_cuenta_lab, key=lambda n: (-_cuenta_lab[n], n))
+            _sin_facturas = sorted(set(LABORATORIOS_CONOCIDOS) - set(_cuenta_lab))
+            _opciones_lab = _con_facturas + _sin_facturas
             with st.form("form_nueva_factura_lab"):
                 fc1, fc2 = st.columns(2)
-                if _labs_vistos:
-                    _lab_sel = fc1.selectbox("Laboratorio",
-                                             _labs_vistos + ["➕ Otro (escribir)"])
-                    _lab_nuevo = (fc1.text_input("Nombre del laboratorio nuevo").strip().upper()
-                                  if _lab_sel == "➕ Otro (escribir)" else "")
-                    _lab_final = _lab_nuevo if _lab_sel == "➕ Otro (escribir)" else _lab_sel
-                else:
-                    _lab_final = fc1.text_input("Laboratorio").strip().upper()
-                _num_lab = fc2.text_input("N° de factura del laboratorio").strip().upper()
+                # Un solo campo que acepta nombres nuevos. Antes había un
+                # desplegable con la opción "➕ Otro (escribir)" que
+                # destapaba un campo de texto -- pero dentro de un st.form
+                # los widgets NO provocan un rerun, así que ese campo no
+                # llegaba a aparecer nunca. La ruta para dar de alta un
+                # laboratorio nuevo estaba muerta: lo único seleccionable
+                # era uno de los que ya existían. Por eso tres facturas de
+                # tres laboratorios distintos acabaron las tres a nombre
+                # del primero que se registró.
+                _lab_sel = fc1.selectbox(
+                    "Laboratorio", _opciones_lab,
+                    index=None, accept_new_options=True,
+                    key="lab_nueva_factura_sel",
+                    placeholder="Elige el laboratorio",
+                    help="Los que más facturas tienen salen primero. Escribir "
+                         "el nombre a mano sigue siendo posible, para un "
+                         "laboratorio nuevo, pero elegirlo de la lista es lo "
+                         "que evita que el mismo entre dos veces con una letra "
+                         "distinta y su deuda salga partida en dos.")
+                _lab_final = str(_lab_sel or "").strip().upper()
+                _num_lab = fc2.text_input("N° de factura del laboratorio",
+                                          key="num_factura_lab_input").strip().upper()
 
                 fd1, fd2, fd3 = st.columns(3)
-                _fecha_f = fd1.date_input("Fecha de la factura", value=_hoy_lab)
+                _fecha_f = fd1.date_input("Fecha de la factura", value=_hoy_lab,
+                                          key="fecha_factura_lab_input")
                 # Quince días desde hoy por defecto: es el plazo habitual, y
                 # dejarlo vacío hacía que casi ninguna factura tuviera
                 # vencimiento -- con lo que el aviso de "vencida" no avisaba
                 # de nada. Se puede cambiar factura por factura.
                 _fecha_v = fd2.date_input("Vence el",
                                           value=_hoy_lab + timedelta(days=15),
+                                          key="fecha_venc_lab_input",
                                           help="Quince días desde hoy. Cámbialo si "
                                                "el laboratorio te da otro plazo.")
-                _total_txt = fd3.text_input("Total de la factura ($)")
+                _total_txt = fd3.text_input("Total de la factura ($)",
+                                            key="total_factura_lab_input")
                 _obs_lab = st.text_input("Observaciones (opcional)",
+                                         key="obs_factura_lab_input",
                                          placeholder="Ej: cubre los trabajos del 5 al 18 de agosto")
                 _guardar_f = st.form_submit_button("💾 Registrar factura",
                                                    type="primary",
@@ -4774,6 +4870,7 @@ elif modulo == "🧾 Pagos a Laboratorios":
                     st.session_state.global_toast = (
                         f"Factura de {_lab_final} por "
                         f"${format_currency_co(_total_f)} registrada.")
+                    st.session_state.trigger_clear_factura_lab = True
                     st.rerun()
 
         # -------------------------------------------------------------
@@ -6392,44 +6489,12 @@ elif modulo == "📈 Analítica y Estadísticas":
             st.markdown("### 🏭 A qué laboratorios les mandas trabajo")
             if 'laboratorio' in df_dash.columns:
                 _gafas_lab = df_dash[~df_dash['numero_factura'].apply(_es_venta_menor)].copy()
-                # El campo es texto libre, así que el mismo laboratorio
-                # aparece escrito de varias formas -- CERLENS y CERLENTS,
-                # con tilde y sin ella, con espacios de más. Sin normalizar,
-                # un proveedor grande sale partido en tres barras pequeñas y
-                # parece que le mandas menos trabajo del que le mandas.
-                # Prefijo -> nombre con el que se muestra. El prefijo se corta
-                # donde las variantes dejan de coincidir: 'CERLEN' y no
-                # 'CERLENT', porque en la base están CERLENS, CERLENTS y
-                # CERLENTES y con el prefijo largo las dos primeras seguían
-                # separadas -- justo lo que esto viene a evitar.
-                ALIAS_LAB = [
-                    ("CERLEN",        "CERLENS"),
-                    ("FALCON",        "FALCON"),
-                    ("QARZO",         "QARZO"),
-                    ("GIRBRO",        "GIRBRO"),
-                    ("GIRALEN",       "GIRALENS"),
-                    ("ZEISS",         "ZEISS"),
-                    ("ZAFIR",         "ZAFIRO"),
-                    ("DAMILU",        "DAMILU"),
-                    ("DANMILU",       "DAMILU"),
-                    ("AUSTRALEN",     "AUSTRALENS"),
-                    ("NEXT VISION",   "NEXT VISION"),
-                    ("PRECISION LAB", "PRECISION LAB"),
-                    ("INKOPTICAL",    "INKOPTICAL"),
-                    ("MF COMPANY",    "MF COMPANY"),
-                    ("CASA OPTICA",   "CASA OPTICA"),
-                    ("J N",           "J+N"),
-                ]
-
-                def _norm_lab(x):
-                    t = unicodedata.normalize("NFKD", str(x or ""))
-                    t = "".join(c for c in t if not unicodedata.combining(c))
-                    t = re.sub(r"[^A-Z0-9]+", " ", t.upper()).strip()
-                    for prefijo, nombre in ALIAS_LAB:
-                        if t.startswith(prefijo):
-                            return nombre
-                    return t
-                _gafas_lab['_lab'] = _gafas_lab['laboratorio'].apply(_norm_lab)
+                # El campo venía siendo texto libre y el mismo laboratorio
+                # aparece escrito de varias formas. Se normaliza con el
+                # catálogo compartido (ALIAS_LAB), el mismo que se ofrece al
+                # registrar una factura: si aquí y allí se llamaran distinto,
+                # el mismo proveedor saldría con dos nombres según la pestaña.
+                _gafas_lab['_lab'] = _gafas_lab['laboratorio'].apply(normalizar_lab)
                 _asignadas = _gafas_lab[_gafas_lab['_lab'] != ""]
                 if len(_asignadas):
                     labs_count = _asignadas['_lab'].value_counts().reset_index()
