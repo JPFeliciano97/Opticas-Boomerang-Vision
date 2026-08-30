@@ -54,26 +54,39 @@ select c.relname                                    as tabla,
 
 
 -- ---------------------------------------------------------------------
--- 3a. SI LA APP USA service_role  -- protección real
+-- 3a. LA APP USA service_role  -- ESTE ES EL BLOQUE A EJECUTAR
 -- ---------------------------------------------------------------------
--- Activa RLS sin políticas. La app sigue igual porque service_role se
--- salta RLS; cualquiera con solo la llave anon deja de ver nada.
+-- Comprobado con el dueño el 30-08-2026: SUPABASE_KEY en Streamlit Cloud
+-- es la llave service_role, y siempre lo ha sido.
 --
--- alter table pacientes            enable row level security;
--- alter table historias_clinicas   enable row level security;
--- alter table ventas_facturacion   enable row level security;
--- alter table gastos_caja          enable row level security;
--- alter table inventario           enable row level security;
--- alter table laboratorios         enable row level security;
--- alter table pagos_saldos         enable row level security;
--- alter table configuracion        enable row level security;
--- alter table facturas_laboratorio enable row level security;
--- alter table pagos_laboratorio    enable row level security;
+-- Activa RLS sin políticas. La app sigue funcionando igual, porque
+-- service_role se salta RLS; cualquiera que tenga solo la llave anon
+-- deja de ver absolutamente nada.
+--
+-- Recorre TODAS las tablas de public en vez de una lista escrita a mano:
+-- una lista se queda vieja en cuanto se crea una tabla nueva, y una
+-- tabla olvidada es justo el agujero que esto viene a tapar.
+do $$
+declare t text;
+begin
+  for t in
+    select c.relname
+      from pg_class c
+      join pg_namespace n on n.oid = c.relnamespace
+     where n.nspname = 'public'
+       and c.relkind = 'r'
+  loop
+    execute format('alter table public.%I enable row level security', t);
+  end loop;
+end $$;
 
 
 -- ---------------------------------------------------------------------
--- 3b. SI LA APP USA anon  -- deja de romperse, protege poco
+-- 3b. SI LA APP USARA anon  -- NO APLICA AQUÍ, se deja documentado
 -- ---------------------------------------------------------------------
+-- No ejecutar: esta app usa service_role (ver 3a). Queda escrito por si
+-- algún día se cambia de llave.
+--
 -- Activa RLS y le da permiso a la llave anon sobre todo, que es lo que
 -- la app necesita hoy para seguir funcionando. Es el primer paso, no el
 -- último: sin cambiar de llave, la protección sigue siendo la de antes.
