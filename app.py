@@ -1228,9 +1228,11 @@ CATEGORIAS_GASTO = [
 # no 'CERLENT', porque en la base están las tres formas y con el prefijo
 # largo las dos primeras seguían separadas.
 #
-# Esta lista es además la que se ofrece al registrar una factura: elegir
-# de una lista es lo que evita que un laboratorio entre por cuarta vez
-# con una letra distinta.
+# Esta lista es para LEER lo que ya está escrito, así que están todos los
+# laboratorios que alguna vez aparecieron, incluidos aquellos con los que
+# ya no se trabaja. Quitar uno no borraría su historia: la dejaría sin
+# normalizar, y ese proveedor volvería a salir partido en varias
+# variantes en la analítica.
 ALIAS_LAB = [
     ("CERLEN",        "CERLENTS"),
     ("FALCON",        "FALCON"),
@@ -1239,8 +1241,8 @@ ALIAS_LAB = [
     ("GIRALEN",       "GIRALENS"),
     ("ZEISS",         "ZEISS"),
     ("ZAFIR",         "ZAFIRO"),
-    ("DAMILU",        "DAMILU"),
-    ("DANMILU",       "DAMILU"),
+    ("DANMILU",       "DANMILU"),
+    ("DAMILU",        "DANMILU"),
     ("AUSTRALEN",     "AUSTRALENS"),
     ("NEXT VISION",   "NEXT VISION"),
     ("PRECISION LAB", "PRECISION LAB"),
@@ -1249,9 +1251,16 @@ ALIAS_LAB = [
     ("CASA OPTICA",   "CASA OPTICA"),
     ("J N",           "J+N"),
 ]
-# Sin duplicados y en orden alfabético: DAMILU aparece dos veces arriba
-# porque tiene dos prefijos, pero es un solo laboratorio.
-LABORATORIOS_CONOCIDOS = sorted({nombre for _, nombre in ALIAS_LAB})
+# Con los que se trabaja HOY. Es una lista distinta de ALIAS_LAB a
+# propósito: aquella sirve para leer toda la historia, esta para ofrecer
+# opciones al registrar una factura. Ofrecer los quince de la historia
+# llenaría el desplegable de laboratorios a los que ya no se les compra,
+# y una lista larga se deja de leer.
+#
+# Un laboratorio que tenga facturas registradas aparece igual aunque no
+# esté aquí -- se añaden a esta lista, no la sustituyen.
+LABORATORIOS_CONOCIDOS = ["QARZO", "CERLENTS", "FALCON",
+                          "GIRALENS", "GIRBRO", "ZEISS"]
 
 
 def normalizar_lab(x):
