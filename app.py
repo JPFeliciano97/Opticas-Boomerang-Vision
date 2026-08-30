@@ -4780,6 +4780,17 @@ elif modulo == "📈 Analítica y Estadísticas":
         except (ValueError, TypeError):
             return None
 
+    def _fecha_venta_dt(v):
+        """Fecha de una venta como datetime en hora Colombia, o None.
+        Gemela de _fecha_gasto_dt: la cascada resta gastos de ventas y las
+        dos fechas tienen que interpretarse igual o el corte por periodo
+        dejaría fuera cosas de un lado y no del otro."""
+        try:
+            dt = datetime.fromisoformat(str(v.get("fecha_venta")).replace("Z", "+00:00"))
+            return dt.astimezone(TZ_CO) if dt.tzinfo else dt.replace(tzinfo=TZ_CO)
+        except Exception:
+            return None
+
     def _granularidad(fechas):
         """Semanas mientras haya poca historia, meses cuando ya la hay.
         El corte en 62 días son dos meses: por debajo, un gráfico mensual
@@ -4914,21 +4925,66 @@ elif modulo == "📈 Analítica y Estadísticas":
     # siendo la única vista que responde "¿gano o pierdo?". Aquí es lo
     # primero que se ve.
     with tab_an_resumen:
+        _hoy_res = now_co()
         if not ventas_db and not gastos_db:
             st.info("Todavía no hay datos suficientes.")
         else:
             st.markdown("### 🪜 De lo facturado al flujo final")
-            st.caption("Todo el histórico. Cada barra baja desde donde quedó la "
-                       "anterior: así se ve en qué punto del camino se queda "
-                       "cada peso.")
-            _lab_c = sum(g.get("monto", 0) for g in gastos_db
+            # Antes esto restaba TODOS los gastos de TODAS las ventas, y esa
+            # resta solo vale si los dos lados cubren el mismo periodo. No lo
+            # cubren: de la migración salieron casi todas las ventas pero no
+            # todos los gastos -- el propio negocio lo dijo, "antes del
+            # sistema es probable que se hayan omitido gastos". Un lado
+            # completo menos un lado incompleto da una utilidad que no
+            # existe, y encima en el gráfico más visible de la app.
+            #
+            # Doce meses por defecto. No arregla el dato viejo, pero acota la
+            # resta a un tramo donde los dos lados se registraron igual.
+            _periodo_c = st.radio(
+                "Periodo:", ["Últimos 12 meses", "Este mes", "Todo el histórico"],
+                horizontal=True, key="periodo_cascada")
+            if _periodo_c == "Este mes":
+                _desde_c = _hoy_res.replace(day=1, hour=0, minute=0, second=0,
+                                            microsecond=0)
+            elif _periodo_c == "Últimos 12 meses":
+                _desde_c = (_hoy_res - pd.DateOffset(months=11)).replace(
+                    day=1, hour=0, minute=0, second=0, microsecond=0)
+            else:
+                _desde_c = None
+
+            def _en_periodo_g(g):
+                if _desde_c is None:
+                    return True
+                f = _fecha_gasto_dt(g)
+                return bool(f and f >= _desde_c and f <= _hoy_res)
+
+            def _en_periodo_v(v):
+                if _desde_c is None:
+                    return True
+                f = _fecha_venta_dt(v)
+                return bool(f and f >= _desde_c and f <= _hoy_res)
+
+            _gastos_c = [g for g in gastos_db if _en_periodo_g(g)]
+            _ventas_c = [v for v in ventas_db if _en_periodo_v(v)]
+
+            if _desde_c is None:
+                st.caption("⚠️ Con todo el histórico los dos lados de la resta no "
+                           "cuadran: de la migración salieron casi todas las ventas "
+                           "pero no todos los gastos, así que la utilidad sale más "
+                           "alta de lo que fue. Sirve para ver la forma, no la cifra.")
+            else:
+                st.caption(f"Desde el {_desde_c.strftime('%d/%m/%Y')}. Cada barra baja "
+                           f"desde donde quedó la anterior: así se ve en qué punto del "
+                           f"camino se queda cada peso.")
+
+            _lab_c = sum(g.get("monto", 0) for g in _gastos_c
                          if str(g.get("categoria_gasto") or "").startswith("LABORATORIO"))
-            _oper_c = sum(g.get("monto", 0) for g in gastos_db
+            _oper_c = sum(g.get("monto", 0) for g in _gastos_c
                           if _cat_serie(g.get("categoria_gasto")) is not None
                           and not str(g.get("categoria_gasto") or "").startswith("LABORATORIO"))
-            _noop_c = sum(g.get("monto", 0) for g in gastos_db
+            _noop_c = sum(g.get("monto", 0) for g in _gastos_c
                           if str(g.get("categoria_gasto") or "") in CATS_NO_OPERATIVAS)
-            _fact_c = sum(int(v.get("total", 0)) for v in ventas_db)
+            _fact_c = sum(int(v.get("total", 0)) for v in _ventas_c)
             pasos = [("Facturado", _fact_c, "total"),
                      ("− Laboratorio", -_lab_c, "resta"),
                      ("Margen bruto", None, "subtotal"),
