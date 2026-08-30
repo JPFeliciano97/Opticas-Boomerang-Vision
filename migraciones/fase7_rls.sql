@@ -133,11 +133,38 @@ select c.relname as tabla,
 -- do $$
 -- declare t text;
 -- begin
---   foreach t in array array['pacientes','historias_clinicas',
---                            'ventas_facturacion','gastos_caja','inventario',
---                            'laboratorios','pagos_saldos','configuracion',
---                            'facturas_laboratorio','pagos_laboratorio']
+--   for t in
+--     select c.relname
+--       from pg_class c
+--       join pg_namespace n on n.oid = c.relnamespace
+--      where n.nspname = 'public' and c.relkind = 'r'
 --   loop
---     execute format('alter table %I disable row level security', t);
+--     execute format('alter table public.%I disable row level security', t);
 --   end loop;
 -- end $$;
+
+
+-- ---------------------------------------------------------------------
+-- 6. Políticas viejas que sobraban  [EJECUTADO 30-08-2026]
+-- ---------------------------------------------------------------------
+-- Al activar RLS aparecieron dos políticas que no había creado nadie de
+-- este lado: quedaban de cuando la app usaba otra llave.
+--
+--   tabla                politica              para_quien             cmd
+--   pacientes            Permitir inserción    {anon,authenticated}   INSERT
+--   historias_clinicas   Permitir inserción    {anon,authenticated}   INSERT
+--
+-- Las dos con with_check = true, es decir sin condición: cualquiera con
+-- la llave anon podía insertar pacientes y historias clínicas
+-- inventadas. Leer no, borrar tampoco, pero sí ensuciar las dos tablas
+-- que guardan datos de pacientes.
+--
+-- La app no las necesita: entra con service_role, que se salta RLS y ni
+-- mira las políticas. Se borraron.
+drop policy if exists "Permitir inserción" on public.pacientes;
+drop policy if exists "Permitir inserción" on public.historias_clinicas;
+
+-- Estado final esperado: cero filas.
+select tablename, policyname, roles, cmd
+  from pg_policies
+ where schemaname = 'public';
