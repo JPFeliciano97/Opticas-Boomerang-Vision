@@ -4621,9 +4621,14 @@ elif modulo == "🧾 Pagos a Laboratorios":
 
                 fd1, fd2, fd3 = st.columns(3)
                 _fecha_f = fd1.date_input("Fecha de la factura", value=_hoy_lab)
-                _fecha_v = fd2.date_input("Vence el", value=None,
-                                          help="Opcional. Sirve para saber qué "
-                                               "se está pasando de plazo.")
+                # Quince días desde hoy por defecto: es el plazo habitual, y
+                # dejarlo vacío hacía que casi ninguna factura tuviera
+                # vencimiento -- con lo que el aviso de "vencida" no avisaba
+                # de nada. Se puede cambiar factura por factura.
+                _fecha_v = fd2.date_input("Vence el",
+                                          value=_hoy_lab + timedelta(days=15),
+                                          help="Quince días desde hoy. Cámbialo si "
+                                               "el laboratorio te da otro plazo.")
                 _total_txt = fd3.text_input("Total de la factura ($)")
                 _obs_lab = st.text_input("Observaciones (opcional)",
                                          placeholder="Ej: cubre los trabajos del 5 al 18 de agosto")
