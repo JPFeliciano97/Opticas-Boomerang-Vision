@@ -579,6 +579,18 @@ def columna_existe(tabla, columna):
         return False
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def tabla_existe(tabla):
+    """¿Existe la tabla en Supabase? Mismo propósito que columna_existe:
+    que la app funcione antes y después de correr la migración, y que si
+    falta, lo diga en vez de reventar."""
+    try:
+        supabase.table(tabla).select("*").limit(1).execute()
+        return True
+    except Exception:
+        return False
+
+
 @st.cache_data(ttl=60, show_spinner=False)
 def query_cached(tabla, filtros=None):
     """Cache de 60 s para consultas de solo lectura frecuentes."""
@@ -1958,8 +1970,16 @@ user_id = st.session_state.user_info["id"]
 
 clinica_mods = ["👨‍⚕️ Consultorio"] if (user_rol == "admin" and user_id in ["1022396649", "1024585129"]) or user_rol == "doctor_limitado" else []
 comercial_mods = ["🛍️ Óptica y Facturación", "📊 Cuadre de Caja Físico"] if user_rol in ["admin", "asesor_limitado"] else []
-operaciones_mods = ["📦 Inventario", "🔬 Control de Trabajos"] if user_rol in ["admin", "asesor_limitado"] else []
-admin_mods = ["📅 CRM y Fidelización", "📈 Analítica y Estadísticas"] if user_rol == "admin" else []
+# El orden sigue el trabajo: primero lo que está en el laboratorio, luego
+# lo que hay que pagarle por ello, y al final el inventario.
+operaciones_mods = ["🔬 Control de Trabajos"] if user_rol in ["admin", "asesor_limitado"] else []
+# Registrar facturas de laboratorio y pagarlas es mover dinero del negocio:
+# solo administradores.
+if user_rol == "admin":
+    operaciones_mods.append("🧾 Pagos a Laboratorios")
+if user_rol in ["admin", "asesor_limitado"]:
+    operaciones_mods.append("📦 Inventario")
+admin_mods = ["📈 Analítica y Estadísticas", "📅 CRM y Fidelización"] if user_rol == "admin" else []
 
 all_mods = clinica_mods + comercial_mods + operaciones_mods + admin_mods
 if "current_module" not in st.session_state or st.session_state.current_module not in all_mods:
@@ -4378,6 +4398,324 @@ elif modulo == "🔬 Control de Trabajos":
                     st.session_state.trab_pagina = total_pags_trab; st.rerun()
         else:
             st.info("No hay trabajos registrados con esos filtros.")
+
+# ------------------------------------------
+# MÓDULO 5b: PAGOS A LABORATORIOS
+# ------------------------------------------
+# El laboratorio recibe varios trabajos y luego pasa UNA factura por
+# todos. Esa factura se paga de una vez o en abonos. Hasta ahora un pago
+# a laboratorio era solo un gasto en caja: se veía cuánto se había
+# pagado, nunca cuánto quedaba debiendo.
+#
+# La unidad de la deuda es la factura del laboratorio y no el trabajo,
+# porque el sistema no sabe cuánto cobra el laboratorio por cada trabajo
+# -- eso solo aparece en su factura.
+elif modulo == "🧾 Pagos a Laboratorios":
+    styled_header("Pagos a Laboratorios", "🧾")
+
+    if not tabla_existe("facturas_laboratorio"):
+        st.warning("⚠️ Faltan las tablas en Supabase. Corre "
+                   "`migraciones/fase6_pagos_laboratorio.sql` y vuelve a entrar.")
+    else:
+        _facturas_lab = traer_todas_las_filas(
+            "facturas_laboratorio", orden_col="fecha_factura", orden_desc=True)
+        _pagos_lab = traer_todas_las_filas("pagos_laboratorio")
+
+        # Lo abonado NO se guarda en la factura: se suma de sus pagos. Un
+        # dato que se puede calcular y además se guarda acaba
+        # desincronizándose, y entonces hay dos verdades.
+        _abonado_por = {}
+        for _p in _pagos_lab:
+            _k = _p.get("id_factura_lab")
+            _abonado_por[_k] = _abonado_por.get(_k, 0) + float(_p.get("monto") or 0)
+
+        def _saldo_de(f):
+            return float(f.get("total") or 0) - _abonado_por.get(f.get("id_factura_lab"), 0)
+
+        _activas = [f for f in _facturas_lab if str(f.get("estado") or "ACTIVA") != "ANULADA"]
+        _pendientes = [f for f in _activas if _saldo_de(f) > 0.5]
+        _deuda_total = sum(_saldo_de(f) for f in _pendientes)
+
+        _hoy_lab = now_co().date()
+
+        def _dias_vencida(f):
+            v = f.get("fecha_vencimiento")
+            if not v:
+                return None
+            try:
+                return (_hoy_lab - datetime.strptime(str(v)[:10], "%Y-%m-%d").date()).days
+            except Exception:
+                return None
+
+        _vencidas = [f for f in _pendientes
+                     if (_dias_vencida(f) or -1) > 0]
+
+        kl1, kl2, kl3 = st.columns(3)
+        kl1.metric("💰 Debes en total", f"${format_currency_co(_deuda_total)}")
+        kl2.metric("🧾 Facturas pendientes", f"{len(_pendientes)}")
+        kl3.metric("🔴 Vencidas", f"{len(_vencidas)}",
+                   help="Pasaron de su fecha de vencimiento y aún tienen saldo.")
+
+        tab_lab_pend, tab_lab_nueva, tab_lab_hist = st.tabs(
+            ["📌 Pendientes", "➕ Registrar factura", "📜 Historial"])
+
+        # -------------------------------------------------------------
+        # PENDIENTES
+        # -------------------------------------------------------------
+        with tab_lab_pend:
+            if not _pendientes:
+                st.success("✅ No le debes nada a ningún laboratorio.")
+            else:
+                # Por laboratorio primero: cuando llaman a cobrar, llaman
+                # por el total que se les debe, no por una factura suelta.
+                _por_lab = {}
+                for f in _pendientes:
+                    _l = str(f.get("laboratorio") or "SIN NOMBRE").strip().upper()
+                    _por_lab[_l] = _por_lab.get(_l, 0) + _saldo_de(f)
+                df_deuda_lab = (pd.DataFrame(
+                    [{"Laboratorio": k, "Saldo": v} for k, v in _por_lab.items()])
+                    .sort_values("Saldo", ascending=False))
+                chart_deuda = alt.Chart(df_deuda_lab).mark_bar(
+                    size=22, cornerRadiusTopRight=4, cornerRadiusBottomRight=4,
+                    color="#2a78d6"
+                ).encode(
+                    y=alt.Y("Laboratorio:N", sort=list(df_deuda_lab["Laboratorio"]),
+                            title=None, scale=alt.Scale(paddingInner=0.3)),
+                    # tickCount acotado: sin él, un saldo de $1,2 millones
+                    # pinta veinticinco etiquetas de eje.
+                    x=alt.X("Saldo:Q", title="Saldo pendiente ($)",
+                            axis=alt.Axis(format="~s", tickCount=6)),
+                    tooltip=[alt.Tooltip("Laboratorio:N"),
+                             alt.Tooltip("Saldo:Q", format=",.0f")],
+                    # 45px por banda: medido en el navegador, por debajo de
+                    # eso la barra ocupa la banda entera y las barras se
+                    # leen como un bloque continuo.
+                ).properties(height=max(170, 45 * len(df_deuda_lab)))
+                st.altair_chart(chart_deuda, use_container_width=True)
+
+                st.divider()
+                st.markdown("#### Facturas por pagar")
+                st.caption("De la más antigua a la más reciente: primero lo que "
+                           "lleva más tiempo esperando.")
+
+                for f in sorted(_pendientes, key=lambda x: str(x.get("fecha_factura") or "")):
+                    _id = f.get("id_factura_lab")
+                    _saldo = _saldo_de(f)
+                    _ab = _abonado_por.get(_id, 0)
+                    _venc = _dias_vencida(f)
+                    with st.container(border=True):
+                        c1, c2, c3 = st.columns([3, 2, 2])
+                        _num = f.get("numero_factura_lab") or "sin número"
+                        c1.markdown(f"**{str(f.get('laboratorio') or '').upper()}** · "
+                                    f"factura `{_num}`")
+                        c1.caption(f"Del {str(f.get('fecha_factura'))[:10]}"
+                                   + (f" · vence el {str(f.get('fecha_vencimiento'))[:10]}"
+                                      if f.get("fecha_vencimiento") else ""))
+                        if _venc is not None and _venc > 0:
+                            c1.markdown(f"🔴 **Vencida hace {_venc} día(s)**")
+                        c2.metric("Saldo", f"${format_currency_co(_saldo)}")
+                        c3.caption(f"Total ${format_currency_co(f.get('total'))}")
+                        if _ab:
+                            c3.caption(f"Abonado ${format_currency_co(_ab)}")
+                        if f.get("observaciones"):
+                            st.caption(f"📝 {f['observaciones']}")
+
+                        with st.expander("💵 Abonar a esta factura"):
+                            with st.form(f"form_pago_lab_{_id}"):
+                                pc1, pc2 = st.columns(2)
+                                _monto_txt = pc1.text_input(
+                                    "Monto a pagar ($)",
+                                    value=str(int(_saldo)),
+                                    key=f"monto_pago_lab_{_id}",
+                                    help="Por defecto viene el saldo completo. "
+                                         "Cámbialo si es un abono parcial.")
+                                _metodo = pc2.selectbox("Método de pago",
+                                                        METODOS_PAGO_GASTO,
+                                                        key=f"metodo_pago_lab_{_id}")
+                                _confirmar = st.form_submit_button(
+                                    "💾 Registrar pago", type="primary",
+                                    use_container_width=True)
+
+                            if _confirmar:
+                                _monto = parse_money_co(_monto_txt)
+                                if _monto <= 0:
+                                    st.error("⚠️ El monto tiene que ser mayor que cero.")
+                                elif _monto > _saldo + 0.5:
+                                    st.error(f"⚠️ El abono (${format_currency_co(_monto)}) "
+                                             f"es mayor que el saldo "
+                                             f"(${format_currency_co(_saldo)}). "
+                                             f"Corrige el monto.")
+                                else:
+                                    # El gasto se crea aquí y no se deja para
+                                    # después: si el abono queda registrado y
+                                    # el gasto no, el dinero desaparece de la
+                                    # analítica sin que nadie lo note.
+                                    #
+                                    # DIARIO cuando es efectivo, MENSUAL en lo
+                                    # demás: el cuadre de caja solo descuenta
+                                    # los gastos DIARIOS pagados en efectivo,
+                                    # así que un pago en efectivo marcado
+                                    # MENSUAL dejaría la gaveta descuadrada por
+                                    # ese importe.
+                                    _desc = (f"LABORATORIO {str(f.get('laboratorio') or '').upper()}"
+                                             + (f" FACT {f.get('numero_factura_lab')}"
+                                                if f.get("numero_factura_lab") else ""))
+                                    _id_gasto = None
+                                    try:
+                                        _res_g = supabase.table("gastos_caja").insert({
+                                            "descripcion": _desc,
+                                            "monto": _monto,
+                                            "metodo_pago": _metodo,
+                                            "fecha_gasto": now_co().isoformat(),
+                                            "tipo_gasto": "DIARIO" if _metodo == "EFECTIVO" else "MENSUAL",
+                                            "categoria_gasto": "LABORATORIO Y PROVEEDORES",
+                                        }).execute()
+                                        if _res_g.data:
+                                            _id_gasto = _res_g.data[0].get("id_gasto")
+                                    except Exception as err_g:
+                                        st.error(f"⚠️ No se pudo registrar el gasto en caja "
+                                                 f"({err_g}). El abono NO se guardó, para que "
+                                                 f"las dos cosas no se separen.")
+                                        _id_gasto = "ERROR"
+
+                                    if _id_gasto != "ERROR":
+                                        supabase.table("pagos_laboratorio").insert({
+                                            "id_factura_lab": _id,
+                                            "monto": _monto,
+                                            "metodo_pago": _metodo,
+                                            "fecha_pago": now_co().isoformat(),
+                                            "id_gasto": _id_gasto,
+                                            "registrado_por": st.session_state.get(
+                                                "user_info", {}).get("nombre", "Desconocido"),
+                                        }).execute()
+                                        _resta = _saldo - _monto
+                                        st.session_state.global_toast = (
+                                            f"Pago de ${format_currency_co(_monto)} a "
+                                            f"{str(f.get('laboratorio') or '').upper()}. "
+                                            + ("Factura saldada." if _resta < 0.5 else
+                                               f"Queda ${format_currency_co(_resta)}."))
+                                        st.rerun()
+
+        # -------------------------------------------------------------
+        # REGISTRAR FACTURA
+        # -------------------------------------------------------------
+        with tab_lab_nueva:
+            st.caption("La factura que te pasa el laboratorio por los trabajos "
+                       "que le mandaste. Los abonos van luego contra ella.")
+            # Los laboratorios que ya existen se ofrecen para no volver a
+            # escribirlos: cada forma nueva de escribir el mismo nombre
+            # parte su deuda en dos.
+            _labs_vistos = sorted({str(f.get("laboratorio") or "").strip().upper()
+                                   for f in _facturas_lab if f.get("laboratorio")})
+            with st.form("form_nueva_factura_lab"):
+                fc1, fc2 = st.columns(2)
+                if _labs_vistos:
+                    _lab_sel = fc1.selectbox("Laboratorio",
+                                             _labs_vistos + ["➕ Otro (escribir)"])
+                    _lab_nuevo = (fc1.text_input("Nombre del laboratorio nuevo").strip().upper()
+                                  if _lab_sel == "➕ Otro (escribir)" else "")
+                    _lab_final = _lab_nuevo if _lab_sel == "➕ Otro (escribir)" else _lab_sel
+                else:
+                    _lab_final = fc1.text_input("Laboratorio").strip().upper()
+                _num_lab = fc2.text_input("N° de factura del laboratorio").strip().upper()
+
+                fd1, fd2, fd3 = st.columns(3)
+                _fecha_f = fd1.date_input("Fecha de la factura", value=_hoy_lab)
+                _fecha_v = fd2.date_input("Vence el", value=None,
+                                          help="Opcional. Sirve para saber qué "
+                                               "se está pasando de plazo.")
+                _total_txt = fd3.text_input("Total de la factura ($)")
+                _obs_lab = st.text_input("Observaciones (opcional)",
+                                         placeholder="Ej: cubre los trabajos del 5 al 18 de agosto")
+                _guardar_f = st.form_submit_button("💾 Registrar factura",
+                                                   type="primary",
+                                                   use_container_width=True)
+
+            if _guardar_f:
+                _total_f = parse_money_co(_total_txt)
+                _dup = [f for f in _activas
+                        if str(f.get("laboratorio") or "").strip().upper() == _lab_final
+                        and str(f.get("numero_factura_lab") or "").strip().upper() == _num_lab
+                        and _num_lab]
+                if not _lab_final:
+                    st.warning("⚠️ Falta el laboratorio.")
+                elif _total_f <= 0:
+                    st.warning("⚠️ El total tiene que ser mayor que cero.")
+                elif _dup:
+                    # Sin esto, la misma factura entra dos veces y la deuda
+                    # con ese laboratorio sale al doble.
+                    st.error(f"⚠️ Ya hay una factura `{_num_lab}` de {_lab_final} "
+                             f"registrada. Búscala en Pendientes o en el Historial.")
+                else:
+                    supabase.table("facturas_laboratorio").insert({
+                        "laboratorio": _lab_final,
+                        "numero_factura_lab": _num_lab or None,
+                        "fecha_factura": str(_fecha_f),
+                        "fecha_vencimiento": str(_fecha_v) if _fecha_v else None,
+                        "total": _total_f,
+                        "estado": "ACTIVA",
+                        "observaciones": _obs_lab or None,
+                        "creado_por": st.session_state.get(
+                            "user_info", {}).get("nombre", "Desconocido"),
+                    }).execute()
+                    st.session_state.global_toast = (
+                        f"Factura de {_lab_final} por "
+                        f"${format_currency_co(_total_f)} registrada.")
+                    st.rerun()
+
+        # -------------------------------------------------------------
+        # HISTORIAL
+        # -------------------------------------------------------------
+        with tab_lab_hist:
+            if not _facturas_lab:
+                st.info("Todavía no hay facturas de laboratorio registradas.")
+            else:
+                _solo_pend = st.toggle("Solo las que tienen saldo", value=False,
+                                       key="hist_lab_solo_pend")
+                filas_h = []
+                for f in _facturas_lab:
+                    _s = _saldo_de(f)
+                    if _solo_pend and _s <= 0.5:
+                        continue
+                    filas_h.append({
+                        "Laboratorio": str(f.get("laboratorio") or "").upper(),
+                        "N° factura": f.get("numero_factura_lab") or "—",
+                        "Fecha": str(f.get("fecha_factura"))[:10],
+                        "Total": float(f.get("total") or 0),
+                        "Abonado": _abonado_por.get(f.get("id_factura_lab"), 0),
+                        "Saldo": _s,
+                        "Estado": ("ANULADA" if str(f.get("estado")) == "ANULADA"
+                                   else "PAGADA" if _s <= 0.5 else "PENDIENTE"),
+                    })
+                if not filas_h:
+                    st.success("✅ No hay facturas con saldo.")
+                else:
+                    df_h = pd.DataFrame(filas_h)
+                    st.dataframe(
+                        df_h.style.format({c: (lambda x: f"${format_currency_co(x)}")
+                                           for c in ("Total", "Abonado", "Saldo")}),
+                        use_container_width=True, hide_index=True)
+                    st.caption(f"{len(df_h)} factura(s) · "
+                               f"total ${format_currency_co(df_h['Total'].sum())} · "
+                               f"abonado ${format_currency_co(df_h['Abonado'].sum())} · "
+                               f"pendiente ${format_currency_co(df_h['Saldo'].sum())}")
+
+                if _pagos_lab:
+                    with st.expander(f"Ver los {len(_pagos_lab)} pagos registrados"):
+                        _fac_por_id = {f.get("id_factura_lab"): f for f in _facturas_lab}
+                        df_p = pd.DataFrame([{
+                            "Fecha": str(p.get("fecha_pago"))[:10],
+                            "Laboratorio": str(_fac_por_id.get(
+                                p.get("id_factura_lab"), {}).get("laboratorio") or "—").upper(),
+                            "N° factura": _fac_por_id.get(
+                                p.get("id_factura_lab"), {}).get("numero_factura_lab") or "—",
+                            "Monto": float(p.get("monto") or 0),
+                            "Método": p.get("metodo_pago") or "—",
+                            "Registró": p.get("registrado_por") or "—",
+                        } for p in _pagos_lab]).sort_values("Fecha", ascending=False)
+                        st.dataframe(
+                            df_p.style.format({"Monto": lambda x: f"${format_currency_co(x)}"}),
+                            use_container_width=True, hide_index=True)
 
 # ------------------------------------------
 # MÓDULO 6: CRM Y FIDELIZACIÓN (DD/MM/YYYY)
