@@ -1232,6 +1232,71 @@ CATEGORIA_NO_CONTABLE = "NO ES UN GASTO"
 CATS_NO_OPERATIVAS = ["RETIROS DEL PROPIETARIO", "OBLIGACIONES FINANCIERAS",
                       "IMPUESTOS"]
 
+# El desplegable de categoría arrancaba en la primera de la lista
+# (LABORATORIO Y PROVEEDORES), así que quien no lo tocaba grababa eso sin
+# enterarse: una categoría equivocada que PARECE un dato. Con una opción
+# neutra al frente, no elegir deja de ser una respuesta.
+CATEGORIA_SIN_ELEGIR = "— Elige una categoría —"
+
+# Atajos para lo que se repite mes a mes. Salen de contar los gastos
+# reales de agosto: la misma nómina estaba escrita de cuatro formas
+# ("PAGO NOMINA ROSA", "ROSA NOMINA", "NOMINA ROSA", "ROSA"), y esa
+# dispersión es la que rompía el desglose de nómina por persona.
+#
+# El retiro de Mateo se llama RETIRO, no "nómina": el dueño no está en
+# nómina, y llamarlo así es justo lo que hacía parecer que el negocio
+# gastaba en personal un dinero que en realidad es reparto de utilidad.
+#
+# Las facturas de laboratorio tienen su propio módulo (Pagos a
+# Laboratorios), que además crea el gasto solo; por eso no están aquí.
+CONCEPTOS_FRECUENTES = [
+    ("PAGO NOMINA ROSA",          "NOMINA"),
+    ("PAGO NOMINA NELSON",        "NOMINA"),
+    ("PAGO EPS Y COLSANITAS",     "NOMINA"),
+    ("RETIRO MATEO",              "RETIROS DEL PROPIETARIO"),
+    ("PAGO CONSULTA DRA ASTRID",  "HONORARIOS POR CONSULTA"),
+    ("PAGO TURNO DOCTOR EXTERNO", "HONORARIOS POR TURNO"),
+    ("PAGO ARRIENDO LOCAL",       "ARRIENDO Y ADMINISTRACION"),
+    ("PAGO ADMINISTRACION",       "ARRIENDO Y ADMINISTRACION"),
+    ("PAGO ENEL",                 "SERVICIOS PUBLICOS"),
+    ("PAGO CLARO INTERNET",       "SERVICIOS PUBLICOS"),
+    ("ABONO COOAPA",              "OBLIGACIONES FINANCIERAS"),
+    ("ALMUERZOS",                 "ALIMENTACION"),
+    ("PARQUEADERO",               "TRANSPORTE"),
+    ("BUSES Y TRANSMILENIO",      "TRANSPORTE"),
+]
+CONCEPTO_LIBRE = "✍️ Escribir el concepto a mano"
+CAT_POR_CONCEPTO = dict(CONCEPTOS_FRECUENTES)
+
+# Palabras que ocupan el campo sin decir en qué se fue el dinero. Un
+# gasto que solo dice "PAGO" es indistinguible de cualquier otro dentro
+# de seis meses, cuando haga falta saber qué fue.
+PALABRAS_VACIAS_GASTO = {"PAGO", "PAGOS", "GASTO", "GASTOS", "VARIOS",
+                         "OTRO", "OTROS", "COMPRA", "COMPRAS", "ABONO",
+                         "SALIDA", "DINERO", "EFECTIVO", "CAJA"}
+
+
+def revisar_descripcion_gasto(desc):
+    """
+    Devuelve un aviso si la descripción no va a servirle a nadie dentro
+    de unos meses, o None si está bien. AVISA, no bloquea: hay gastos
+    legítimos de una sola palabra -- "MATEO", "PARQUEADERO" -- y frenar
+    a quien está en el mostrador con un cliente delante haría que se
+    registren menos gastos, que es peor que registrarlos mal.
+    """
+    limpio = " ".join(str(desc or "").split()).upper()
+    if not limpio:
+        return None
+    if limpio in PALABRAS_VACIAS_GASTO:
+        return ("«%s» no dice en qué se fue el dinero. Añade a quién o "
+                "por qué: dentro de seis meses este gasto será "
+                "imposible de identificar." % limpio)
+    if len(limpio) < 5:
+        return ("La descripción es muy corta. Si es un nombre, añade de "
+                "qué se trata (por ejemplo «ROSA» → «PAGO NOMINA ROSA»).")
+    return None
+
+
 # Por encima de este monto se pide confirmación explícita. El gasto
 # legítimo más alto registrado es el arriendo ($2.100.000), así que el
 # umbral deja pasar la operación normal y solo frena lo excepcional --
@@ -1837,6 +1902,21 @@ def normalizar_cil_eje(cilindro, eje):
 def on_subtotal_change(): st.session_state.subtotal_input = formatear_campo_money(st.session_state.subtotal_input)
 def on_abono_change(): st.session_state.abono_input = formatear_campo_money(st.session_state.abono_input)
 def on_monto_rec_change(): st.session_state.monto_rec_input = formatear_campo_money(st.session_state.monto_rec_input)
+def on_concepto_frecuente():
+    """
+    Al escoger un atajo, escribe el concepto y su categoría. Las dos
+    quedan editables: el atajo ahorra teclas y unifica la escritura, no
+    decide por nadie.
+    """
+    sel = st.session_state.get("concepto_frecuente_sel", CONCEPTO_LIBRE)
+    if sel == CONCEPTO_LIBRE:
+        return
+    st.session_state.desc_gasto_input = sel
+    cat = CAT_POR_CONCEPTO.get(sel)
+    if cat:
+        st.session_state.categoria_gasto_input = cat
+
+
 def on_monto_gasto_change(): st.session_state.monto_gasto_input = formatear_campo_money(st.session_state.monto_gasto_input)
 def on_p_compra_change(): st.session_state.p_compra_input = formatear_campo_money(st.session_state.p_compra_input)
 def on_p_venta_change(): st.session_state.p_venta_input = formatear_campo_money(st.session_state.p_venta_input)
@@ -1911,6 +1991,11 @@ if "trigger_clear_gastos" in st.session_state and st.session_state.trigger_clear
     st.session_state.desc_gasto_input = ""
     st.session_state.monto_gasto_input = ""
     st.session_state.metodo_gasto_input = "EFECTIVO"
+    # El atajo y la categoría vuelven a su estado neutro: si se quedaran
+    # con lo del gasto anterior, el siguiente heredaría una categoría que
+    # nadie eligió, que es el problema que esto viene a resolver.
+    st.session_state.concepto_frecuente_sel = CONCEPTO_LIBRE
+    st.session_state.categoria_gasto_input = CATEGORIA_SIN_ELEGIR
     # Sin esto la confirmación quedaría marcada para el gasto siguiente,
     # que es justo lo que la haría inútil.
     st.session_state.confirmar_gasto_alto = False
@@ -3774,6 +3859,17 @@ elif modulo == "📊 Cuadre de Caja Físico":
                        "balance del mes, en la pestaña 'Gastos Mensuales'.")
         hay_categoria = columna_existe("gastos_caja", "categoria_gasto")
 
+        st.selectbox(
+            "Atajo para gastos que se repiten",
+            [CONCEPTO_LIBRE] + [c for c, _ in CONCEPTOS_FRECUENTES],
+            key="concepto_frecuente_sel", on_change=on_concepto_frecuente,
+            help="Rellena el concepto y su categoría de una vez. Las dos se "
+                 "pueden cambiar después. Sirve para que la misma nómina no "
+                 "acabe escrita de cuatro formas distintas.\n\n"
+                 "Las facturas de laboratorio van por «Pagos a Laboratorios», "
+                 "que ya crea el gasto solo.",
+        )
+
         col_g1, col_g2, col_g3 = st.columns([2, 1, 1])
         with col_g1: desc_gasto = st.text_input("Concepto / Descripción del Gasto", placeholder="Ej: Pago mensajería laboratorio", key="desc_gasto_input").upper()
         with col_g2: monto_gasto = parse_money_co(st.text_input("Valor ($)", key="monto_gasto_input", on_change=on_monto_gasto_change))
@@ -3781,7 +3877,9 @@ elif modulo == "📊 Cuadre de Caja Físico":
 
         if hay_categoria:
             categoria_gasto = st.selectbox(
-                "Categoría del gasto", CATEGORIAS_GASTO, key="categoria_gasto_input",
+                "Categoría del gasto",
+                [CATEGORIA_SIN_ELEGIR] + CATEGORIAS_GASTO,
+                key="categoria_gasto_input",
                 help="Qué CLASE de gasto es. Es independiente de si es diario o mensual: "
                      "un pago al laboratorio puede ser cualquiera de los dos.\n\n"
                      "· NOMINA: personal de planta (asesores).\n"
@@ -3815,9 +3913,16 @@ elif modulo == "📊 Cuadre de Caja Físico":
         else:
             confirmado = True
 
+        _aviso_desc = revisar_descripcion_gasto(desc_gasto)
+        if _aviso_desc:
+            st.info(f"✏️ {_aviso_desc}")
+
         if st.button("💾 Guardar Gasto de Caja", type="primary"):
             if not desc_gasto or monto_gasto <= 0:
                 st.warning("⚠️ Ingresa una descripción y valor válidos.")
+            elif hay_categoria and categoria_gasto == CATEGORIA_SIN_ELEGIR:
+                st.warning("⚠️ Elige la categoría del gasto. Sin ella el gasto "
+                           "no aparece en el desglose mensual.")
             elif not confirmado:
                 st.error(f"Marca la casilla de confirmación para registrar "
                          f"${format_currency_co(monto_gasto)}.")
