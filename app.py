@@ -1600,7 +1600,7 @@ def corregir_documento_paciente(doc_viejo, doc_nuevo):
     try:
         sello_aud = sello_auditoria()
         supabase.table("pacientes").update({"documento": doc_nuevo, **sello_aud}).eq("documento", doc_viejo).execute()
-        supabase.table("historias_clinicas").update({"paciente_documento": doc_nuevo}).eq("paciente_documento", doc_viejo).execute()
+        supabase.table("historias_clinicas").update({"paciente_documento": doc_nuevo, **sello_aud}).eq("paciente_documento", doc_viejo).execute()
         supabase.table("ventas_facturacion").update({"paciente_documento": doc_nuevo, "titular_doc": doc_nuevo, **sello_aud}).eq("paciente_documento", doc_viejo).execute()
         return True, f"Documento corregido de '{doc_viejo}' a '{doc_nuevo}' en todos los registros vinculados.", False
     except Exception as e:
@@ -1622,7 +1622,7 @@ def fusionar_pacientes(doc_a_eliminar, doc_a_conservar):
     doc_a_eliminar, doc_a_conservar = str(doc_a_eliminar).strip(), str(doc_a_conservar).strip()
     try:
         sello_aud = sello_auditoria()
-        supabase.table("historias_clinicas").update({"paciente_documento": doc_a_conservar}).eq("paciente_documento", doc_a_eliminar).execute()
+        supabase.table("historias_clinicas").update({"paciente_documento": doc_a_conservar, **sello_aud}).eq("paciente_documento", doc_a_eliminar).execute()
         supabase.table("ventas_facturacion").update({"paciente_documento": doc_a_conservar, "titular_doc": doc_a_conservar, **sello_aud}).eq("paciente_documento", doc_a_eliminar).execute()
         supabase.table("pacientes").delete().eq("documento", doc_a_eliminar).execute()
         return True, f"Registros fusionados en el documento '{doc_a_conservar}'. La ficha duplicada se eliminó."
@@ -3497,6 +3497,7 @@ elif modulo == "🛍️ Óptica y Facturación":
                                 try:
                                     supabase.table("pacientes").update({
                                         "nombre_completo": e_pac_nombre, "celular": e_pac_tel,
+                                        **sello_auditoria(),
                                     }).eq("documento", doc_final).execute()
                                 except Exception:
                                     pass
@@ -4011,8 +4012,14 @@ elif modulo == "📊 Cuadre de Caja Físico":
         # Antes se identificaba por la terna fecha+descripción+monto: dos
         # gastos idénticos el mismo día -- por ejemplo dos "ROSA NOMINA" de
         # $40.000, que ocurren de verdad -- se modificaban AMBOS a la vez.
+        _hay_auditoria_gasto = columna_existe("gastos_caja", "modificado_por")
+
         def _actualizar_gasto(gasto, cambios):
             id_g = gasto.get("id_gasto")
+            # Reclasificar cambia en qué casilla cae el dinero, y de ahí
+            # salen las gráficas del mes: conviene saber quién lo movió.
+            if _hay_auditoria_gasto:
+                cambios = {**cambios, **sello_auditoria()}
             q = supabase.table("gastos_caja").update(cambios)
             if id_g is not None:
                 q = q.eq("id_gasto", id_g)
@@ -4475,6 +4482,7 @@ elif modulo == "🔬 Control de Trabajos":
                                     "estado_lab": nuevo_est,
                                     "laboratorio": nuevo_lab_sel if nuevo_lab_sel != "NO ASIGNADO" else None,
                                     "numero_orden_lab": nuevo_orden_lab or None,
+                                    **sello_auditoria(),
                                 }).eq("numero_factura", fac_id).execute()
                                 st.session_state.global_toast = f"Trabajo actualizado a: {nuevo_est}"
                                 st.rerun()
