@@ -1305,21 +1305,30 @@ CATEGORIA_SIN_ELEGIR = "— Elige una categoría —"
 #
 # Las facturas de laboratorio tienen su propio módulo (Pagos a
 # Laboratorios), que además crea el gasto solo; por eso no están aquí.
+# Ninguno empieza por "PAGO": la guía de gastos lo pide así, y tiene
+# razón -- todos los gastos son pagos, así que esa palabra no distingue
+# nada y solo alarga la búsqueda. Los atajos son lo que más se va a
+# escribir de ahora en adelante, así que son el sitio donde esa regla
+# se cumple sola.
+#
+# Tampoco está el abono a COOAPA: ese crédito quedó pago. Si aparece
+# otro, se escribe a mano y la categoría OBLIGACIONES FINANCIERAS sigue
+# ahí para él.
 CONCEPTOS_FRECUENTES = [
-    ("PAGO NOMINA ROSA",          "NOMINA"),
-    ("PAGO NOMINA NELSON",        "NOMINA"),
-    ("PAGO EPS Y COLSANITAS",     "NOMINA"),
-    ("RETIRO MATEO",              "RETIROS DEL PROPIETARIO"),
-    ("PAGO CONSULTA DRA ASTRID",  "HONORARIOS POR CONSULTA"),
-    ("PAGO TURNO DOCTOR EXTERNO", "HONORARIOS POR TURNO"),
-    ("PAGO ARRIENDO LOCAL",       "ARRIENDO Y ADMINISTRACION"),
-    ("PAGO ADMINISTRACION",       "ARRIENDO Y ADMINISTRACION"),
-    ("PAGO ENEL",                 "SERVICIOS PUBLICOS"),
-    ("PAGO CLARO INTERNET",       "SERVICIOS PUBLICOS"),
-    ("ABONO COOAPA",              "OBLIGACIONES FINANCIERAS"),
-    ("ALMUERZOS",                 "ALIMENTACION"),
-    ("PARQUEADERO",               "TRANSPORTE"),
-    ("BUSES Y TRANSMILENIO",      "TRANSPORTE"),
+    ("NOMINA ROSA",            "NOMINA"),
+    ("NOMINA NELSON",          "NOMINA"),
+    ("EPS Y COLSANITAS",       "NOMINA"),
+    ("RETIRO MATEO",           "RETIROS DEL PROPIETARIO"),
+    ("ALMUERZOS MATEO",        "RETIROS DEL PROPIETARIO"),
+    ("CONSULTA DRA ASTRID",    "HONORARIOS POR CONSULTA"),
+    ("TURNO DOCTOR EXTERNO",   "HONORARIOS POR TURNO"),
+    ("ARRIENDO LOCAL",         "ARRIENDO Y ADMINISTRACION"),
+    ("ADMINISTRACION",         "ARRIENDO Y ADMINISTRACION"),
+    ("ENEL",                   "SERVICIOS PUBLICOS"),
+    ("CLARO INTERNET",         "SERVICIOS PUBLICOS"),
+    ("ALMUERZOS",              "ALIMENTACION"),
+    ("PARQUEADERO",            "TRANSPORTE"),
+    ("BUSES Y TRANSMILENIO",   "TRANSPORTE"),
 ]
 CAT_POR_CONCEPTO = dict(CONCEPTOS_FRECUENTES)
 
