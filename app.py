@@ -4635,6 +4635,40 @@ elif modulo == "🧾 Pagos a Laboratorios":
                 st.session_state[_k] = _v
             st.session_state.trigger_clear_factura_lab = False
 
+        # Al corregir una factura se borran los campos de ESA factura, no
+        # los de todas: cada una tiene sus propias claves, y dejarlas con
+        # lo tecleado haría que al volver a abrirla se viera lo viejo.
+        _fac_editada = st.session_state.pop("trigger_clear_editar_fac_lab", None)
+        if _fac_editada is not None:
+            for _pref in ("ed_lab", "ed_num", "ed_ffac", "ed_fven", "ed_total", "ed_obs"):
+                st.session_state.pop(f"{_pref}_{_fac_editada}", None)
+            st.session_state.pop("editar_fac_lab_sel", None)
+
+        # La lista sale ordenada por número de facturas: el laboratorio al
+        # que más le compras es el que más veces vas a registrar, así que es
+        # el que debe estar arriba. Los del catálogo que todavía no tienen
+        # ninguna factura van al final, en orden alfabético, para que su
+        # nombre bien escrito esté disponible desde el principio -- que es
+        # donde se cuelan los errores de digitación.
+        #
+        # Se calcula aquí, fuera de las pestañas, porque la usan dos: la de
+        # registrar y la de corregir.
+        _cuenta_lab = {}
+        for _f in _facturas_lab:
+            _n = normalizar_lab(_f.get("laboratorio"))
+            if _n:
+                _cuenta_lab[_n] = _cuenta_lab.get(_n, 0) + 1
+        _con_facturas = sorted(_cuenta_lab, key=lambda n: (-_cuenta_lab[n], n))
+        _sin_facturas = sorted(set(LABORATORIOS_CONOCIDOS) - set(_cuenta_lab))
+        _opciones_lab = _con_facturas + _sin_facturas
+
+        def _fecha_o_none(v):
+            """La fecha guardada como texto, lista para un date_input."""
+            try:
+                return datetime.strptime(str(v)[:10], "%Y-%m-%d").date()
+            except Exception:
+                return None
+
         def _dias_vencida(f):
             v = f.get("fecha_vencimiento")
             if not v:
@@ -4653,8 +4687,9 @@ elif modulo == "🧾 Pagos a Laboratorios":
         kl3.metric("🔴 Vencidas", f"{len(_vencidas)}",
                    help="Pasaron de su fecha de vencimiento y aún tienen saldo.")
 
-        tab_lab_pend, tab_lab_nueva, tab_lab_hist = st.tabs(
-            ["📌 Pendientes", "➕ Registrar factura", "📜 Historial"])
+        tab_lab_pend, tab_lab_nueva, tab_lab_edit, tab_lab_hist = st.tabs(
+            ["📌 Pendientes", "➕ Registrar factura",
+             "✏️ Corregir", "📜 Historial"])
 
         # -------------------------------------------------------------
         # PENDIENTES
@@ -4803,20 +4838,6 @@ elif modulo == "🧾 Pagos a Laboratorios":
                        "facturas tienen; elegirlo de ahí en vez de escribirlo "
                        "evita que el mismo entre dos veces con una letra "
                        "distinta y su deuda salga partida en dos.")
-            # La lista sale ordenada por número de facturas: el laboratorio
-            # al que más le compras es el que más veces vas a registrar, así
-            # que es el que debe estar arriba. Los del catálogo que todavía
-            # no tienen ninguna factura van al final, en orden alfabético,
-            # para que su nombre bien escrito esté disponible desde el
-            # principio -- que es donde se cuelan los errores de digitación.
-            _cuenta_lab = {}
-            for _f in _facturas_lab:
-                _n = normalizar_lab(_f.get("laboratorio"))
-                if _n:
-                    _cuenta_lab[_n] = _cuenta_lab.get(_n, 0) + 1
-            _con_facturas = sorted(_cuenta_lab, key=lambda n: (-_cuenta_lab[n], n))
-            _sin_facturas = sorted(set(LABORATORIOS_CONOCIDOS) - set(_cuenta_lab))
-            _opciones_lab = _con_facturas + _sin_facturas
             with st.form("form_nueva_factura_lab"):
                 fc1, fc2 = st.columns([3, 2])
                 # Un solo campo que acepta nombres nuevos. Antes había un
@@ -4894,6 +4915,179 @@ elif modulo == "🧾 Pagos a Laboratorios":
         # -------------------------------------------------------------
         # HISTORIAL
         # -------------------------------------------------------------
+        # -------------------------------------------------------------
+        # CORREGIR UNA FACTURA YA REGISTRADA
+        # -------------------------------------------------------------
+        with tab_lab_edit:
+            if not _facturas_lab:
+                st.info("Todavía no hay facturas que corregir.")
+            else:
+                st.caption("Para arreglar una factura mal registrada: el "
+                           "laboratorio equivocado, un número mal escrito, un "
+                           "total con un cero de más. Los abonos ya hechos no "
+                           "se tocan.")
+
+                def _etiqueta_fac(f):
+                    _s = _saldo_de(f)
+                    if str(f.get("estado")) == "ANULADA":
+                        _est = "anulada"
+                    elif _s <= 0.5:
+                        _est = "pagada"
+                    else:
+                        _est = f"debe ${format_currency_co(_s)}"
+                    return (f"{str(f.get('laboratorio') or '').upper()} · "
+                            f"{f.get('numero_factura_lab') or 'sin número'} · "
+                            f"{str(f.get('fecha_factura'))[:10]} · "
+                            f"${format_currency_co(f.get('total'))} · {_est}")
+
+                # Se elige por posición y no por texto: dos facturas del mismo
+                # laboratorio, mismo día y mismo importe darían la misma
+                # etiqueta, y una de las dos sería inalcanzable.
+                _idx_fac = st.selectbox(
+                    "¿Cuál factura?", range(len(_facturas_lab)), index=None,
+                    format_func=lambda i: _etiqueta_fac(_facturas_lab[i]),
+                    key="editar_fac_lab_sel",
+                    placeholder="Elige la factura que quieres corregir")
+
+                if _idx_fac is not None:
+                    _f = _facturas_lab[_idx_fac]
+                    _fid = _f.get("id_factura_lab")
+                    _ab_f = _abonado_por.get(_fid, 0)
+                    _anulada = str(_f.get("estado")) == "ANULADA"
+
+                    if _ab_f > 0.5:
+                        st.info(f"Esta factura ya tiene "
+                                f"${format_currency_co(_ab_f)} abonados en "
+                                f"{len([p for p in _pagos_lab if p.get('id_factura_lab') == _fid])} "
+                                f"pago(s). El total no puede quedar por debajo "
+                                f"de esa cifra.")
+                    if _anulada:
+                        st.warning("Esta factura está **anulada**: no cuenta "
+                                   "como deuda. Puedes reactivarla más abajo.")
+
+                    _lab_act = str(_f.get("laboratorio") or "").strip().upper()
+
+                    with st.form(f"form_editar_fac_lab_{_fid}"):
+                        ec1, ec2 = st.columns([3, 2])
+                        _e_lab = ec1.selectbox(
+                            "Laboratorio", _opciones_lab,
+                            index=(_opciones_lab.index(_lab_act)
+                                   if _lab_act in _opciones_lab else None),
+                            accept_new_options=True, key=f"ed_lab_{_fid}",
+                            placeholder="Elige el laboratorio")
+                        _e_num = ec2.text_input(
+                            "N° de factura del laboratorio",
+                            value=_f.get("numero_factura_lab") or "",
+                            key=f"ed_num_{_fid}")
+
+                        ee1, ee2, ee3 = st.columns([2, 2, 3])
+                        _e_ff = ee1.date_input(
+                            "Fecha de la factura",
+                            value=_fecha_o_none(_f.get("fecha_factura")),
+                            key=f"ed_ffac_{_fid}")
+                        _e_fv = ee2.date_input(
+                            "Vence el",
+                            value=_fecha_o_none(_f.get("fecha_vencimiento")),
+                            key=f"ed_fven_{_fid}")
+                        _e_tot = ee3.text_input(
+                            "Total de la factura ($)",
+                            value=str(int(float(_f.get("total") or 0))),
+                            key=f"ed_total_{_fid}")
+                        st.caption("Deja el vencimiento vacío si el "
+                                   "laboratorio no dio plazo.")
+                        _e_obs = st.text_input(
+                            "Observaciones (opcional)",
+                            value=_f.get("observaciones") or "",
+                            key=f"ed_obs_{_fid}")
+                        _guardar_e = st.form_submit_button(
+                            "💾 Guardar cambios", type="primary",
+                            use_container_width=True)
+
+                    if _guardar_e:
+                        _lab_f = str(_e_lab or "").strip().upper()
+                        _num_f = str(_e_num or "").strip().upper()
+                        _tot_f = parse_money_co(_e_tot)
+                        # El duplicado se busca contra las DEMÁS: sin excluirse
+                        # a sí misma, guardar sin cambiar nada daría "ya existe".
+                        _dup_e = [g for g in _facturas_lab
+                                  if g.get("id_factura_lab") != _fid
+                                  and str(g.get("estado") or "ACTIVA") != "ANULADA"
+                                  and str(g.get("laboratorio") or "").strip().upper() == _lab_f
+                                  and str(g.get("numero_factura_lab") or "").strip().upper() == _num_f
+                                  and _num_f]
+                        if not _lab_f:
+                            st.warning("⚠️ Falta el laboratorio.")
+                        elif not _e_ff:
+                            st.warning("⚠️ La factura necesita una fecha. "
+                                       "El vencimiento sí puede ir vacío.")
+                        elif _tot_f <= 0:
+                            st.warning("⚠️ El total tiene que ser mayor que cero.")
+                        elif _tot_f < _ab_f - 0.5:
+                            # Si el total baja de lo abonado, el saldo queda
+                            # negativo: la factura pasaría a decir que el
+                            # laboratorio te debe a ti.
+                            st.error(f"⚠️ El total no puede quedar por debajo de "
+                                     f"lo ya abonado "
+                                     f"(${format_currency_co(_ab_f)}). "
+                                     f"Si el importe correcto es menor, primero "
+                                     f"hay que revisar los abonos.")
+                        elif _dup_e:
+                            st.error(f"⚠️ Ya hay otra factura `{_num_f}` de "
+                                     f"{_lab_f}. Revisa el número.")
+                        else:
+                            supabase.table("facturas_laboratorio").update({
+                                "laboratorio": _lab_f,
+                                "numero_factura_lab": _num_f or None,
+                                "fecha_factura": str(_e_ff),
+                                "fecha_vencimiento": str(_e_fv) if _e_fv else None,
+                                "total": _tot_f,
+                                "observaciones": _e_obs or None,
+                                **sello_auditoria(),
+                            }).eq("id_factura_lab", _fid).execute()
+                            st.session_state.global_toast = (
+                                f"Factura de {_lab_f} actualizada.")
+                            st.session_state.trigger_clear_editar_fac_lab = _fid
+                            st.rerun()
+
+                    st.divider()
+                    if _anulada:
+                        if st.button("♻️ Reactivar esta factura",
+                                     key=f"react_fac_lab_{_fid}",
+                                     use_container_width=True):
+                            supabase.table("facturas_laboratorio").update({
+                                "estado": "ACTIVA", **sello_auditoria(),
+                            }).eq("id_factura_lab", _fid).execute()
+                            st.session_state.global_toast = "Factura reactivada."
+                            st.session_state.trigger_clear_editar_fac_lab = _fid
+                            st.rerun()
+                    elif _ab_f > 0.5:
+                        st.caption("🚫 Esta factura no se puede anular: ya tiene "
+                                   "abonos, y ese dinero salió de la caja de "
+                                   "verdad. Si el problema es el importe, "
+                                   "corrige el total arriba.")
+                    else:
+                        with st.expander("🚫 Anular esta factura"):
+                            st.caption("Anular no borra nada: la factura deja de "
+                                       "contar como deuda pero sigue en el "
+                                       "historial, y se puede reactivar. Es para "
+                                       "una factura que se registró por error o "
+                                       "que el laboratorio dio de baja.")
+                            _ok_anular = st.checkbox(
+                                "Sí, esta factura no se debe pagar",
+                                key=f"conf_anular_fac_lab_{_fid}")
+                            if st.button("Anular", key=f"btn_anular_fac_lab_{_fid}",
+                                         disabled=not _ok_anular):
+                                supabase.table("facturas_laboratorio").update({
+                                    "estado": "ANULADA", **sello_auditoria(),
+                                }).eq("id_factura_lab", _fid).execute()
+                                st.session_state.global_toast = "Factura anulada."
+                                st.session_state.trigger_clear_editar_fac_lab = _fid
+                                st.rerun()
+
+                    if _f.get("modificado_por"):
+                        st.caption(f"✏️ Última corrección: {_f['modificado_por']} · "
+                                   f"{hora_co(_f.get('modificado_fecha'), '%d/%m/%Y %H:%M')}")
+
         with tab_lab_hist:
             if not _facturas_lab:
                 st.info("Todavía no hay facturas de laboratorio registradas.")
