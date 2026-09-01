@@ -19,6 +19,26 @@
 
 
 -- ---------------------------------------------------------------------
+-- 0. DECISIÓN DEL DUEÑO -- 31 de agosto de 2026
+-- ---------------------------------------------------------------------
+-- "Ya deja esos gastos antiguos como están."
+--
+-- Esta fase queda CERRADA como línea de trabajo. El bloque 2 sigue
+-- escrito y sigue siendo correcto, pero pasa a ser opcional: nadie tiene
+-- que correrlo, y si no se corre, el histórico se queda con los cuatro
+-- importes tal como llegaron.
+--
+-- Lo que eso significa, dicho claro para que nadie se confunda al leer
+-- las cifras más adelante: el gasto histórico está SUBESTIMADO en unos
+-- $2.919.777, repartidos en cuatro filas de 2021, 2023, 2024 y 2025.
+-- No afecta a ningún mes reciente ni al cuadre de caja de hoy.
+--
+-- Tampoco se investigan ya las dos cosas del bloque 4 (las quince filas
+-- "doc" y la fila TRASPASO). Quedan escritas ahí por si alguna vez
+-- alguien recuerda qué eran, no como tarea pendiente.
+
+
+-- ---------------------------------------------------------------------
 -- 1. Cómo están ahora  [CONSULTA]
 -- ---------------------------------------------------------------------
 select id_gasto,
@@ -30,7 +50,7 @@ select id_gasto,
 
 
 -- ---------------------------------------------------------------------
--- 2. La corrección
+-- 2. La corrección  [OPCIONAL -- ver la decisión del bloque 0]
 -- ---------------------------------------------------------------------
 -- Cada UPDATE lleva el monto actual en el WHERE. Si alguien ya corrigió
 -- una fila, ese UPDATE no toca nada en vez de multiplicarla otra vez --
