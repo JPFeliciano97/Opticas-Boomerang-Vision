@@ -137,7 +137,7 @@ st.markdown("""
             border-radius: 6px !important;
             color: #000000 !important;
             padding: 8px 12px !important;
-            font-size: 15px !important;
+            font-size: 0.9375rem !important;
             box-sizing: border-box !important;
             box-shadow: none !important;
             outline: none !important;
@@ -160,7 +160,7 @@ st.markdown("""
 
         /* Label del selectbox: estilo limpio, fuera del recuadro */
         div[data-testid="stSelectbox"] > label {
-            font-size: 14px !important;
+            font-size: 0.875rem !important;
             font-weight: 500 !important;
             color: #000000 !important;
             margin-bottom: 4px !important;
@@ -201,7 +201,7 @@ st.markdown("""
         div[data-testid="stSelectbox"] [data-baseweb="select"] p {
             color: #000000 !important;
             background-color: transparent !important;
-            font-size: 15px !important;
+            font-size: 0.9375rem !important;
         }
 
         /* Flecha chevron */
@@ -230,7 +230,7 @@ st.markdown("""
             background-color: #f8f8f8 !important;
             color: #000000 !important;
             padding: 9px 14px !important;
-            font-size: 14px !important;
+            font-size: 0.875rem !important;
         }
         [data-baseweb="popover"] [role="option"]:hover {
             background-color: #ffe0e0 !important;
@@ -4303,10 +4303,10 @@ elif modulo == "📊 Cuadre de Caja Físico":
         fecha_consulta = st.date_input("Selecciona la fecha a consultar:", now_co().date(), format="DD/MM/YYYY")
     with col_fc2:
         st.markdown(
-            '<div style="font-size:14px; font-weight:500; color:#000; margin-bottom:4px;">'
+            '<div style="font-size:0.875rem; font-weight:500; color:#000; margin-bottom:4px;">'
             'Base Inicial en Gaveta ($)</div>'
             '<div style="background-color:#f2f2f2; border:1.5px solid #b0b0b0; border-radius:6px;'
-            ' padding:8px 12px; font-size:15px; display:flex; align-items:center;'
+            ' padding:8px 12px; font-size:0.9375rem; display:flex; align-items:center;'
             ' justify-content:space-between; gap:8px;">'
             f'<span style="font-weight:700;">${format_currency_co(base_caja_inicial)}</span>'
             '<span style="font-size:0.78em; color:#555;">🔒 bloqueada</span>'
@@ -5034,9 +5034,9 @@ elif modulo == "📦 Inventario":
                              format_func=lambda k: _ETIQ_FOCO[k],
                              key="inv_foco") or "con_stock"
 
-            fc1, fc2, fc3, fc4 = st.columns([3, 2, 2, 2])
-            _busca = fc1.text_input("Buscar", key="inv_filtro_texto",
-                                    placeholder="Código, marca, color…").strip().upper()
+            _busca = st.text_input("Buscar", key="inv_filtro_texto",
+                                   placeholder="Código, marca, color…").strip().upper()
+            fc2, fc3 = st.columns(2)
             _cats = sorted({str(p.get("categoria") or "").strip()
                             for p in inventario if p.get("categoria")})
             _cat_f = fc2.selectbox("Categoría", ["Todas"] + _cats,
@@ -5045,8 +5045,11 @@ elif modulo == "📦 Inventario":
                               for p in inventario if p.get("marca")})
             _marca_f = fc3.selectbox("Marca", ["Todas"] + _marcas,
                                      key="inv_filtro_marca")
-            _ver_desc = fc4.toggle("Ver descontinuados", value=False,
-                                   key="inv_filtro_ver_desc")
+            # A lo ancho de la fila y no en una columna: en tablet la
+            # columna dejaba 87 px y "Descontinuados" se partia por la
+            # mitad. Aqui no se parte a ningun ancho.
+            _ver_desc = st.toggle("Ver también los descontinuados", value=False,
+                                  key="inv_filtro_ver_desc")
 
             def _casa_busqueda(p):
                 if not _busca:
@@ -5531,7 +5534,7 @@ elif modulo == "🔬 Control de Trabajos":
                 # .get(clave, defecto) devuelve el defecto solo si la clave
                 # NO esta. Postgres devuelve la columna presente y en nulo,
                 # asi que aqui llegaba None y el .upper() de mas abajo se
-                # llevaba por delante la pantalla entera. Con 'or' tambien
+                # llevaba por delante la pantalla entera. Con 'or' también
                 # queda cubierto el nulo. Las facturas nuevas siempre traen
                 # el estado; el riesgo esta en las filas que se migraron.
                 est_act = t.get("estado_lab") or "Pendiente de enviar"

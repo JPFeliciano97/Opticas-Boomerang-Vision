@@ -13,6 +13,12 @@ secondaryBackgroundColor = "#F2F2F2"
 textColor = "#111111"
 font = "sans serif"
 
+# Medido en el navegador: 19 de cada 23 textos salian a 14 px, aunque la
+# base de la pagina era 16. Para un mostrador -- y mas en una optica --
+# se lee mejor un punto por encima. Con 18 la letra chica sube a 15,75 px
+# y todo lo demas acompana, porque los tamanos del CSS estan en rem.
+baseFontSize = 18
+
 [client]
 # Antes: true. Cualquier error mostraba la traza de Python completa a
 # quien estuviera usando la app -- rutas del servidor, nombres de tabla y
