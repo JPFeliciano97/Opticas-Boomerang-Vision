@@ -13,11 +13,11 @@ secondaryBackgroundColor = "#F2F2F2"
 textColor = "#111111"
 font = "sans serif"
 
-# Medido en el navegador: 19 de cada 23 textos salian a 14 px, aunque la
-# base de la pagina era 16. Para un mostrador -- y mas en una optica --
-# se lee mejor un punto por encima. Con 18 la letra chica sube a 15,75 px
-# y todo lo demas acompana, porque los tamanos del CSS estan en rem.
-baseFontSize = 18
+# El tamano base se queda en el que trae Streamlit (16 px). Se probo
+# subirlo a 18 y la aplicacion entera se veia como si tuviera zoom: para
+# trabajar comodo tocaba alejar la pagina con el navegador, que es peor
+# remedio que la enfermedad. Los tamanos del CSS quedaron en rem, asi que
+# si algun dia se quiere volver a tocar, basta con esta linea.
 
 [client]
 # Antes: true. Cualquier error mostraba la traza de Python completa a
