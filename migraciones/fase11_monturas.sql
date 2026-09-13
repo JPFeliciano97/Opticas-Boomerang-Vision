@@ -23,8 +23,19 @@
 --      'PC-008' frente a 'PC008', 'DZM110-55-18-140'.
 --
 -- EJECUTAR POR BLOQUES Y EN ORDEN. Los bloques 1 y 2 solo miran.
--- El orden importa: recortar antes de deduplicar, deduplicar antes de
--- poner la restricción de unicidad.
+--
+-- CORREGIDO DESPUÉS DE FALLAR AL EJECUTARSE. La primera versión decía
+-- "recortar antes de deduplicar" y es al revés, por algo que no se había
+-- comprobado: inventario.codigo YA tenía una restricción de unicidad,
+-- 'inventario_codigo_key', desde antes de esta migración.
+--
+-- Encaja con el duplicado: para Postgres 'H1905 ' y 'H1905' son valores
+-- distintos, así que la restricción funcionaba y el espacio se la
+-- saltaba. Pero al recortar, 'H1905 ' choca con 'H1905', el UPDATE
+-- entero se deshace, y con él también el recorte de los demás.
+--
+-- Por eso ahora se renombra el duplicado PRIMERO, buscándolo con btrim()
+-- para encontrarlo lleve o no el espacio, y se recorta después.
 
 
 -- ---------------------------------------------------------------------
@@ -56,7 +67,23 @@ having count(*) > 1
 
 
 -- ---------------------------------------------------------------------
--- 3. Recortar los códigos, arrastrando las referencias
+-- 3. Resolver el duplicado H1905  -- ANTES de recortar
+-- ---------------------------------------------------------------------
+-- Se renombra la NEGRA BRILLANTE siguiendo la convención que ya usa el
+-- negocio en KNM28 BLANCA y VNN134 CAFE: código base más el color. La
+-- azul se queda con el código original porque entró primero.
+--
+-- El WHERE usa btrim() y no una comparación directa: la fila que hay que
+-- renombrar es justamente la que lleva el espacio, así que buscarla por
+-- 'H1905' a secas no la encontraría.
+update inventario
+   set codigo = 'H1905 NEGRA'
+ where btrim(codigo) = 'H1905'
+   and descripcion ilike '%NEGRA BRILLANTE%';
+
+
+-- ---------------------------------------------------------------------
+-- 4. Recortar los códigos, arrastrando las referencias
 -- ---------------------------------------------------------------------
 -- Las ventas y los movimientos apuntan al inventario por el texto del
 -- código, no por una clave. Recortar solo el inventario dejaría esas
@@ -73,18 +100,6 @@ update ventas_facturacion
 update movimientos_inventario
    set codigo = btrim(upper(codigo))
  where codigo <> btrim(upper(codigo));
-
-
--- ---------------------------------------------------------------------
--- 4. Resolver el duplicado H1905
--- ---------------------------------------------------------------------
--- Se renombra la NEGRA BRILLANTE siguiendo la convención que ya usa el
--- negocio en KNM28 BLANCA y VNN134 CAFE: código base más el color. La
--- azul se queda con el código original porque entró primero.
-update inventario
-   set codigo = 'H1905 NEGRA'
- where codigo = 'H1905'
-   and descripcion ilike '%NEGRA BRILLANTE%';
 
 -- Los movimientos de saldo inicial de H1905 se rehacen: había dos filas
 -- con el mismo código para dos monturas distintas, y ahora son dos
@@ -114,13 +129,21 @@ having count(*) > 1;
 
 
 -- ---------------------------------------------------------------------
--- 6. Que la base impida el duplicado, no solo la app
+-- 6. La restricción de unicidad  [CONSULTA]
 -- ---------------------------------------------------------------------
--- Hasta ahora la unicidad la comprobaba el código Python antes de
--- insertar. Eso no basta: un espacio de más se la salta, y dos personas
--- guardando a la vez también. Esto lo cierra de verdad.
-alter table inventario
-  add constraint inventario_codigo_unico unique (codigo);
+-- NO hay que añadir nada: 'inventario_codigo_key' ya existía. Lo que
+-- fallaba no era la restricción sino los espacios, que la volvían inútil
+-- -- 'H1905 ' y 'H1905' son valores distintos para Postgres.
+--
+-- Debe salir inventario_codigo_key UNIQUE (codigo). Si además aparece
+-- 'inventario_codigo_unico', lo creó la primera versión de este archivo
+-- y sobra:
+--
+--   alter table inventario drop constraint inventario_codigo_unico;
+select conname, pg_get_constraintdef(oid) as definicion
+  from pg_constraint
+ where conrelid = 'inventario'::regclass
+   and contype in ('u', 'p');
 
 
 -- ---------------------------------------------------------------------
@@ -185,8 +208,11 @@ update inventario
              regexp_replace(codigo, '^(.*[0-9])\s*C[0-9]+$', '\1'),
              '-[0-9]+-[0-9]+-[0-9]+$', ''),
            '\s+[A-ZÁÉÍÓÚÑ]{3,}$', ''))
- where lower(coalesce(categoria, '')) = 'montura'
-   and modelo is null;
+ where lower(coalesce(categoria, '')) = 'montura';
+-- Sin 'and modelo is null': si el renombrado o el recorte se corrigieron
+-- después, los códigos cambiaron y el modelo calculado antes quedó mal.
+-- '82307 ROSADA ' con el espacio final no encajaba en la regla del color
+-- y se quedó con el modelo '82307 ROSADA' en vez de '82307'.
 
 -- La única talla que estaba metida en un código: 55-18-140.
 update inventario
