@@ -57,7 +57,10 @@ st.markdown("""
     <style>
         /* ==========================================================
            BOOMERANG VISIÓN – ESTILOS GLOBALES (MODO CLARO)
-           Paleta: negro #000, blanco #fff, rojo suave #e57373
+           Paleta: negro #000, blanco #fff, rojo de accion #d50000 --
+           vivo (saturacion 100 %) y legible (5,48:1 con letra blanca) --
+           y rosa #ffb8b8 para lo secundario. El #e57373 de la marca se
+           queda en los adornos que no llevan texto encima.
            ========================================================== */
 
         /* --- 1. Estructura base --- */
@@ -134,7 +137,7 @@ st.markdown("""
             border-radius: 6px !important;
             color: #000000 !important;
             padding: 8px 12px !important;
-            font-size: 15px !important;
+            font-size: 0.9375rem !important;
             box-sizing: border-box !important;
             box-shadow: none !important;
             outline: none !important;
@@ -157,7 +160,7 @@ st.markdown("""
 
         /* Label del selectbox: estilo limpio, fuera del recuadro */
         div[data-testid="stSelectbox"] > label {
-            font-size: 14px !important;
+            font-size: 0.875rem !important;
             font-weight: 500 !important;
             color: #000000 !important;
             margin-bottom: 4px !important;
@@ -198,7 +201,7 @@ st.markdown("""
         div[data-testid="stSelectbox"] [data-baseweb="select"] p {
             color: #000000 !important;
             background-color: transparent !important;
-            font-size: 15px !important;
+            font-size: 0.9375rem !important;
         }
 
         /* Flecha chevron */
@@ -208,8 +211,8 @@ st.markdown("""
 
         /* Foco: borde rojo suave en el control */
         div[data-testid="stSelectbox"] > div:last-child:focus-within {
-            border-color: #e57373 !important;
-            box-shadow: 0 0 0 3px rgba(229,115,115,0.20) !important;
+            border-color: #d50000 !important;
+            box-shadow: 0 0 0 3px rgba(213,0,0,0.16) !important;
         }
 
         /* Menú desplegable (popover) */
@@ -227,10 +230,10 @@ st.markdown("""
             background-color: #f8f8f8 !important;
             color: #000000 !important;
             padding: 9px 14px !important;
-            font-size: 14px !important;
+            font-size: 0.875rem !important;
         }
         [data-baseweb="popover"] [role="option"]:hover {
-            background-color: #fce4e4 !important;
+            background-color: #ffe0e0 !important;
             color: #000000 !important;
         }
         [data-baseweb="popover"] [aria-selected="true"] {
@@ -258,14 +261,14 @@ st.markdown("""
             box-shadow: none !important;
         }
         div[data-testid="stMultiSelect"] > div:last-child:focus-within {
-            border-color: #e57373 !important;
-            box-shadow: 0 0 0 3px rgba(229,115,115,0.20) !important;
+            border-color: #d50000 !important;
+            box-shadow: 0 0 0 3px rgba(213,0,0,0.16) !important;
         }
         div[data-testid="stMultiSelect"] [data-baseweb="tag"] {
-            background-color: #f5c2c2 !important;
+            background-color: #ffb8b8 !important;
             border-radius: 4px !important;
             color: #000000 !important;
-            border: 1px solid #d0a0a0 !important;
+            border: 1px solid #f09090 !important;
         }
 
                 /* 4e. Foco: borde rojo suave + glow discreto.
@@ -275,43 +278,49 @@ st.markdown("""
         .stNumberInput input:focus,
         .stTextArea textarea:focus,
         .stDateInput input:focus {
-            border-color: #e57373 !important;
-            box-shadow: 0 0 0 3px rgba(229, 115, 115, 0.25) !important;
+            border-color: #d50000 !important;
+            box-shadow: 0 0 0 3px rgba(213, 0, 0, 0.18) !important;
             outline: none !important;
         }
         .stSelectbox [data-baseweb="select"] > div:first-child:focus-within,
         .stMultiSelect [data-baseweb="select"] > div:first-child:focus-within {
-            border-color: #e57373 !important;
-            box-shadow: 0 0 0 3px rgba(229, 115, 115, 0.25) !important;
+            border-color: #d50000 !important;
+            box-shadow: 0 0 0 3px rgba(213, 0, 0, 0.18) !important;
         }
 
         /* --- 5. Botones --- */
         .stButton > button {
-            background-color: #f5c2c2 !important;
+            background-color: #ffb8b8 !important;
             color: #000000 !important;
-            border: 1px solid #d0a0a0 !important;
+            border: 1px solid #f09090 !important;
             border-radius: 6px !important;
             font-weight: 600 !important;
             padding: 6px 16px !important;
             transition: background-color 0.2s ease, box-shadow 0.2s ease !important;
         }
         .stButton > button:hover {
-            background-color: #e8a8a8 !important;
+            background-color: #ff9e9e !important;
             color: #000000 !important;
             box-shadow: 0 2px 6px rgba(0,0,0,0.12) !important;
         }
         .stButton > button:active {
-            background-color: #d48c8c !important;
+            background-color: #f58888 !important;
         }
         /* Botón primario explícito (type="primary") */
-        .stButton > button[kind="primary"] {
-            background-color: #e57373 !important;
+        .stButton > button[kind="primary"],
+        .stFormSubmitButton > button[kind="primaryFormSubmit"] {
+            background-color: #d50000 !important;
             color: #ffffff !important;
-            border-color: #c62828 !important;
+            border-color: #a80000 !important;
         }
-        .stButton > button[kind="primary"]:hover {
-            background-color: #d35f5f !important;
+        .stButton > button[kind="primary"]:hover,
+        .stFormSubmitButton > button[kind="primaryFormSubmit"]:hover {
+            background-color: #a80000 !important;
             color: #ffffff !important;
+        }
+        .stButton > button[kind="primary"]:active,
+        .stFormSubmitButton > button[kind="primaryFormSubmit"]:active {
+            background-color: #8f0000 !important;
         }
         /* La etiqueta visible del botón es un <p> hijo, y la regla global
            "p, label {color:#000}" le gana por apuntar directo al elemento.
@@ -320,6 +329,9 @@ st.markdown("""
         .stButton > button[kind="primary"] p,
         .stButton > button[kind="primary"] div,
         .stButton > button[kind="primary"] label,
+        .stFormSubmitButton > button[kind="primaryFormSubmit"] p,
+        .stFormSubmitButton > button[kind="primaryFormSubmit"] div,
+        .stFormSubmitButton > button[kind="primaryFormSubmit"] label,
         /* En el sidebar hace falta repetir el selector con el prefijo del
            propio sidebar: la regla que pinta todo de negro allí lleva dos
            :not() y por eso gana en especificidad a la versión corta. */
@@ -342,8 +354,8 @@ st.markdown("""
         }
         .stTabs [aria-selected="true"] {
             background-color: #ffffff !important;
-            color: #c62828 !important;
-            border-bottom: 2px solid #e57373 !important;
+            color: #d50000 !important;
+            border-bottom: 2px solid #d50000 !important;
             font-weight: 700 !important;
         }
         .stTabs [data-baseweb="tab"]:hover {
@@ -497,7 +509,7 @@ st.markdown("""
 
         /* --- 13. Spinner / Progress --- */
         .stProgress > div > div {
-            background-color: #e57373 !important;
+            background-color: #d50000 !important;
         }
 
         /* --- 14. Foco visible por teclado ---
@@ -507,7 +519,7 @@ st.markdown("""
         [role="tab"]:focus-visible,
         summary:focus-visible,
         a:focus-visible {
-            outline: 2px solid #c62828 !important;
+            outline: 2px solid #d50000 !important;
             outline-offset: 2px !important;
         }
 
@@ -4291,10 +4303,10 @@ elif modulo == "📊 Cuadre de Caja Físico":
         fecha_consulta = st.date_input("Selecciona la fecha a consultar:", now_co().date(), format="DD/MM/YYYY")
     with col_fc2:
         st.markdown(
-            '<div style="font-size:14px; font-weight:500; color:#000; margin-bottom:4px;">'
+            '<div style="font-size:0.875rem; font-weight:500; color:#000; margin-bottom:4px;">'
             'Base Inicial en Gaveta ($)</div>'
             '<div style="background-color:#f2f2f2; border:1.5px solid #b0b0b0; border-radius:6px;'
-            ' padding:8px 12px; font-size:15px; display:flex; align-items:center;'
+            ' padding:8px 12px; font-size:0.9375rem; display:flex; align-items:center;'
             ' justify-content:space-between; gap:8px;">'
             f'<span style="font-weight:700;">${format_currency_co(base_caja_inicial)}</span>'
             '<span style="font-size:0.78em; color:#555;">🔒 bloqueada</span>'
@@ -5022,9 +5034,9 @@ elif modulo == "📦 Inventario":
                              format_func=lambda k: _ETIQ_FOCO[k],
                              key="inv_foco") or "con_stock"
 
-            fc1, fc2, fc3, fc4 = st.columns([3, 2, 2, 2])
-            _busca = fc1.text_input("Buscar", key="inv_filtro_texto",
-                                    placeholder="Código, marca, color…").strip().upper()
+            _busca = st.text_input("Buscar", key="inv_filtro_texto",
+                                   placeholder="Código, marca, color…").strip().upper()
+            fc2, fc3 = st.columns(2)
             _cats = sorted({str(p.get("categoria") or "").strip()
                             for p in inventario if p.get("categoria")})
             _cat_f = fc2.selectbox("Categoría", ["Todas"] + _cats,
@@ -5033,8 +5045,11 @@ elif modulo == "📦 Inventario":
                               for p in inventario if p.get("marca")})
             _marca_f = fc3.selectbox("Marca", ["Todas"] + _marcas,
                                      key="inv_filtro_marca")
-            _ver_desc = fc4.toggle("Ver descontinuados", value=False,
-                                   key="inv_filtro_ver_desc")
+            # A lo ancho de la fila y no en una columna: en tablet la
+            # columna dejaba 87 px y "Descontinuados" se partia por la
+            # mitad. Aqui no se parte a ningun ancho.
+            _ver_desc = st.toggle("Ver también los descontinuados", value=False,
+                                  key="inv_filtro_ver_desc")
 
             def _casa_busqueda(p):
                 if not _busca:
@@ -5516,7 +5531,13 @@ elif modulo == "🔬 Control de Trabajos":
 
         if trabajos:
             for t in trabajos:
-                est_act = t.get("estado_lab", "Pendiente de enviar")
+                # .get(clave, defecto) devuelve el defecto solo si la clave
+                # NO esta. Postgres devuelve la columna presente y en nulo,
+                # asi que aqui llegaba None y el .upper() de mas abajo se
+                # llevaba por delante la pantalla entera. Con 'or' también
+                # queda cubierto el nulo. Las facturas nuevas siempre traen
+                # el estado; el riesgo esta en las filas que se migraron.
+                est_act = t.get("estado_lab") or "Pendiente de enviar"
                 fac_id = t['numero_factura']
                 fac_id_display = formatear_numero_factura_display(fac_id)
 
@@ -5574,9 +5595,10 @@ elif modulo == "🔬 Control de Trabajos":
                         if nuevo_est == "En Laboratorio":
                             nuevo_orden_lab = st.text_input(
                                 "N° de Orden del Laboratorio:", value=orden_lab_act,
-                                key=f"orden_lab_{fac_id}",
-                                help="Referencia que asigna el laboratorio externo, para hacer seguimiento del trabajo con ellos."
+                                key=f"orden_lab_{fac_id}"
                             ).strip()
+                            st.caption("La referencia que asigna el laboratorio, "
+                                       "para hacerle seguimiento con ellos.")
                         elif orden_lab_act:
                             st.caption(f"📋 Orden Lab: `{orden_lab_act}`")
 
@@ -5853,9 +5875,9 @@ elif modulo == "🧾 Pagos a Laboratorios":
                                 _monto_txt = pc1.text_input(
                                     "Monto a pagar ($)",
                                     value=str(int(_saldo)),
-                                    key=f"monto_pago_lab_{_id}",
-                                    help="Por defecto viene el saldo completo. "
-                                         "Cámbialo si es un abono parcial.")
+                                    key=f"monto_pago_lab_{_id}")
+                                pc1.caption("Viene el saldo completo. "
+                                            "Cámbialo si es un abono parcial.")
                                 _metodo = pc2.selectbox("Método de pago",
                                                         METODOS_PAGO_GASTO,
                                                         key=f"metodo_pago_lab_{_id}")
@@ -7926,9 +7948,9 @@ elif modulo == "📈 Analítica y Estadísticas":
                    "paciente, ni una fórmula, ni un diagnóstico**. De las "
                    "ventas salen los importes y el estado, nunca de quién son.")
 
-        meses_exp = st.slider("Meses a exportar", 1, 24, 3, key="meses_export_rev",
-                              help="Cuantos menos meses, más fácil de revisar. "
-                                   "Tres suele bastar para ver lo reciente.")
+        meses_exp = st.slider("Meses a exportar", 1, 24, 3, key="meses_export_rev")
+        st.caption("Cuantos menos meses, más fácil de revisar. Tres suele "
+                   "bastar para ver lo reciente.")
         _corte_exp = (now_co() - pd.DateOffset(months=meses_exp)).replace(
             hour=0, minute=0, second=0, microsecond=0)
 

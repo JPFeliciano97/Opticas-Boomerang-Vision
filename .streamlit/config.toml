@@ -4,11 +4,20 @@
 # correctos para TODOS los widgets (inputs, selectbox, multiselect,
 # date_input, etc.) sin necesidad de pelear con !important ni JavaScript.
 base = "light"
-primaryColor = "#E57373"
+# Rojo de accion: vivo (saturacion 100 %) y legible -- 5,48:1 con letra
+# blanca, por encima del 4,5:1 que pide la norma. El #E57373 anterior se
+# quedaba en 2,99:1, medido en el navegador sobre los botones reales.
+primaryColor = "#D50000"
 backgroundColor = "#FFFFFF"
 secondaryBackgroundColor = "#F2F2F2"
 textColor = "#111111"
 font = "sans serif"
+
+# Medido en el navegador: 19 de cada 23 textos salian a 14 px, aunque la
+# base de la pagina era 16. Para un mostrador -- y mas en una optica --
+# se lee mejor un punto por encima. Con 18 la letra chica sube a 15,75 px
+# y todo lo demas acompana, porque los tamanos del CSS estan en rem.
+baseFontSize = 18
 
 [client]
 # Antes: true. Cualquier error mostraba la traza de Python completa a
