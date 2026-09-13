@@ -232,17 +232,28 @@ select codigo, marca, modelo, color, material, coalesce(talla, '—') as talla
 
 
 -- ---------------------------------------------------------------------
--- 11. El precio invertido de KNM28 LILA  [REVISAR ANTES DE CORRER]
+-- 11. El precio invertido de KNM28 LILA  [CONFIRMADO 13-09-2026]
 -- ---------------------------------------------------------------------
--- Esta montura está a compra $250.000 y venta $130.000: cada venta
--- perdería $120.000. Sus dos hermanas del mismo modelo, KNM28 y KNM28
--- BLANCA, cuestan $25.000. Todo apunta a un cero de más.
+-- Esta montura estaba a compra $250.000 y venta $130.000: cada venta
+-- perdía $120.000. Sus dos hermanas del mismo modelo, KNM28 y KNM28
+-- BLANCA, cuestan $25.000. Un cero de más.
 --
--- NO va descomentado a propósito: es una suposición sobre un precio, no
--- un dato leído de una factura. Confírmalo con la factura de MF COMPANY
--- y entonces córrelo.
+-- Estuvo comentado mientras fue una suposición. El dueño lo confirmó el
+-- 13 de septiembre de 2026, así que ya se ejecuta.
 --
--- update inventario set precio_compra = 25000 where codigo = 'KNM28 LILA';
+-- El precio actual va en el WHERE: si alguien ya lo corrigió desde la
+-- app, este UPDATE no toca nada en vez de volver a dividirlo.
+update inventario
+   set precio_compra = 25000
+ where codigo = 'KNM28 LILA'
+   and precio_compra = 250000;
+
+-- Comprobación: las tres del modelo KNM28 deben quedar iguales.
+select codigo, color, precio_compra, precio_venta,
+       round(precio_venta::numeric / nullif(precio_compra, 0), 1) as margen
+  from inventario
+ where modelo = 'KNM28'
+ order by codigo;
 
 
 -- ---------------------------------------------------------------------
