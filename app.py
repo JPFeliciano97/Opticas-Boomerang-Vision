@@ -2345,12 +2345,22 @@ if "trigger_clear_anular" in st.session_state and st.session_state.trigger_clear
     st.session_state.input_anular = ""
     st.session_state.trigger_clear_anular = False
 
-if "trigger_clear_ajuste" in st.session_state and st.session_state.trigger_clear_ajuste:
-    st.session_state.ajuste_prod_sel = None
-    st.session_state.ajuste_cantidad = 1
-    st.session_state.ajuste_motivo = MOTIVO_SIN_ELEGIR
-    st.session_state.confirmar_ajuste_alto = False
-    st.session_state.trigger_clear_ajuste = False
+# Los campos del ajuste llevan el código del producto en la key, porque cada
+# producto tiene su propia ficha abierta desde el catálogo. Por eso la
+# bandera no es True/False sino el código que hay que limpiar.
+#
+# Se les asigna su valor por defecto, no se borran: borrar la key no
+# devuelve el widget a su valor inicial mientras el widget sigue en
+# pantalla. Comprobado en el navegador -- tras guardar, Python leía "Sumar
+# 1" mientras la pantalla seguía enseñando "Restar 2 / Rotura o daño", que
+# es justo la clase de desajuste que hace que alguien pulse dos veces.
+_cod_limpiar_ajuste = st.session_state.get("trigger_clear_ajuste")
+if _cod_limpiar_ajuste:
+    st.session_state[f"ajuste_accion_{_cod_limpiar_ajuste}"] = "Sumar (+)"
+    st.session_state[f"ajuste_cant_{_cod_limpiar_ajuste}"] = 1
+    st.session_state[f"ajuste_motivo_{_cod_limpiar_ajuste}"] = MOTIVO_SIN_ELEGIR
+    st.session_state[f"conf_ajuste_{_cod_limpiar_ajuste}"] = False
+    st.session_state.trigger_clear_ajuste = None
 
 if "trigger_clear_laboratorio" in st.session_state and st.session_state.trigger_clear_laboratorio:
     st.session_state.nuevo_lab_input = ""
@@ -2506,11 +2516,8 @@ def hay_cambios_sin_guardar():
         campos = ["inv_codigo", "inv_marca", "inv_desc", "m_marca", "m_modelo", "ref_0"]
         if any(_txt(k) for k in campos):
             return True
-        # Hay un producto cargado en Ajuste Rápido o Editar Producto.
-        # Son desplegables: su valor es la posición elegida, y la posición
-        # 0 es válida -- por eso se compara con None y no por "está vacío".
-        if ss.get("ajuste_prod_sel") is not None or ss.get("editar_prod_sel") is not None:
-            return True
+        # Abrir un producto desde el catálogo ya no cuenta como "cambio
+        # sin guardar": es una selección en una tabla, no algo escrito.
         return False
 
     return False
@@ -2540,8 +2547,6 @@ def _limpiar_campos_modulo_actual():
     elif m == "📦 Inventario":
         for k in ["inv_codigo", "inv_marca", "inv_desc", "m_marca"]:
             ss[k] = ""
-        for k in ["ajuste_prod_sel", "editar_prod_sel", "movs_prod_sel"]:
-            ss[k] = None
 
 
 @st.dialog("⚠️ Cambios sin guardar")
@@ -3318,12 +3323,54 @@ elif modulo == "🛍️ Óptica y Facturación":
                         c6.caption(f"Comisión: ${format_currency_co(recargo_valor)} · "
                                    f"neto: ${format_currency_co(abono_val - recargo_valor)}")
 
-                st.markdown(f"""
-                    <div style="background-color: #f0f0f0; border: 1px solid #b0b0b0; padding: 9px; border-radius: 6px; text-align: center; margin-top: 10px;">
-                        <span style="font-size: 0.8em; color: #000000; font-weight: 600;">SALDO PENDIENTE</span><br>
-                        <span style="font-size: 1.3em; font-weight: bold; color: #e57373;">${format_currency_co(sal_pend)}</span>
-                    </div>
-                """, unsafe_allow_html=True)
+                # El total a pagar NO se mostraba en ninguna parte. Se
+                # calculaba, se guardaba y se imprimía en el PDF, pero en
+                # pantalla solo estaba el saldo pendiente: quien cobraba
+                # tenía que restar de cabeza, y si el descuento era un
+                # porcentaje, calcular el porcentaje de cabeza. En una
+                # pantalla cuyo único trabajo es cobrar, el total es lo
+                # primero que tiene que verse.
+                #
+                # Los importes van con &#36; y no con '$': dentro de un
+                # st.markdown, dos '$' se toman como delimitadores de
+                # fórmula LaTeX y se comen el texto de en medio. La
+                # entidad HTML se pinta igual y no la ve el parser.
+                def _fila_dinero(etiqueta, valor, destacada=False, roja=False):
+                    _peso = "700" if destacada else "400"
+                    _tam = "1.25em" if destacada else "0.95em"
+                    _fondo = "background:#f0f0f0;" if destacada else ""
+                    _color = "#e57373" if roja else "#000000"
+                    return (f'<div style="display:flex; justify-content:space-between; '
+                            f'align-items:baseline; padding:{"10px" if destacada else "5px"} 14px; '
+                            f'{_fondo}">'
+                            f'<span style="font-size:0.9em; font-weight:{_peso}; color:#000000;">'
+                            f'{etiqueta}</span>'
+                            f'<span style="font-size:{_tam}; font-weight:{_peso}; color:{_color};">'
+                            # El menos va DELANTE del signo de peso: "$-45.000"
+                            # se lee mal y se confunde con un importe raro.
+                            f'{"− " if valor < 0 else ""}'
+                            f'&#36;{format_currency_co(abs(valor))}</span></div>')
+
+                if sub_val <= 0:
+                    st.caption("Escribe el subtotal para ver el total a pagar.")
+                else:
+                    _filas = [_fila_dinero("Subtotal", sub_val)]
+                    if desc_calc > 0:
+                        _filas.append(_fila_dinero("Descuento", -desc_calc))
+                    _filas.append(_fila_dinero("TOTAL A PAGAR", tot_neto, destacada=True))
+                    if abono_val > 0:
+                        _filas.append(_fila_dinero("Abono de hoy", -abono_val))
+                    # El saldo solo se pinta en rojo cuando queda algo por
+                    # cobrar: un saldo en cero es una buena noticia, no un
+                    # aviso.
+                    _filas.append(_fila_dinero("Saldo pendiente", sal_pend,
+                                               roja=(sal_pend > 0)))
+                    st.markdown(
+                        '<div style="border:1px solid #b0b0b0; border-radius:8px; '
+                        'overflow:hidden; margin-top:10px;">' + "".join(_filas) + "</div>",
+                        unsafe_allow_html=True)
+                    if sal_pend <= 0 and tot_neto > 0:
+                        st.caption("✅ Queda pagada completa.")
 
                 col_ent1, col_ent2 = st.columns(2)
                 fecha_entrega = col_ent1.text_input("Fecha/Hora Entrega", placeholder="Ej: 3 días / Mañana / 15-ago").upper()
@@ -4564,6 +4611,9 @@ elif modulo == "📦 Inventario":
 
     inventario = traer_todas_las_filas("inventario", orden_col="marca",
                                        orden_desc=False)
+    _movs_todos = (traer_todas_las_filas("movimientos_inventario",
+                                         orden_col="fecha", orden_desc=True)
+                   if _hay_movimientos else [])
 
     def _esta_activo(p):
         """Un producto descontinuado sigue existiendo, pero no cuenta."""
@@ -4578,84 +4628,469 @@ elif modulo == "📦 Inventario":
                 f"stock {cantidad_inv(p.get('cantidad'))}"
                 + ("" if _esta_activo(p) else "  (descontinuado)"))
 
-    tab_catalogo, tab_ingreso, tab_ajuste, tab_editar_prod, tab_movs = st.tabs(
-        ["📋 Catálogo y Stock", "➕ Registrar Producto", "🔄 Ajuste Rápido",
-         "✏️ Editar Producto", "📜 Movimientos"])
+    # Marca y proveedor salen de lo que ya está registrado, y se usan tanto
+    # al registrar como al editar. Viven aquí arriba porque el catálogo
+    # ahora también edita, y se dibuja antes que la pestaña de registro.
+    _marcas_inv = opciones_de(inventario, "marca")
+    _provs_inv = opciones_de(inventario, "proveedor")
+
+    def _indice(lista, valor):
+        v = str(valor or "").strip().upper()
+        return lista.index(v) if v in lista else None
+
+    def _esc(t):
+        """Para meter texto de la base de datos dentro de HTML sin romperlo."""
+        return (str(t or "").replace("&", "&amp;")
+                .replace("<", "&lt;").replace(">", "&gt;"))
+
+    # -----------------------------------------------------------------
+    # LAS SEÑALES DE CADA PRODUCTO
+    # -----------------------------------------------------------------
+    # El catálogo era una tabla que solo se podía leer: para saber qué
+    # necesitaba atención había que mirar fila por fila y acordarse de qué
+    # se estaba buscando. Estas cuatro señales son las cosas que de verdad
+    # hay que mirar en una óptica, y ahora se calculan una vez y se usan
+    # en el aviso de arriba, en los filtros y en la propia tabla.
+    def _senales(p):
+        cant = cantidad_inv(p.get("cantidad"))
+        compra = cantidad_inv(p.get("precio_compra"))
+        venta = cantidad_inv(p.get("precio_venta"))
+        dias = dias_en_vitrina(p.get("fecha_ingreso"))
+        _, aviso = revisar_precios(compra, venta)
+        _es_mont = str(p.get("categoria") or "").strip().lower() == "montura"
+        return {
+            "cant": cant, "compra": compra, "venta": venta,
+            "dias": dias, "aviso": aviso,
+            "margen": (venta / compra) if compra > 0 and venta > 0 else None,
+            "sin_stock": cant <= 0,
+            "quieta": bool(cant > 0 and (dias or 0) >= 180),
+            "precio": bool(aviso) or venta <= 0,
+            "ficha": bool(_hay_ficha_montura and _es_mont
+                          and not (str(p.get("modelo") or "").strip()
+                                   and str(p.get("color") or "").strip())),
+        }
+
+    _sen = {id(p): _senales(p) for p in inventario}
+
+    def _emojis(s):
+        """Lo que hay que mirar de un vistazo, en orden de urgencia."""
+        return ("🔴" if s["sin_stock"] else "") + ("🟠" if s["quieta"] else "") \
+               + ("💲" if s["precio"] else "") + ("📝" if s["ficha"] else "")
+
+    def _color_delta(v):
+        """Verde lo que entra, rojo lo que sale."""
+        if v > 0:
+            return "color: #2c7a5b; font-weight: 600;"
+        if v < 0:
+            return "color: #b0413c; font-weight: 600;"
+        return ""
+
+    tab_catalogo, tab_ingreso, tab_movs = st.tabs(
+        ["📋 Catálogo y Stock", "➕ Registrar Producto", "📜 Movimientos"])
+
+    # -----------------------------------------------------------------
+    # LA FICHA DEL PRODUCTO
+    # -----------------------------------------------------------------
+    # Antes había tres pestañas para un mismo producto: el catálogo lo
+    # enseñaba, 'Ajuste Rápido' le cambiaba el stock y 'Editar Producto'
+    # le corregía los datos -- y en cada una había que volver a buscarlo
+    # en un desplegable. Ahora se hace clic en la fila y todo lo que se
+    # puede hacer con ese producto está aquí, en el mismo sitio.
+    def _ficha_producto(p):
+        codigo = str(p.get("codigo") or "")
+        s = _sen.get(id(p)) or _senales(p)
+        activo = _esta_activo(p)
+        es_montura = str(p.get("categoria") or "").strip().lower() == "montura"
+
+        with st.container(border=True):
+            _sub = " · ".join(x for x in [
+                str(p.get("marca") or "").upper(),
+                str(p.get("descripcion") or "").upper(),
+                str(p.get("categoria") or "")] if x)
+            st.markdown(
+                f'<div style="border-left:4px solid #e57373;padding-left:12px;'
+                f'margin-bottom:10px;">'
+                f'<div style="font-size:1.25rem;font-weight:700;line-height:1.2;">'
+                f'{_esc(codigo)} <span style="font-size:1rem;">{_emojis(s)}</span></div>'
+                f'<div style="color:#5f6368;font-size:0.88rem;">{_esc(_sub)}</div>'
+                f'</div>', unsafe_allow_html=True)
+
+            if not activo:
+                st.warning("Este producto está **descontinuado**: no aparece en "
+                           "el catálogo ni cuenta en los totales. Puedes "
+                           "reactivarlo desde «Editar datos».")
+
+            f1, f2, f3, f4, f5 = st.columns(5)
+            f1.metric("En stock", s["cant"])
+            f2.metric("Costo", f"${format_currency_co(s['compra'])}")
+            f3.metric("Precio venta", f"${format_currency_co(s['venta'])}")
+            f4.metric("Margen", f"x{s['margen']:.1f}" if s["margen"] else "—")
+            f5.metric("En vitrina",
+                      f"{s['dias']} días" if s["dias"] is not None else "—")
+
+            if s["aviso"]:
+                st.warning(f"💲 {s['aviso']}")
+            elif s["venta"] <= 0:
+                st.warning("💲 Este producto no tiene precio de venta.")
+            if s["quieta"]:
+                st.caption(f"⏳ Lleva {s['dias']} días en la vitrina. "
+                           f"Son ${format_currency_co(s['compra'] * s['cant'])} "
+                           f"parados desde que entró.")
+            if s["ficha"]:
+                st.caption("📝 A esta montura le falta el modelo o el color. "
+                           "Sin ellos no se puede agrupar ni reponer por modelo.")
+
+            _ACCIONES = ["🔄 Ajustar stock", "✏️ Editar datos", "📜 Movimientos"]
+            _acc = st.segmented_control(
+                "Qué quieres hacer", _ACCIONES, default=_ACCIONES[0],
+                key=f"inv_accion_{codigo}", label_visibility="collapsed")
+            _acc = _acc or _ACCIONES[0]
+
+            # ---------------------------------------------------------
+            if _acc == _ACCIONES[0]:
+                if not activo:
+                    st.info("Reactiva el producto para poder mover su stock.")
+                else:
+                    st.caption("Las ventas ya descuentan solas. Esto es para "
+                               "cuadrar el stock con lo que hay de verdad en "
+                               "la vitrina.")
+                    ca1, ca2 = st.columns([2, 3])
+                    accion = ca1.radio("Acción", ["Sumar (+)", "Restar (-)"],
+                                       key=f"ajuste_accion_{codigo}",
+                                       horizontal=True)
+                    cant_ajustar = ca2.number_input(
+                        "¿Cuántas unidades?", min_value=1, step=1, value=1,
+                        key=f"ajuste_cant_{codigo}")
+                    motivo_ajuste = st.selectbox(
+                        "¿Por qué cambia?", [MOTIVO_SIN_ELEGIR] + MOTIVOS_AJUSTE,
+                        key=f"ajuste_motivo_{codigo}")
+                    st.caption("Un −3 puede ser una rotura, una pérdida, un "
+                               "conteo mal hecho o una venta sin registrar. Son "
+                               "cuatro problemas distintos, y sin el motivo no "
+                               "se distinguen dentro de un mes.")
+
+                    _delta = (int(cant_ajustar) if accion == "Sumar (+)"
+                              else -int(cant_ajustar))
+                    _resultante = s["cant"] + _delta
+
+                    # El resultado, antes de tocar nada y con el color de lo
+                    # que va a pasar: subir es verde, bajar es rojo, y quedar
+                    # en cero se ve en rojo fuerte. Antes esto era un
+                    # st.caption gris que se leía después del susto.
+                    _col_res = ("#b0413c" if _resultante <= 0
+                                else ("#2c7a5b" if _delta > 0 else "#9a6a12"))
+                    st.markdown(
+                        f'<div style="background:#f6f6f7;border-radius:8px;'
+                        f'padding:10px 14px;margin:6px 0 12px 0;font-size:1.05rem;">'
+                        f'Stock <b>{s["cant"]}</b> '
+                        f'<span style="color:#5f6368;">→</span> '
+                        f'<b style="color:{_col_res};">{max(_resultante, 0)}</b>'
+                        f'<span style="color:#5f6368;font-size:0.85rem;">'
+                        f'&nbsp;&nbsp;({_delta:+d})</span></div>',
+                        unsafe_allow_html=True)
+
+                    # Un ajuste normal es de una o dos piezas. Diez ya es un
+                    # recuento, y cien es casi siempre un cero de más.
+                    _ok_grande = True
+                    if cant_ajustar >= UMBRAL_AJUSTE_ALTO:
+                        st.warning(f"🔎 Vas a {'sumar' if _delta > 0 else 'restar'} "
+                                   f"**{cant_ajustar} unidades**. Es un movimiento "
+                                   f"grande: confirma que está bien.")
+                        _ok_grande = st.checkbox(
+                            f"Sí, son {cant_ajustar} unidades",
+                            key=f"conf_ajuste_{codigo}")
+
+                    if st.button("Actualizar stock", type="primary",
+                                 use_container_width=True,
+                                 key=f"btn_ajuste_{codigo}"):
+                        if motivo_ajuste == MOTIVO_SIN_ELEGIR:
+                            st.warning("⚠️ Elige el motivo del ajuste.")
+                        elif not _ok_grande:
+                            st.error("Marca la casilla de confirmación para un "
+                                     "ajuste de este tamaño.")
+                        elif _resultante < 0:
+                            st.error(f"⚠️ No se puede restar {cant_ajustar}: solo "
+                                     f"hay {s['cant']}.")
+                        else:
+                            _ok_mv, _nueva_mv, _aviso_mv = mover_inventario(
+                                codigo, _delta, motivo_ajuste)
+                            if not _ok_mv:
+                                st.error(f"⚠️ {_aviso_mv}")
+                            else:
+                                st.session_state.global_toast = (
+                                    f"Stock de {codigo} actualizado a {_nueva_mv}.")
+                                st.session_state.trigger_clear_ajuste = codigo
+                                st.rerun()
+
+            # ---------------------------------------------------------
+            elif _acc == _ACCIONES[1]:
+                with st.form(f"form_editar_producto_{codigo}"):
+                    ep1, ep2 = st.columns(2)
+                    ep_marca = str(ep1.selectbox(
+                        "Marca", _marcas_inv,
+                        index=_indice(_marcas_inv, p.get("marca")),
+                        accept_new_options=True,
+                        placeholder="Elige o escribe la marca") or "").strip().upper()
+                    ep_categoria = ep2.selectbox(
+                        "Categoría", CATEGORIAS_INVENTARIO,
+                        index=CATEGORIAS_INVENTARIO.index(p.get("categoria"))
+                        if p.get("categoria") in CATEGORIAS_INVENTARIO else 0)
+                    ep_desc = st.text_input(
+                        "Descripción", value=(p.get("descripcion") or "")).strip().upper()
+                    ep_prov = str(st.selectbox(
+                        "Proveedor", _provs_inv,
+                        index=_indice(_provs_inv, p.get("proveedor")),
+                        accept_new_options=True,
+                        placeholder="Elige o escribe el proveedor") or "").strip().upper()
+
+                    # La ficha de la montura: modelo, color, material y talla
+                    # dejaron de vivir dentro del código y de la descripción.
+                    ep_modelo = ep_color = ep_material = ep_talla = None
+                    if es_montura and _hay_ficha_montura:
+                        em1, em2, em3, em4 = st.columns(4)
+                        ep_modelo = em1.text_input(
+                            "Modelo", value=(p.get("modelo") or "")).strip().upper()
+                        ep_color = em2.text_input(
+                            "Color", value=(p.get("color") or "")).strip().upper()
+                        ep_material = em3.selectbox(
+                            "Material", MATERIALES_MONTURA,
+                            index=_indice(MATERIALES_MONTURA, p.get("material")) or 0)
+                        ep_talla = em4.text_input(
+                            "Talla", value=(p.get("talla") or ""),
+                            placeholder="55-18-140").strip().upper()
+
+                    ep3, ep4 = st.columns(2)
+                    ep_p_compra = ep3.number_input(
+                        "Precio compra ($)", min_value=0, step=1000,
+                        value=cantidad_inv(p.get("precio_compra")))
+                    ep_p_venta = ep4.number_input(
+                        "Precio venta ($)", min_value=0, step=1000,
+                        value=cantidad_inv(p.get("precio_venta")))
+                    st.caption("Para cambiar la cantidad en stock usa "
+                               "«Ajustar stock»: así queda el motivo apuntado.")
+
+                    guardar_prod_edit = st.form_submit_button(
+                        "💾 Guardar cambios", type="primary",
+                        use_container_width=True)
+
+                if guardar_prod_edit:
+                    _bloquea_e, _aviso_e = revisar_precios(ep_p_compra, ep_p_venta)
+                    if not ep_marca or not ep_desc:
+                        st.error("⚠️ Marca y Descripción son obligatorios.")
+                    elif _bloquea_e:
+                        st.error(f"⚠️ {_aviso_e}")
+                    else:
+                        if _aviso_e:
+                            st.warning(f"💲 {_aviso_e}")
+                        _cambios_prod = {
+                            "marca": ep_marca, "categoria": ep_categoria,
+                            "descripcion": ep_desc, "proveedor": ep_prov,
+                            "precio_compra": int(ep_p_compra),
+                            "precio_venta": int(ep_p_venta), **sello_auditoria(),
+                        }
+                        if es_montura and _hay_ficha_montura:
+                            _cambios_prod.update({
+                                "modelo": ep_modelo or None,
+                                "color": ep_color or None,
+                                "material": ep_material,
+                                "talla": ep_talla or None})
+                        supabase.table("inventario").update(
+                            _cambios_prod).eq("codigo", codigo).execute()
+                        query_cached.clear()
+                        st.session_state.global_toast = f"Producto '{codigo}' actualizado."
+                        st.rerun()
+
+                if not _hay_estado_inv:
+                    st.caption("ℹ️ Para poder descontinuar productos falta "
+                               "añadir la columna `estado` en Supabase "
+                               "(`migraciones/fase10_movimientos_inventario.sql`).")
+                elif not activo:
+                    if st.button("♻️ Reactivar este producto",
+                                 key=f"react_prod_{codigo}",
+                                 use_container_width=True):
+                        supabase.table("inventario").update({
+                            "estado": "ACTIVO", **sello_auditoria(),
+                        }).eq("codigo", codigo).execute()
+                        query_cached.clear()
+                        st.session_state.global_toast = "Producto reactivado."
+                        st.rerun()
+                else:
+                    with st.expander("🚫 Descontinuar este producto"):
+                        st.caption("Para un producto creado por error o que ya "
+                                   "no se vende. No se borra: deja de aparecer "
+                                   "en el catálogo y en los ajustes, no cuenta "
+                                   "en los totales, y se puede reactivar. Su "
+                                   "historial de movimientos se conserva.")
+                        _ok_desc = st.checkbox(
+                            "Sí, este producto ya no va en el inventario",
+                            key=f"conf_desc_{codigo}")
+                        if st.button("Descontinuar", key=f"btn_desc_{codigo}",
+                                     disabled=not _ok_desc):
+                            supabase.table("inventario").update({
+                                "estado": "DESCONTINUADO", **sello_auditoria(),
+                            }).eq("codigo", codigo).execute()
+                            query_cached.clear()
+                            st.session_state.global_toast = "Producto descontinuado."
+                            st.rerun()
+
+                if p.get("modificado_por"):
+                    st.caption(f"✏️ Última corrección: {p['modificado_por']} · "
+                               f"{hora_co(p.get('modificado_fecha'), '%d/%m/%Y %H:%M')}")
+
+            # ---------------------------------------------------------
+            else:
+                if not _hay_movimientos:
+                    st.info("Falta la tabla `movimientos_inventario` en "
+                            "Supabase. Mira la pestaña «Movimientos».")
+                else:
+                    _suyos = [m for m in _movs_todos
+                              if str(m.get("codigo") or "").upper() == codigo.upper()]
+                    if not _suyos:
+                        st.info("Este producto todavía no tiene movimientos: "
+                                "su historia empieza en el próximo cambio.")
+                    else:
+                        st.dataframe(
+                            pd.DataFrame([{
+                                "Fecha": hora_co(m.get("fecha"), "%d/%m/%Y %H:%M"),
+                                "Entra / Sale": int(m.get("delta") or 0),
+                                "Queda en": cantidad_inv(m.get("cantidad_resultante")),
+                                "Motivo": m.get("motivo") or "—",
+                                "Factura": m.get("numero_factura") or "—",
+                                "Registró": m.get("registrado_por") or "—",
+                            } for m in _suyos]).style
+                            .format({"Entra / Sale": lambda x: f"{x:+d}"})
+                            .map(_color_delta, subset=["Entra / Sale"]),
+                            use_container_width=True, hide_index=True)
+                        _suma = sum(int(m.get("delta") or 0) for m in _suyos)
+                        if _suma != s["cant"]:
+                            st.error(f"⚠️ Los movimientos suman **{_suma}** pero "
+                                     f"el inventario dice **{s['cant']}**. "
+                                     f"Un ajuste con motivo «Corrección de un "
+                                     f"error de digitación» los deja iguales.")
+                        else:
+                            st.caption(f"{len(_suyos)} movimiento(s). Cuadran con "
+                                       f"el stock actual.")
 
     # -----------------------------------------------------------------
     # CATÁLOGO
     # -----------------------------------------------------------------
     with tab_catalogo:
         if not inventario:
-            st.info("La bodega está vacía.")
+            st.info("La bodega está vacía. Empieza por «➕ Registrar Producto».")
         else:
-            # Cada montura es un código único con cantidad 1: al venderse
-            # queda en cero y se quedaba en la tabla para siempre. Con el
-            # tiempo la mayoría del catálogo eran monturas que ya no
-            # existen, así que el filtro de "solo con stock" viene puesto.
-            fc1, fc2, fc3 = st.columns([2, 2, 3])
+            _act = [p for p in inventario if _esta_activo(p)]
+            _n_sin_stock = sum(1 for p in _act if _sen[id(p)]["sin_stock"])
+            _n_quietas = sum(1 for p in _act if _sen[id(p)]["quieta"])
+            _n_precio = sum(1 for p in _act if _sen[id(p)]["precio"])
+            _n_ficha = sum(1 for p in _act if _sen[id(p)]["ficha"])
+
+            # El aviso de arriba: lo que hay que mirar hoy, antes de que
+            # nadie tenga que buscarlo. Solo aparece si hay algo.
+            _urgente = []
+            if _n_sin_stock:
+                _urgente.append(f"<b>{_n_sin_stock}</b> sin stock")
+            if _n_quietas:
+                _urgente.append(f"<b>{_n_quietas}</b> llevan más de seis meses "
+                                f"en vitrina")
+            if _n_precio:
+                _urgente.append(f"<b>{_n_precio}</b> con el precio por revisar")
+            if _n_ficha:
+                _urgente.append(f"<b>{_n_ficha}</b> sin modelo o color")
+            if _urgente:
+                st.markdown(
+                    f'<div style="background:#fdecea;border-left:4px solid #e57373;'
+                    f'border-radius:6px;padding:10px 14px;margin-bottom:12px;'
+                    f'font-size:0.92rem;color:#3c3c3c;">'
+                    f'<b>Para mirar hoy:</b> {" · ".join(_urgente)}.'
+                    f'</div>', unsafe_allow_html=True)
+
+            # Un solo sitio para decidir qué se está mirando. Antes eran un
+            # desplegable de antigüedad y dos interruptores repartidos en
+            # dos filas, y ninguno decía cuántos había: el filtro se elegía
+            # a ciegas y casi siempre salía vacío.
+            _FOCOS = ["con_stock", "sin_stock", "quietas", "precio", "ficha",
+                      "todo"]
+            _ETIQ_FOCO = {
+                "con_stock": "🟢 Con stock",
+                "sin_stock": f"🔴 Sin stock ({_n_sin_stock})",
+                "quietas": f"🟠 Más de 6 meses ({_n_quietas})",
+                "precio": f"💲 Precio por revisar ({_n_precio})",
+                "ficha": f"📝 Sin modelo o color ({_n_ficha})",
+                "todo": "Todo",
+            }
+            _foco = st.pills("Ver", _FOCOS, default="con_stock",
+                             format_func=lambda k: _ETIQ_FOCO[k],
+                             key="inv_foco") or "con_stock"
+
+            fc1, fc2, fc3, fc4 = st.columns([3, 2, 2, 2])
+            _busca = fc1.text_input("Buscar", key="inv_filtro_texto",
+                                    placeholder="Código, marca, color…").strip().upper()
             _cats = sorted({str(p.get("categoria") or "").strip()
                             for p in inventario if p.get("categoria")})
-            _cat_f = fc1.selectbox("Categoría", ["Todas"] + _cats,
+            _cat_f = fc2.selectbox("Categoría", ["Todas"] + _cats,
                                    key="inv_filtro_categoria")
             _marcas = sorted({str(p.get("marca") or "").strip().upper()
                               for p in inventario if p.get("marca")})
-            _marca_f = fc2.selectbox("Marca", ["Todas"] + _marcas,
+            _marca_f = fc3.selectbox("Marca", ["Todas"] + _marcas,
                                      key="inv_filtro_marca")
-            with fc3:
-                _solo_stock = st.toggle("Solo con stock", value=True,
-                                        key="inv_filtro_solo_stock")
-                _ver_desc = st.toggle("Ver descontinuados", value=False,
-                                      key="inv_filtro_ver_desc")
-            # Una montura que lleva un año en la vitrina es plata quieta, y
-            # hasta ahora no había forma de verlo: la fecha de ingreso
-            # estaba en la tabla pero nadie contaba los días.
-            _TRAMOS = {"Todo": None, "Más de 3 meses": 90,
-                       "Más de 6 meses": 180, "Más de un año": 365}
-            _tramo = st.radio("Tiempo en vitrina", list(_TRAMOS), horizontal=True,
-                              key="inv_filtro_antiguedad")
-            _min_dias = _TRAMOS[_tramo]
+            _ver_desc = fc4.toggle("Ver descontinuados", value=False,
+                                   key="inv_filtro_ver_desc")
+
+            def _casa_busqueda(p):
+                if not _busca:
+                    return True
+                return _busca in " ".join(str(p.get(c) or "") for c in
+                                          ("codigo", "marca", "descripcion",
+                                           "modelo", "color", "material",
+                                           "talla", "proveedor")).upper()
+
+            def _casa_foco(p):
+                s = _sen[id(p)]
+                if _foco == "con_stock":
+                    return not s["sin_stock"]
+                if _foco == "sin_stock":
+                    return s["sin_stock"]
+                if _foco == "quietas":
+                    return s["quieta"]
+                if _foco == "precio":
+                    return s["precio"]
+                if _foco == "ficha":
+                    return s["ficha"]
+                return True
 
             _filtrado = [
                 p for p in inventario
                 if (_ver_desc or _esta_activo(p))
                 and (_cat_f == "Todas" or str(p.get("categoria") or "").strip() == _cat_f)
                 and (_marca_f == "Todas" or str(p.get("marca") or "").strip().upper() == _marca_f)
-                and (not _solo_stock or cantidad_inv(p.get("cantidad")) > 0)
-                and (_min_dias is None
-                     or (dias_en_vitrina(p.get("fecha_ingreso")) or 0) >= _min_dias)
+                and _casa_foco(p) and _casa_busqueda(p)
             ]
 
             if not _filtrado:
-                st.info("Ningún producto coincide con esos filtros.")
+                st.info("Ningún producto coincide con eso. Prueba con «Todo» "
+                        "arriba, o borra la búsqueda.")
             else:
                 tabla_inv = []
                 inv_total = 0
                 potencial = 0
                 for p in _filtrado:
-                    cant = cantidad_inv(p.get("cantidad"))
-                    compra = cantidad_inv(p.get("precio_compra"))
-                    venta = cantidad_inv(p.get("precio_venta"))
-                    inv_total += cant * compra
-                    potencial += cant * venta
-                    fi_raw = p.get("fecha_ingreso", "")
-                    fi_fmt = ""
-                    if fi_raw:
-                        try:
-                            fi_fmt = datetime.strptime(str(fi_raw)[:10], "%Y-%m-%d").strftime("%d/%m/%Y")
-                        except Exception:
-                            fi_fmt = str(fi_raw)[:10]
-                    _dias = dias_en_vitrina(p.get("fecha_ingreso"))
+                    s = _sen[id(p)]
+                    inv_total += s["cant"] * s["compra"]
+                    potencial += s["cant"] * s["venta"]
+                    # Sin la columna 'Ingreso': decía lo mismo que 'Días' --
+                    # '01/07/2026' y '74' son el mismo dato, y la fecha
+                    # ocupaba más y se leía peor. La fecha exacta sigue en
+                    # el detalle del producto.
                     tabla_inv.append({
+                        " ": _emojis(s),
                         "Código": str(p.get("codigo", "")),
-                        "Categoría": str(p.get("categoria", "")),
                         "Marca": str(p.get("marca", "")).upper(),
                         "Descripción": str(p.get("descripcion", "")).upper(),
-                        "Cant.": cant,
-                        "Costo": compra,
-                        "P. Venta": venta,
-                        "Ingreso": fi_fmt,
-                        "Días": (_dias if _dias is not None else 0),
+                        "Cant.": s["cant"],
+                        "Costo": s["compra"],
+                        "P. Venta": s["venta"],
+                        "Margen": (round(s["margen"], 1) if s["margen"] else 0.0),
+                        "Días": (s["dias"] if s["dias"] is not None else 0),
                         "Estado": ("ACTIVO" if _esta_activo(p) else "DESCONTINUADO"),
                     })
 
@@ -4664,7 +5099,7 @@ elif modulo == "📦 Inventario":
                     df_inv = df_inv.drop(columns=["Estado"])
 
                 def color_stock(val):
-                    return "color: #E61B23; font-weight: bold;" if val == 0 else ""
+                    return "color: #b0413c; font-weight: bold;" if val == 0 else ""
 
                 def color_dias(val):
                     # Medio año quieto ya es mucho para una montura; un año
@@ -4675,27 +5110,58 @@ elif modulo == "📦 Inventario":
                         return "color: #9a6a12; font-weight: 600;"
                     return ""
 
-                st.dataframe(
+                def color_margen(val):
+                    if not val:
+                        return "color: #b0413c;"
+                    if val < MARGEN_MINIMO_RARO or val > MARGEN_MAXIMO_RARO:
+                        return "color: #9a6a12; font-weight: 600;"
+                    return ""
+
+                st.caption("Marca la casilla ☑ de la izquierda para abrir un "
+                           "producto: ahí se ajusta el stock, se corrigen los "
+                           "datos y se ve su historial.")
+                _sel = st.dataframe(
                     df_inv.style.format({
                         "Costo": lambda x: f"${format_currency_co(x)}",
                         "P. Venta": lambda x: f"${format_currency_co(x)}",
+                        "Margen": lambda x: (f"x{x:.1f}" if x else "—"),
                     }).map(color_stock, subset=["Cant."])
-                    .map(color_dias, subset=["Días"]),
-                    use_container_width=True, hide_index=True)
-                st.download_button(
-                    label="📊 Exportar lo que estás viendo",
-                    data=convert_df_to_excel(df_inv, "Bodega"),
-                    file_name="Inventario.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                    .map(color_dias, subset=["Días"])
+                    .map(color_margen, subset=["Margen"]),
+                    use_container_width=True, hide_index=True,
+                    height=min(430, 44 + 35 * len(df_inv)),
+                    on_select="rerun", selection_mode="single-row",
+                    key="inv_tabla_catalogo",
+                    column_config={
+                        " ": st.column_config.TextColumn(" ", width="small"),
+                        "Descripción": st.column_config.TextColumn(
+                            "Descripción", width="medium"),
+                    })
 
-                st.divider()
+                _filas_sel = list(getattr(_sel, "selection", {}).get("rows", []))
+                if _filas_sel and _filas_sel[0] < len(_filtrado):
+                    st.divider()
+                    _ficha_producto(_filtrado[_filas_sel[0]])
+
                 # Los totales responden al filtro: antes se calculaban sobre
                 # todo el inventario aunque estuvieras mirando una categoría,
                 # y no había forma de saber cuánto valía lo que veías.
-                c1, c2, c3 = st.columns(3)
-                c1.info(f"**Stock:** {sum(i['Cant.'] for i in tabla_inv)} unds")
-                c2.warning(f"**Inversión:** ${format_currency_co(inv_total)}")
-                c3.success(f"**Ganancia Proyectada:** ${format_currency_co(potencial - inv_total)}")
+                # st.metric en vez de info/warning/success: aquellos pintan
+                # azul, amarillo y verde, colores que no son de la paleta
+                # del proyecto -- y el amarillo hacía que "Inversión"
+                # pareciera una advertencia cuando es un dato neutro.
+                #
+                # Y el nombre honesto: no es la ganancia, es la que habría
+                # si todo se vendiera a precio de lista, sin un descuento.
+                st.divider()
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Productos", f"{len(_filtrado)}")
+                c2.metric("Unidades en stock", f"{sum(i['Cant.'] for i in tabla_inv)}")
+                c3.metric("Invertido", f"${format_currency_co(inv_total)}")
+                c4.metric("Ganancia si se vende todo",
+                          f"${format_currency_co(potencial - inv_total)}")
+                st.caption("La ganancia es a precio de lista y sin descuentos: "
+                           "es un techo, no una previsión.")
                 _quieta = sum(i["Costo"] * i["Cant."] for i in tabla_inv
                               if i["Días"] >= 180 and i["Cant."] > 0)
                 if _quieta:
@@ -4705,6 +5171,12 @@ elif modulo == "📦 Inventario":
                 if len(_filtrado) != len(inventario):
                     st.caption(f"Mostrando {len(_filtrado)} de {len(inventario)} "
                                f"productos. Las cifras son de lo filtrado.")
+
+                st.download_button(
+                    label="📊 Exportar lo que estás viendo",
+                    data=convert_df_to_excel(df_inv, "Bodega"),
+                    file_name="Inventario.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
     # -----------------------------------------------------------------
     # REGISTRAR PRODUCTO
@@ -4732,15 +5204,19 @@ elif modulo == "📦 Inventario":
                     key="m_prov", placeholder="Elige o escribe el proveedor") or "").strip().upper()
 
                 col_m3, col_m4, col_m5 = st.columns([2, 2, 2])
+                # Sin help= en los campos: Streamlit alinea el icono '?' a
+                # la derecha de SU columna, no junto a su etiqueta, y acaba
+                # a trescientos píxeles de ella o pegado al campo de al
+                # lado. Lo que decían va al pie de la fila.
                 inv_modelo = str(col_m3.text_input(
-                    "Modelo *", key="m_modelo",
-                    help="La referencia del modelo, sin el color. Los colores "
-                         "van abajo, uno por montura.").strip().upper())
+                    "Modelo *", key="m_modelo").strip().upper())
                 inv_mat = col_m4.selectbox("Material", MATERIALES_MONTURA, key="m_mat")
                 inv_talla = str(col_m5.text_input(
-                    "Talla", key="m_talla", placeholder="55-18-140",
-                    help="Calibre-puente-varilla. Opcional, pero es lo primero "
-                         "que se mira al reponer.").strip().upper())
+                    "Talla", key="m_talla", placeholder="55-18-140").strip().upper())
+                st.caption("El modelo va sin el color — los colores se ponen "
+                           "abajo, uno por montura. La talla es "
+                           "calibre-puente-varilla y es opcional, pero es lo "
+                           "primero que se mira al reponer.")
 
                 col_m6, c_pc, c_pv = st.columns([1, 2, 2])
                 inv_cant = col_m6.number_input("Cantidad", min_value=1, step=1, value=1, key="m_cant")
@@ -4888,208 +5364,6 @@ elif modulo == "📦 Inventario":
                                 st.error(f"Error: {e}")
 
     # -----------------------------------------------------------------
-    # AJUSTE RÁPIDO
-    # -----------------------------------------------------------------
-    with tab_ajuste:
-        st.caption("Para cuadrar el stock con lo que hay de verdad en la "
-                   "vitrina. Las ventas ya descuentan solas: esto es para "
-                   "todo lo demás.")
-        if not _inv_activo:
-            st.info("No hay productos activos en el inventario.")
-        else:
-            # Antes había que saberse el código exacto de memoria: si no
-            # recordabas si era 123-1 o 123-01, tocaba ir al catálogo,
-            # buscarlo a ojo y volver.
-            _idx_aj = st.selectbox(
-                "¿Qué producto?", range(len(_inv_activo)), index=None,
-                format_func=lambda i: _etiqueta_prod(_inv_activo[i]),
-                key="ajuste_prod_sel",
-                placeholder="Escribe el código, la marca o la descripción")
-
-            if _idx_aj is not None:
-                prod = _inv_activo[_idx_aj]
-                codigo_ajuste = str(prod.get("codigo") or "")
-                stock = cantidad_inv(prod.get("cantidad"))
-                st.info(f"**{str(prod.get('marca') or '').upper()}** — "
-                        f"{prod.get('descripcion','')} | Stock: **{stock}**")
-
-                ca1, ca2 = st.columns(2)
-                accion = ca1.radio("Acción:", ["Sumar (+)", "Restar (-)"],
-                                   key="ajuste_accion", horizontal=True)
-                cant_ajustar = ca2.number_input("Cantidad", min_value=1, step=1,
-                                                value=1, key="ajuste_cantidad")
-                motivo_ajuste = st.selectbox(
-                    "¿Por qué cambia?", [MOTIVO_SIN_ELEGIR] + MOTIVOS_AJUSTE,
-                    key="ajuste_motivo",
-                    help="Un −3 puede ser una rotura, una pérdida, un conteo "
-                         "mal hecho o una venta sin registrar. Son cuatro "
-                         "problemas distintos, y sin el motivo no se "
-                         "distinguen dentro de un mes.")
-
-                _delta = int(cant_ajustar) if accion == "Sumar (+)" else -int(cant_ajustar)
-                _resultante = stock + _delta
-
-                # Un ajuste normal es de una o dos piezas. Diez ya es un
-                # recuento, y cien es casi siempre un cero de más.
-                _ok_grande = True
-                if cant_ajustar >= UMBRAL_AJUSTE_ALTO:
-                    st.warning(f"🔎 Vas a {'sumar' if _delta > 0 else 'restar'} "
-                               f"**{cant_ajustar} unidades**. Es un movimiento "
-                               f"grande: confirma que está bien.")
-                    _ok_grande = st.checkbox(
-                        f"Sí, son {cant_ajustar} unidades",
-                        key="confirmar_ajuste_alto")
-                else:
-                    st.caption(f"El stock quedará en **{max(_resultante, 0)}**.")
-
-                if st.button("Actualizar Stock", type="primary",
-                             use_container_width=True):
-                    if motivo_ajuste == MOTIVO_SIN_ELEGIR:
-                        st.warning("⚠️ Elige el motivo del ajuste.")
-                    elif not _ok_grande:
-                        st.error("Marca la casilla de confirmación para un "
-                                 "ajuste de este tamaño.")
-                    elif _resultante < 0:
-                        st.error(f"⚠️ No se puede restar {cant_ajustar}: solo "
-                                 f"hay {stock}.")
-                    else:
-                        _ok_mv, _nueva_mv, _aviso_mv = mover_inventario(
-                            codigo_ajuste, _delta, motivo_ajuste)
-                        if not _ok_mv:
-                            st.error(f"⚠️ {_aviso_mv}")
-                        else:
-                            st.session_state.global_toast = (
-                                f"Stock de {codigo_ajuste} actualizado a {_nueva_mv}.")
-                            st.session_state.trigger_clear_ajuste = True
-                            st.rerun()
-
-    # -----------------------------------------------------------------
-    # EDITAR PRODUCTO
-    # -----------------------------------------------------------------
-    with tab_editar_prod:
-        st.caption("Corrige marca, descripción, categoría, proveedor o precios "
-                   "de un producto ya registrado. Para cambiar solo la cantidad "
-                   "en stock, usa 'Ajuste Rápido'.")
-        if not inventario:
-            st.info("La bodega está vacía.")
-        else:
-            _idx_ed = st.selectbox(
-                "¿Qué producto?", range(len(inventario)), index=None,
-                format_func=lambda i: _etiqueta_prod(inventario[i]),
-                key="editar_prod_sel",
-                placeholder="Escribe el código, la marca o la descripción")
-
-            if _idx_ed is not None:
-                prod_e = inventario[_idx_ed]
-                codigo_editar_prod = str(prod_e.get("codigo") or "")
-                _activo_e = _esta_activo(prod_e)
-                if not _activo_e:
-                    st.warning("Este producto está **descontinuado**: no aparece "
-                               "en el catálogo ni en los ajustes. Puedes "
-                               "reactivarlo más abajo.")
-
-                _es_montura_e = str(prod_e.get("categoria") or "").strip().lower() == "montura"
-
-                def _indice(lista, valor):
-                    v = str(valor or "").strip().upper()
-                    return lista.index(v) if v in lista else None
-
-                with st.form(f"form_editar_producto_{codigo_editar_prod}"):
-                    ep1, ep2 = st.columns(2)
-                    ep_marca = str(ep1.selectbox(
-                        "Marca", _marcas_inv, index=_indice(_marcas_inv, prod_e.get("marca")),
-                        accept_new_options=True,
-                        placeholder="Elige o escribe la marca") or "").strip().upper()
-                    ep_categoria = ep2.selectbox(
-                        "Categoría", CATEGORIAS_INVENTARIO,
-                        index=CATEGORIAS_INVENTARIO.index(prod_e.get("categoria"))
-                        if prod_e.get("categoria") in CATEGORIAS_INVENTARIO else 0)
-                    ep_desc = st.text_input("Descripción", value=(prod_e.get("descripcion") or "")).strip().upper()
-                    ep_prov = str(st.selectbox(
-                        "Proveedor", _provs_inv, index=_indice(_provs_inv, prod_e.get("proveedor")),
-                        accept_new_options=True,
-                        placeholder="Elige o escribe el proveedor") or "").strip().upper()
-
-                    # La ficha de la montura: modelo, color, material y talla
-                    # dejaron de vivir dentro del código y de la descripción.
-                    ep_modelo = ep_color = ep_material = ep_talla = None
-                    if _es_montura_e and _hay_ficha_montura:
-                        em1, em2, em3, em4 = st.columns(4)
-                        ep_modelo = em1.text_input("Modelo", value=(prod_e.get("modelo") or "")).strip().upper()
-                        ep_color = em2.text_input("Color", value=(prod_e.get("color") or "")).strip().upper()
-                        ep_material = em3.selectbox(
-                            "Material", MATERIALES_MONTURA,
-                            index=_indice(MATERIALES_MONTURA, prod_e.get("material")) or 0)
-                        ep_talla = em4.text_input("Talla", value=(prod_e.get("talla") or ""),
-                                                  placeholder="55-18-140").strip().upper()
-
-                    ep3, ep4 = st.columns(2)
-                    ep_p_compra = ep3.number_input("Precio Compra ($)", min_value=0, step=1000, value=cantidad_inv(prod_e.get("precio_compra")))
-                    ep_p_venta = ep4.number_input("Precio Venta ($)", min_value=0, step=1000, value=cantidad_inv(prod_e.get("precio_venta")))
-
-                    guardar_prod_edit = st.form_submit_button("💾 Guardar Cambios", type="primary", use_container_width=True)
-
-                if guardar_prod_edit:
-                    _bloquea_e, _aviso_e = revisar_precios(ep_p_compra, ep_p_venta)
-                    if not ep_marca or not ep_desc:
-                        st.error("⚠️ Marca y Descripción son obligatorios.")
-                    elif _bloquea_e:
-                        st.error(f"⚠️ {_aviso_e}")
-                    else:
-                        if _aviso_e:
-                            st.warning(f"💲 {_aviso_e}")
-                        _cambios_prod = {
-                            "marca": ep_marca, "categoria": ep_categoria, "descripcion": ep_desc,
-                            "proveedor": ep_prov, "precio_compra": int(ep_p_compra),
-                            "precio_venta": int(ep_p_venta), **sello_auditoria(),
-                        }
-                        if _es_montura_e and _hay_ficha_montura:
-                            _cambios_prod.update({
-                                "modelo": ep_modelo or None, "color": ep_color or None,
-                                "material": ep_material, "talla": ep_talla or None})
-                        supabase.table("inventario").update(
-                            _cambios_prod).eq("codigo", codigo_editar_prod).execute()
-                        st.session_state.global_toast = f"Producto '{codigo_editar_prod}' actualizado."
-                        st.rerun()
-
-                st.divider()
-                if not _hay_estado_inv:
-                    st.caption("ℹ️ Para poder descontinuar productos falta "
-                               "añadir la columna `estado` en Supabase "
-                               "(`migraciones/fase10_movimientos_inventario.sql`).")
-                elif not _activo_e:
-                    if st.button("♻️ Reactivar este producto",
-                                 key=f"react_prod_{codigo_editar_prod}",
-                                 use_container_width=True):
-                        supabase.table("inventario").update({
-                            "estado": "ACTIVO", **sello_auditoria(),
-                        }).eq("codigo", codigo_editar_prod).execute()
-                        st.session_state.global_toast = "Producto reactivado."
-                        st.rerun()
-                else:
-                    with st.expander("🚫 Descontinuar este producto"):
-                        st.caption("Para un producto creado por error o que ya "
-                                   "no se vende. No se borra: deja de aparecer "
-                                   "en el catálogo y en los ajustes, no cuenta "
-                                   "en los totales, y se puede reactivar. Su "
-                                   "historial de movimientos se conserva.")
-                        _ok_desc = st.checkbox(
-                            "Sí, este producto ya no va en el inventario",
-                            key=f"conf_desc_{codigo_editar_prod}")
-                        if st.button("Descontinuar",
-                                     key=f"btn_desc_{codigo_editar_prod}",
-                                     disabled=not _ok_desc):
-                            supabase.table("inventario").update({
-                                "estado": "DESCONTINUADO", **sello_auditoria(),
-                            }).eq("codigo", codigo_editar_prod).execute()
-                            st.session_state.global_toast = "Producto descontinuado."
-                            st.rerun()
-
-                if prod_e.get("modificado_por"):
-                    st.caption(f"✏️ Última corrección: {prod_e['modificado_por']} · "
-                               f"{hora_co(prod_e.get('modificado_fecha'), '%d/%m/%Y %H:%M')}")
-
-    # -----------------------------------------------------------------
     # MOVIMIENTOS
     # -----------------------------------------------------------------
     with tab_movs:
@@ -5102,92 +5376,68 @@ elif modulo == "📦 Inventario":
                        "forma de saber a dónde fueron los otros siete. Todo lo "
                        "demás funciona igual mientras tanto.")
         else:
-            _movs = traer_todas_las_filas("movimientos_inventario",
-                                          orden_col="fecha", orden_desc=True)
-            if not _movs:
+            if not _movs_todos:
                 st.info("Todavía no hay movimientos registrados.")
             else:
-                _idx_mv = st.selectbox(
-                    "Ver un producto en concreto", range(len(inventario)),
-                    index=None,
-                    format_func=lambda i: _etiqueta_prod(inventario[i]),
-                    key="movs_prod_sel",
-                    placeholder="Todos los productos")
-                _cod_mv = (str(inventario[_idx_mv].get("codigo") or "")
-                           if _idx_mv is not None else None)
-                _vista = ([m for m in _movs
-                           if str(m.get("codigo") or "").upper() == _cod_mv.upper()]
-                          if _cod_mv else _movs[:300])
+                st.caption("Todo lo que ha entrado y salido de la bodega. Para "
+                           "la historia de un producto concreto, ábrelo desde "
+                           "el catálogo.")
+                _vista = _movs_todos[:300]
+                df_mv = pd.DataFrame([{
+                    "Fecha": hora_co(m.get("fecha"), "%d/%m/%Y %H:%M"),
+                    "Código": m.get("codigo"),
+                    "Entra / Sale": int(m.get("delta") or 0),
+                    "Queda en": cantidad_inv(m.get("cantidad_resultante")),
+                    "Motivo": m.get("motivo") or "—",
+                    "Factura": m.get("numero_factura") or "—",
+                    "Registró": m.get("registrado_por") or "—",
+                } for m in _vista])
 
-                if not _vista:
-                    st.info("Ese producto no tiene movimientos todavía.")
+                st.dataframe(
+                    df_mv.style.format({"Entra / Sale": lambda x: f"{x:+d}"})
+                    .map(_color_delta, subset=["Entra / Sale"]),
+                    use_container_width=True, hide_index=True)
+                st.caption(f"Últimos {len(_vista)} movimientos de "
+                           f"{len(_movs_todos)} en total.")
+
+            st.divider()
+            # La cantidad del producto y la suma de sus movimientos tienen
+            # que coincidir. Si no, alguien escribió en la tabla sin pasar
+            # por la app, o un apunte se perdió: cualquiera de las dos es
+            # algo que conviene saber antes de fiarse de las cifras.
+            with st.expander("🔍 Comprobar que el stock cuadra con su historia"):
+                _suma = {}
+                for m in _movs_todos:
+                    _k = str(m.get("codigo") or "").upper()
+                    _suma[_k] = _suma.get(_k, 0) + int(m.get("delta") or 0)
+                _descuadres = []
+                for p in inventario:
+                    _k = str(p.get("codigo") or "").upper()
+                    if _k not in _suma:
+                        continue
+                    _real = cantidad_inv(p.get("cantidad"))
+                    if _real != _suma[_k]:
+                        _descuadres.append({
+                            "Código": _k,
+                            "Dice el inventario": _real,
+                            "Suman los movimientos": _suma[_k],
+                            "Diferencia": _real - _suma[_k],
+                        })
+                _sin_historia = [p for p in inventario
+                                 if str(p.get("codigo") or "").upper() not in _suma]
+                if _descuadres:
+                    st.error(f"⚠️ {len(_descuadres)} producto(s) no cuadran.")
+                    st.dataframe(pd.DataFrame(_descuadres),
+                                 use_container_width=True, hide_index=True)
+                    st.caption("Un ajuste con motivo «Corrección de un error "
+                               "de digitación» los deja iguales y explica "
+                               "por qué.")
                 else:
-                    df_mv = pd.DataFrame([{
-                        "Fecha": hora_co(m.get("fecha"), "%d/%m/%Y %H:%M"),
-                        "Código": m.get("codigo"),
-                        "Entra / Sale": int(m.get("delta") or 0),
-                        "Queda en": cantidad_inv(m.get("cantidad_resultante")),
-                        "Motivo": m.get("motivo") or "—",
-                        "Factura": m.get("numero_factura") or "—",
-                        "Registró": m.get("registrado_por") or "—",
-                    } for m in _vista])
-
-                    def _color_delta(v):
-                        if v > 0:
-                            return "color: #2c7a5b; font-weight: 600;"
-                        if v < 0:
-                            return "color: #b0413c; font-weight: 600;"
-                        return ""
-
-                    st.dataframe(
-                        df_mv.style.format({"Entra / Sale": lambda x: f"{x:+d}"})
-                        .map(_color_delta, subset=["Entra / Sale"]),
-                        use_container_width=True, hide_index=True)
-                    if _cod_mv:
-                        st.caption(f"{len(_vista)} movimiento(s) de {_cod_mv}.")
-                    else:
-                        st.caption(f"Últimos {len(_vista)} movimientos de "
-                                   f"{len(_movs)} en total. Elige un producto "
-                                   f"arriba para ver su historia completa.")
-
-                st.divider()
-                # La cantidad del producto y la suma de sus movimientos tienen
-                # que coincidir. Si no, alguien escribió en la tabla sin pasar
-                # por la app, o un apunte se perdió: cualquiera de las dos es
-                # algo que conviene saber antes de fiarse de las cifras.
-                with st.expander("🔍 Comprobar que el stock cuadra con su historia"):
-                    _suma = {}
-                    for m in _movs:
-                        _k = str(m.get("codigo") or "").upper()
-                        _suma[_k] = _suma.get(_k, 0) + int(m.get("delta") or 0)
-                    _descuadres = []
-                    for p in inventario:
-                        _k = str(p.get("codigo") or "").upper()
-                        if _k not in _suma:
-                            continue
-                        _real = cantidad_inv(p.get("cantidad"))
-                        if _real != _suma[_k]:
-                            _descuadres.append({
-                                "Código": _k,
-                                "Dice el inventario": _real,
-                                "Suman los movimientos": _suma[_k],
-                                "Diferencia": _real - _suma[_k],
-                            })
-                    _sin_historia = [p for p in inventario
-                                     if str(p.get("codigo") or "").upper() not in _suma]
-                    if _descuadres:
-                        st.error(f"⚠️ {len(_descuadres)} producto(s) no cuadran.")
-                        st.dataframe(pd.DataFrame(_descuadres),
-                                     use_container_width=True, hide_index=True)
-                        st.caption("Un ajuste con motivo «Corrección de un error "
-                                   "de digitación» los deja iguales y explica "
-                                   "por qué.")
-                    else:
-                        st.success("✅ Todos los productos con historial cuadran.")
-                    if _sin_historia:
-                        st.caption(f"{len(_sin_historia)} producto(s) todavía sin "
-                                   f"ningún movimiento: su historia empieza en el "
-                                   f"próximo cambio.")
+                    st.success("✅ Todos los productos con historial cuadran.")
+                if _sin_historia:
+                    st.caption(f"{len(_sin_historia)} producto(s) todavía sin "
+                               f"ningún movimiento: su historia empieza en el "
+                               f"próximo cambio.")
 
 # ------------------------------------------
 # MÓDULO 5: CONTROL DE TRABAJOS
