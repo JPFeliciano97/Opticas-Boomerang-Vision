@@ -3318,12 +3318,54 @@ elif modulo == "🛍️ Óptica y Facturación":
                         c6.caption(f"Comisión: ${format_currency_co(recargo_valor)} · "
                                    f"neto: ${format_currency_co(abono_val - recargo_valor)}")
 
-                st.markdown(f"""
-                    <div style="background-color: #f0f0f0; border: 1px solid #b0b0b0; padding: 9px; border-radius: 6px; text-align: center; margin-top: 10px;">
-                        <span style="font-size: 0.8em; color: #000000; font-weight: 600;">SALDO PENDIENTE</span><br>
-                        <span style="font-size: 1.3em; font-weight: bold; color: #e57373;">${format_currency_co(sal_pend)}</span>
-                    </div>
-                """, unsafe_allow_html=True)
+                # El total a pagar NO se mostraba en ninguna parte. Se
+                # calculaba, se guardaba y se imprimía en el PDF, pero en
+                # pantalla solo estaba el saldo pendiente: quien cobraba
+                # tenía que restar de cabeza, y si el descuento era un
+                # porcentaje, calcular el porcentaje de cabeza. En una
+                # pantalla cuyo único trabajo es cobrar, el total es lo
+                # primero que tiene que verse.
+                #
+                # Los importes van con &#36; y no con '$': dentro de un
+                # st.markdown, dos '$' se toman como delimitadores de
+                # fórmula LaTeX y se comen el texto de en medio. La
+                # entidad HTML se pinta igual y no la ve el parser.
+                def _fila_dinero(etiqueta, valor, destacada=False, roja=False):
+                    _peso = "700" if destacada else "400"
+                    _tam = "1.25em" if destacada else "0.95em"
+                    _fondo = "background:#f0f0f0;" if destacada else ""
+                    _color = "#e57373" if roja else "#000000"
+                    return (f'<div style="display:flex; justify-content:space-between; '
+                            f'align-items:baseline; padding:{"10px" if destacada else "5px"} 14px; '
+                            f'{_fondo}">'
+                            f'<span style="font-size:0.9em; font-weight:{_peso}; color:#000000;">'
+                            f'{etiqueta}</span>'
+                            f'<span style="font-size:{_tam}; font-weight:{_peso}; color:{_color};">'
+                            # El menos va DELANTE del signo de peso: "$-45.000"
+                            # se lee mal y se confunde con un importe raro.
+                            f'{"− " if valor < 0 else ""}'
+                            f'&#36;{format_currency_co(abs(valor))}</span></div>')
+
+                if sub_val <= 0:
+                    st.caption("Escribe el subtotal para ver el total a pagar.")
+                else:
+                    _filas = [_fila_dinero("Subtotal", sub_val)]
+                    if desc_calc > 0:
+                        _filas.append(_fila_dinero("Descuento", -desc_calc))
+                    _filas.append(_fila_dinero("TOTAL A PAGAR", tot_neto, destacada=True))
+                    if abono_val > 0:
+                        _filas.append(_fila_dinero("Abono de hoy", -abono_val))
+                    # El saldo solo se pinta en rojo cuando queda algo por
+                    # cobrar: un saldo en cero es una buena noticia, no un
+                    # aviso.
+                    _filas.append(_fila_dinero("Saldo pendiente", sal_pend,
+                                               roja=(sal_pend > 0)))
+                    st.markdown(
+                        '<div style="border:1px solid #b0b0b0; border-radius:8px; '
+                        'overflow:hidden; margin-top:10px;">' + "".join(_filas) + "</div>",
+                        unsafe_allow_html=True)
+                    if sal_pend <= 0 and tot_neto > 0:
+                        st.caption("✅ Queda pagada completa.")
 
                 col_ent1, col_ent2 = st.columns(2)
                 fecha_entrega = col_ent1.text_input("Fecha/Hora Entrega", placeholder="Ej: 3 días / Mañana / 15-ago").upper()
@@ -4593,28 +4635,41 @@ elif modulo == "📦 Inventario":
             # queda en cero y se quedaba en la tabla para siempre. Con el
             # tiempo la mayoría del catálogo eran monturas que ya no
             # existen, así que el filtro de "solo con stock" viene puesto.
-            fc1, fc2, fc3 = st.columns([2, 2, 3])
+            # Lo más rápido para encontrar algo es escribirlo. Había
+            # filtros por categoría y marca, pero no búsqueda -- y con
+            # treinta y ocho monturas ya se nota.
+            fc1, fc2, fc3, fc4 = st.columns([3, 2, 2, 2])
+            _busca = fc1.text_input("Buscar", key="inv_filtro_texto",
+                                    placeholder="Código, marca, color…").strip().upper()
             _cats = sorted({str(p.get("categoria") or "").strip()
                             for p in inventario if p.get("categoria")})
-            _cat_f = fc1.selectbox("Categoría", ["Todas"] + _cats,
+            _cat_f = fc2.selectbox("Categoría", ["Todas"] + _cats,
                                    key="inv_filtro_categoria")
             _marcas = sorted({str(p.get("marca") or "").strip().upper()
                               for p in inventario if p.get("marca")})
-            _marca_f = fc2.selectbox("Marca", ["Todas"] + _marcas,
+            _marca_f = fc3.selectbox("Marca", ["Todas"] + _marcas,
                                      key="inv_filtro_marca")
-            with fc3:
-                _solo_stock = st.toggle("Solo con stock", value=True,
-                                        key="inv_filtro_solo_stock")
-                _ver_desc = st.toggle("Ver descontinuados", value=False,
-                                      key="inv_filtro_ver_desc")
             # Una montura que lleva un año en la vitrina es plata quieta, y
             # hasta ahora no había forma de verlo: la fecha de ingreso
             # estaba en la tabla pero nadie contaba los días.
             _TRAMOS = {"Todo": None, "Más de 3 meses": 90,
                        "Más de 6 meses": 180, "Más de un año": 365}
-            _tramo = st.radio("Tiempo en vitrina", list(_TRAMOS), horizontal=True,
-                              key="inv_filtro_antiguedad")
+            _tramo = fc4.selectbox("Tiempo en vitrina", list(_TRAMOS),
+                                   key="inv_filtro_antiguedad")
             _min_dias = _TRAMOS[_tramo]
+            ft1, ft2, _ft3 = st.columns([2, 2, 4])
+            _solo_stock = ft1.toggle("Solo con stock", value=True,
+                                     key="inv_filtro_solo_stock")
+            _ver_desc = ft2.toggle("Ver descontinuados", value=False,
+                                   key="inv_filtro_ver_desc")
+
+            def _casa_busqueda(p):
+                if not _busca:
+                    return True
+                return _busca in " ".join(str(p.get(c) or "") for c in
+                                          ("codigo", "marca", "descripcion",
+                                           "modelo", "color", "material",
+                                           "talla", "proveedor")).upper()
 
             _filtrado = [
                 p for p in inventario
@@ -4624,6 +4679,7 @@ elif modulo == "📦 Inventario":
                 and (not _solo_stock or cantidad_inv(p.get("cantidad")) > 0)
                 and (_min_dias is None
                      or (dias_en_vitrina(p.get("fecha_ingreso")) or 0) >= _min_dias)
+                and _casa_busqueda(p)
             ]
 
             if not _filtrado:
@@ -4638,14 +4694,11 @@ elif modulo == "📦 Inventario":
                     venta = cantidad_inv(p.get("precio_venta"))
                     inv_total += cant * compra
                     potencial += cant * venta
-                    fi_raw = p.get("fecha_ingreso", "")
-                    fi_fmt = ""
-                    if fi_raw:
-                        try:
-                            fi_fmt = datetime.strptime(str(fi_raw)[:10], "%Y-%m-%d").strftime("%d/%m/%Y")
-                        except Exception:
-                            fi_fmt = str(fi_raw)[:10]
                     _dias = dias_en_vitrina(p.get("fecha_ingreso"))
+                    # Sin la columna 'Ingreso': decía lo mismo que 'Días' --
+                    # '01/07/2026' y '74' son el mismo dato, y la fecha
+                    # ocupaba más y se leía peor. La fecha exacta sigue en
+                    # el detalle del producto.
                     tabla_inv.append({
                         "Código": str(p.get("codigo", "")),
                         "Categoría": str(p.get("categoria", "")),
@@ -4654,7 +4707,6 @@ elif modulo == "📦 Inventario":
                         "Cant.": cant,
                         "Costo": compra,
                         "P. Venta": venta,
-                        "Ingreso": fi_fmt,
                         "Días": (_dias if _dias is not None else 0),
                         "Estado": ("ACTIVO" if _esta_activo(p) else "DESCONTINUADO"),
                     })
@@ -4692,10 +4744,20 @@ elif modulo == "📦 Inventario":
                 # Los totales responden al filtro: antes se calculaban sobre
                 # todo el inventario aunque estuvieras mirando una categoría,
                 # y no había forma de saber cuánto valía lo que veías.
+                # st.metric en vez de info/warning/success: aquellos pintan
+                # azul, amarillo y verde, colores que no son de la paleta
+                # del proyecto -- y el amarillo hacía que "Inversión"
+                # pareciera una advertencia cuando es un dato neutro.
+                #
+                # Y el nombre honesto: no es la ganancia, es la que habría
+                # si todo se vendiera a precio de lista, sin un descuento.
                 c1, c2, c3 = st.columns(3)
-                c1.info(f"**Stock:** {sum(i['Cant.'] for i in tabla_inv)} unds")
-                c2.warning(f"**Inversión:** ${format_currency_co(inv_total)}")
-                c3.success(f"**Ganancia Proyectada:** ${format_currency_co(potencial - inv_total)}")
+                c1.metric("Unidades en stock", f"{sum(i['Cant.'] for i in tabla_inv)}")
+                c2.metric("Invertido", f"${format_currency_co(inv_total)}")
+                c3.metric("Ganancia si se vende todo",
+                          f"${format_currency_co(potencial - inv_total)}",
+                          help="A precio de lista y sin descuentos. Es un techo, "
+                               "no una previsión.")
                 _quieta = sum(i["Costo"] * i["Cant."] for i in tabla_inv
                               if i["Días"] >= 180 and i["Cant."] > 0)
                 if _quieta:
@@ -4732,15 +4794,19 @@ elif modulo == "📦 Inventario":
                     key="m_prov", placeholder="Elige o escribe el proveedor") or "").strip().upper()
 
                 col_m3, col_m4, col_m5 = st.columns([2, 2, 2])
+                # Sin help= en los campos: Streamlit alinea el icono '?' a
+                # la derecha de SU columna, no junto a su etiqueta, y acaba
+                # a trescientos píxeles de ella o pegado al campo de al
+                # lado. Lo que decían va al pie de la fila.
                 inv_modelo = str(col_m3.text_input(
-                    "Modelo *", key="m_modelo",
-                    help="La referencia del modelo, sin el color. Los colores "
-                         "van abajo, uno por montura.").strip().upper())
+                    "Modelo *", key="m_modelo").strip().upper())
                 inv_mat = col_m4.selectbox("Material", MATERIALES_MONTURA, key="m_mat")
                 inv_talla = str(col_m5.text_input(
-                    "Talla", key="m_talla", placeholder="55-18-140",
-                    help="Calibre-puente-varilla. Opcional, pero es lo primero "
-                         "que se mira al reponer.").strip().upper())
+                    "Talla", key="m_talla", placeholder="55-18-140").strip().upper())
+                st.caption("El modelo va sin el color — los colores se ponen "
+                           "abajo, uno por montura. La talla es "
+                           "calibre-puente-varilla y es opcional, pero es lo "
+                           "primero que se mira al reponer.")
 
                 col_m6, c_pc, c_pv = st.columns([1, 2, 2])
                 inv_cant = col_m6.number_input("Cantidad", min_value=1, step=1, value=1, key="m_cant")
@@ -4910,8 +4976,10 @@ elif modulo == "📦 Inventario":
                 prod = _inv_activo[_idx_aj]
                 codigo_ajuste = str(prod.get("codigo") or "")
                 stock = cantidad_inv(prod.get("cantidad"))
-                st.info(f"**{str(prod.get('marca') or '').upper()}** — "
-                        f"{prod.get('descripcion','')} | Stock: **{stock}**")
+                # Sin recuadro repitiendo el producto: el desplegable de
+                # arriba ya dice código, marca, descripción y stock, y
+                # además el azul de st.info está fuera de la paleta del
+                # proyecto (negro, blanco y rojo).
 
                 ca1, ca2 = st.columns(2)
                 accion = ca1.radio("Acción:", ["Sumar (+)", "Restar (-)"],
@@ -4920,11 +4988,11 @@ elif modulo == "📦 Inventario":
                                                 value=1, key="ajuste_cantidad")
                 motivo_ajuste = st.selectbox(
                     "¿Por qué cambia?", [MOTIVO_SIN_ELEGIR] + MOTIVOS_AJUSTE,
-                    key="ajuste_motivo",
-                    help="Un −3 puede ser una rotura, una pérdida, un conteo "
-                         "mal hecho o una venta sin registrar. Son cuatro "
-                         "problemas distintos, y sin el motivo no se "
-                         "distinguen dentro de un mes.")
+                    key="ajuste_motivo")
+                st.caption("Un −3 puede ser una rotura, una pérdida, un conteo "
+                           "mal hecho o una venta sin registrar. Son cuatro "
+                           "problemas distintos, y sin el motivo no se "
+                           "distinguen dentro de un mes.")
 
                 _delta = int(cant_ajustar) if accion == "Sumar (+)" else -int(cant_ajustar)
                 _resultante = stock + _delta
