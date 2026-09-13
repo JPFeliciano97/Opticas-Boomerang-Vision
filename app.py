@@ -1373,6 +1373,53 @@ UMBRAL_GASTO_ALTO = 2_500_000
 # editable con ese valor por defecto es estrictamente más honesto que un
 # texto quemado. Aun así es un valor por defecto, no una medición: si el
 # optómetra midió otra cosa, hay que cambiarlo.
+# =====================================================================
+# INVENTARIO
+# =====================================================================
+# Una sola lista. Estaba escrita literalmente en dos sitios -- registrar
+# y editar producto -- y añadir una categoría en uno solo dejaba
+# productos que no se podían editar sin cambiarles la categoría.
+CATEGORIAS_INVENTARIO = ["Montura", "Lente de Contacto", "Accesorio",
+                         "Estuche", "Líquido", "Otro"]
+
+# El estuche que se descuenta solo al vender unas gafas con montura de
+# vitrina. Era una cadena suelta repetida en cuatro sitios.
+ESTUCHE_GENERICO = "ESTUCHE-GENERICO"
+
+# Por qué cambió el stock. Un -3 puede ser una rotura, un robo, un
+# conteo mal hecho o una venta sin registrar: cuatro problemas distintos
+# con cuatro soluciones distintas, y sin el motivo son indistinguibles.
+MOTIVOS_AJUSTE = [
+    "Conteo físico",
+    "Rotura o daño",
+    "Pérdida o robo",
+    "Devolución a proveedor",
+    "Devolución de cliente",
+    "Reposición de proveedor",
+    "Corrección de un error de digitación",
+]
+MOTIVO_SIN_ELEGIR = "— Elige un motivo —"
+
+# Por encima de estas unidades el ajuste pide confirmación. Un ajuste
+# normal es de una o dos piezas; diez ya es un recuento, y cien es casi
+# siempre un cero de más.
+UMBRAL_AJUSTE_ALTO = 10
+
+
+def cantidad_inv(valor):
+    """
+    Un número del inventario, tolerando vacíos.
+
+    `p.get("cantidad", 0)` NO protege de nada cuando la columna existe y
+    está vacía: devuelve None, e int(None) revienta. Una sola fila así
+    dejaba la pestaña Catálogo entera en un error.
+    """
+    try:
+        return int(float(valor))
+    except (TypeError, ValueError):
+        return 0
+
+
 AV_LEJOS_DEFECTO = "20/20"
 AV_CERCA_DEFECTO = "0.50M"
 
@@ -1581,6 +1628,152 @@ def sello_auditoria():
     """
     usuario_actual = st.session_state.get("user_info", {}).get("nombre", "Desconocido")
     return {"modificado_por": usuario_actual, "modificado_fecha": now_co().isoformat()}
+
+
+def mover_inventario(codigo, delta, motivo, factura=None, permitir_negativo=False):
+    """
+    Cambia el stock de un producto y deja constancia del movimiento. Las
+    dos cosas por el mismo camino, siempre.
+
+    Antes cada sitio hacía su propio "leer la cantidad y escribir la
+    cantidad menos uno", y no quedaba rastro de nada: si un producto
+    decía 3 y se habían comprado 10, no había forma de saber a dónde
+    fueron los otros siete. Ahora toda entrada y toda salida pasan por
+    aquí, así que la cantidad y su historia no pueden separarse -- salvo
+    que alguien escriba en la tabla sin usar esta función.
+
+    delta: positivo entra, negativo sale.
+    motivo: uno de MOTIVOS_AJUSTE, o el motivo automático de la venta.
+    factura: número de factura, cuando el movimiento viene de una venta.
+    permitir_negativo: por defecto el stock se detiene en cero. Un
+        inventario en -1 no es un dato, es un error a la vista.
+
+    Devuelve (ok, cantidad_nueva, aviso). ok es False solo cuando el
+    movimiento no se pudo hacer; aviso trae el detalle cuando algo no
+    salió como se pidió pero tampoco es un fallo.
+    """
+    codigo = str(codigo or "").strip().upper()
+    delta = int(delta or 0)
+    if not codigo:
+        return False, None, "Falta el código del producto."
+    if delta == 0:
+        return True, None, None
+
+    try:
+        fila = (supabase.table("inventario").select("cantidad")
+                .eq("codigo", codigo).limit(1).execute().data)
+    except Exception as e:
+        return False, None, f"No se pudo leer el inventario: {e}"
+    if not fila:
+        return False, None, f"'{codigo}' no está en el inventario."
+
+    actual = cantidad_inv(fila[0].get("cantidad"))
+    nueva = actual + delta
+    aviso = None
+    if nueva < 0 and not permitir_negativo:
+        nueva = 0
+        aviso = (f"'{codigo}' estaba en {actual} y se pedían {abs(delta)}: "
+                 f"queda en 0, no en negativo. Revisa el conteo físico.")
+    # El movimiento que se registra es el que de verdad ocurrió, no el
+    # que se pidió: si el stock se frenó en cero, la historia tiene que
+    # decir eso y no otra cosa.
+    delta_real = nueva - actual
+    if delta_real == 0:
+        return True, actual, aviso
+
+    try:
+        supabase.table("inventario").update(
+            {"cantidad": nueva, **sello_auditoria()}
+        ).eq("codigo", codigo).execute()
+    except Exception as e:
+        return False, None, f"No se pudo actualizar el stock: {e}"
+
+    anotar_movimiento(codigo, delta_real, nueva, motivo, factura)
+    return True, nueva, aviso
+
+
+def anotar_movimiento(codigo, delta, resultante, motivo, factura=None):
+    """
+    Escribe una línea en el libro de movimientos. Nada más.
+
+    Va aparte de mover_inventario porque hay un caso que no mueve nada:
+    registrar un producto nuevo ya crea la fila con su cantidad, y solo
+    falta dejar dicho de dónde salió ese saldo inicial.
+
+    El historial es opcional mientras no se corra la migración: la app
+    tiene que funcionar antes y después de ella.
+    """
+    if not tabla_existe("movimientos_inventario"):
+        return
+    try:
+        supabase.table("movimientos_inventario").insert({
+            "codigo": str(codigo or "").strip().upper(),
+            "fecha": now_co().isoformat(),
+            "delta": int(delta),
+            "cantidad_resultante": int(resultante),
+            "motivo": motivo,
+            "numero_factura": factura,
+            "registrado_por": st.session_state.get(
+                "user_info", {}).get("nombre", "Desconocido"),
+        }).execute()
+    except Exception:
+        # El stock ya cambió y eso es lo que no puede perderse. Que falle
+        # la anotación no debe deshacer ni frenar una venta.
+        pass
+
+
+def _revertir_movimientos_de(numero_factura, montura_codigo=None):
+    """
+    Devuelve al inventario lo que una factura sacó, y dice qué devolvió.
+
+    Con historial: se lee lo que esa factura descontó de verdad y se
+    devuelve exactamente eso. Antes se devolvía siempre montura más
+    estuche, aunque el estuche nunca hubiera salido -- si el producto se
+    creó después de la venta, anular inventaba uno.
+
+    Sin historial (facturas anteriores a la migración, o si la tabla no
+    existe todavía) se recurre a lo de siempre: montura y estuche. Es una
+    suposición, pero es la misma que llevaba haciendo el sistema y para
+    esas facturas no hay mejor dato.
+    """
+    devueltos = []
+    movs = []
+    if numero_factura and tabla_existe("movimientos_inventario"):
+        try:
+            movs = (supabase.table("movimientos_inventario").select("*")
+                    .eq("numero_factura", numero_factura)
+                    .lt("delta", 0).execute().data) or []
+        except Exception:
+            movs = []
+        # Si ya se devolvió antes, no se devuelve dos veces.
+        try:
+            ya = (supabase.table("movimientos_inventario").select("id_movimiento")
+                  .eq("numero_factura", numero_factura)
+                  .gt("delta", 0).limit(1).execute().data) or []
+        except Exception:
+            ya = []
+        if ya:
+            return []
+
+    if movs:
+        for m in movs:
+            ok, _, _ = mover_inventario(
+                m.get("codigo"), -int(m.get("delta") or 0),
+                f"Anulación de la factura {numero_factura}",
+                factura=numero_factura)
+            if ok:
+                devueltos.append(str(m.get("codigo")))
+        return devueltos
+
+    for _cod in (montura_codigo, ESTUCHE_GENERICO):
+        if not _cod:
+            continue
+        ok, _, _ = mover_inventario(
+            _cod, +1, f"Anulación de la factura {numero_factura}",
+            factura=numero_factura)
+        if ok:
+            devueltos.append(str(_cod))
+    return devueltos
 
 
 def corregir_documento_paciente(doc_viejo, doc_nuevo):
@@ -2069,8 +2262,10 @@ if "trigger_clear_anular" in st.session_state and st.session_state.trigger_clear
     st.session_state.trigger_clear_anular = False
 
 if "trigger_clear_ajuste" in st.session_state and st.session_state.trigger_clear_ajuste:
-    st.session_state.codigo_ajuste_input = ""
+    st.session_state.ajuste_prod_sel = None
     st.session_state.ajuste_cantidad = 1
+    st.session_state.ajuste_motivo = MOTIVO_SIN_ELEGIR
+    st.session_state.confirmar_ajuste_alto = False
     st.session_state.trigger_clear_ajuste = False
 
 if "trigger_clear_laboratorio" in st.session_state and st.session_state.trigger_clear_laboratorio:
@@ -2102,6 +2297,9 @@ if "trigger_clear_editar" in st.session_state and st.session_state.trigger_clear
 if "trigger_clear_venta_menor" in st.session_state and st.session_state.trigger_clear_venta_menor:
     st.session_state.metodo_menor_sel = "EFECTIVO"
     st.session_state.recargo_pct_menor_input = 0.0
+    # El form se vacía solo con clear_on_submit; el selector vive fuera de
+    # él, así que se quedaría con el producto de la venta anterior.
+    st.session_state.venta_menor_prod_sel = None
     st.session_state.trigger_clear_venta_menor = False
 
 if "global_toast" in st.session_state:
@@ -2219,8 +2417,10 @@ def hay_cambios_sin_guardar():
         campos = ["inv_codigo", "inv_marca", "inv_desc", "m_marca", "m_ref_unico"]
         if any(_txt(k) for k in campos):
             return True
-        # Hay un producto cargado en Ajuste Rápido o Editar Producto
-        if _txt("codigo_ajuste_input") or _txt("codigo_editar_prod_input"):
+        # Hay un producto cargado en Ajuste Rápido o Editar Producto.
+        # Son desplegables: su valor es la posición elegida, y la posición
+        # 0 es válida -- por eso se compara con None y no por "está vacío".
+        if ss.get("ajuste_prod_sel") is not None or ss.get("editar_prod_sel") is not None:
             return True
         return False
 
@@ -2249,8 +2449,10 @@ def _limpiar_campos_modulo_actual():
             ss[k] = ""
         ss["editar_factura_sel"] = None
     elif m == "📦 Inventario":
-        for k in ["inv_codigo", "inv_marca", "inv_desc", "m_marca", "codigo_ajuste_input", "codigo_editar_prod_input"]:
+        for k in ["inv_codigo", "inv_marca", "inv_desc", "m_marca"]:
             ss[k] = ""
+        for k in ["ajuste_prod_sel", "editar_prod_sel", "movs_prod_sel"]:
+            ss[k] = None
 
 
 @st.dialog("⚠️ Cambios sin guardar")
@@ -2323,11 +2525,14 @@ with st.sidebar:
     # Alerta de stock crítico (productos en 0)
     if user_rol in ["admin", "asesor_limitado"]:
         try:
-            inv_sidebar = supabase.table("inventario").select("codigo,marca,cantidad,categoria").execute().data or []
+            # Por la caché de 60 s: esta consulta corría entera en CADA
+            # interacción con la app, estuvieras en el módulo que
+            # estuvieras. Una alerta de stock no necesita ser del segundo.
+            inv_sidebar = query_cached("inventario") or []
             # Excluir Monturas del alerta de stock (rotan constantemente)
             inv_no_montura = [p for p in inv_sidebar if str(p.get("categoria", "")).lower() != "montura"]
-            sin_stock  = [p for p in inv_no_montura if int(p.get("cantidad", 0)) == 0]
-            bajo_stock = [p for p in inv_no_montura if 0 < int(p.get("cantidad", 0)) <= 2]
+            sin_stock  = [p for p in inv_no_montura if cantidad_inv(p.get("cantidad")) == 0]
+            bajo_stock = [p for p in inv_no_montura if 0 < cantidad_inv(p.get("cantidad")) <= 2]
             if sin_stock:
                 st.error(f"🚨 **{len(sin_stock)} producto(s) sin stock**")
                 with st.expander("Ver productos sin stock"):
@@ -2337,7 +2542,7 @@ with st.sidebar:
                 st.warning(f"⚠️ **{len(bajo_stock)} producto(s) con stock bajo (≤2)**")
                 with st.expander("Ver stock bajo"):
                     for p in bajo_stock:
-                        cant = int(p.get("cantidad", 0))
+                        cant = cantidad_inv(p.get("cantidad"))
                         st.caption(f"• {p.get('marca','').upper()} — Ref. {p.get('codigo','')} ({cant} ud.)")
         except Exception:
             pass
@@ -2908,10 +3113,20 @@ elif modulo == "🛍️ Óptica y Facturación":
                         res_montura = supabase.table("inventario").select("*").eq("codigo", ref_busqueda).ilike("categoria", "Montura").execute().data
                         if res_montura:
                             m_encontrada = res_montura[0]
-                            if int(m_encontrada.get("cantidad", 0)) > 0:
+                            if cantidad_inv(m_encontrada.get("cantidad")) > 0:
                                 col_vit2.success(f"✅ {m_encontrada['marca']} | ${format_currency_co(m_encontrada['precio_venta'])}")
                                 selected_frame_code = m_encontrada['codigo']
                                 desc_sug = f"LENTES + MONTURA {m_encontrada['marca']} REF. {selected_frame_code}"
+                                # Al facturar se descuenta también un estuche.
+                                # Si no quedan, la venta sigue -- lo que no
+                                # puede es enterarse nadie: antes el stock se
+                                # iba a negativo en silencio.
+                                _est_row = [q for q in (query_cached("inventario") or [])
+                                            if str(q.get("codigo") or "").upper() == ESTUCHE_GENERICO]
+                                if _est_row and cantidad_inv(_est_row[0].get("cantidad")) <= 0:
+                                    col_vit2.warning("📦 No quedan estuches en el "
+                                                     "inventario. La venta sigue, "
+                                                     "pero hay que reponerlos.")
                             else:
                                 col_vit2.error("⚠️ SIN STOCK (Cant: 0)")
                                 desc_sug = f"LENTES + MONTURA {m_encontrada['marca']} REF. {ref_busqueda} (SIN STOCK)"
@@ -3044,10 +3259,15 @@ elif modulo == "🛍️ Óptica y Facturación":
                             }).execute()
                             
                             if origen_montura == "Montura de Vitrina" and selected_frame_code:
-                                frame_data = supabase.table("inventario").select("cantidad").eq("codigo", selected_frame_code).execute().data
-                                if frame_data: supabase.table("inventario").update({"cantidad": frame_data[0]["cantidad"] - 1}).eq("codigo", selected_frame_code).execute()
-                                case_data = supabase.table("inventario").select("cantidad").eq("codigo", "ESTUCHE-GENERICO").execute().data
-                                if case_data: supabase.table("inventario").update({"cantidad": case_data[0]["cantidad"] - 1}).eq("codigo", "ESTUCHE-GENERICO").execute()
+                                # El estuche se frenaba en nada: sin control de
+                                # cero, un estuche de más en la factura dejaba
+                                # el stock en -1 y de ahí para abajo.
+                                for _cod_mov in (selected_frame_code, ESTUCHE_GENERICO):
+                                    _ok_mov, _, _aviso_mov = mover_inventario(
+                                        _cod_mov, -1, "Venta de gafas",
+                                        factura=num_factura)
+                                    if _aviso_mov:
+                                        st.warning(f"📦 {_aviso_mov}")
                         except Exception as e: st.error(f"Error técnico BD: {e}")
 
                         pdf = FPDF(orientation="P", unit="mm", format="Letter")
@@ -3111,14 +3331,60 @@ elif modulo == "🛍️ Óptica y Facturación":
                    "cordones, líquidos de limpieza, tornillos, plaquetas, etc. "
                    "Se registra como pagada de inmediato y entra al cuadre de caja del día.")
 
+        # Lo que se vende aquí -- cordones, líquidos, estuches -- SÍ está en
+        # el inventario, pero la venta menor nunca lo descontaba: la
+        # descripción era texto libre sin ningún vínculo con el catálogo.
+        # Y la alerta de stock de la barra lateral excluye las monturas y
+        # vigila justo estas categorías, así que estaba vigilando unas
+        # existencias que no bajaban solas nunca.
+        #
+        # El selector va FUERA del form: dentro de un st.form elegir no
+        # refresca nada, y la descripción y el precio no podrían rellenarse
+        # hasta después de guardar.
+        _inv_menor = [q for q in (query_cached("inventario") or [])
+                      if str(q.get("categoria") or "").strip().lower() != "montura"
+                      and str(q.get("estado") or "ACTIVO").upper() != "DESCONTINUADO"]
+        _inv_menor.sort(key=lambda q: (str(q.get("marca") or ""), str(q.get("codigo") or "")))
+
+        def _al_elegir_producto_menor():
+            _i = st.session_state.get("venta_menor_prod_sel")
+            if _i is None:
+                return
+            _q = _inv_menor[_i]
+            st.session_state.desc_menor_input = (
+                f"{str(_q.get('marca') or '').upper()} "
+                f"{str(_q.get('descripcion') or '').upper()}").strip()
+            st.session_state.valor_menor_input = cantidad_inv(_q.get("precio_venta"))
+
+        _idx_pm = None
+        if _inv_menor:
+            _idx_pm = st.selectbox(
+                "¿Sale del inventario?", range(len(_inv_menor)), index=None,
+                format_func=lambda i: (
+                    f"{_inv_menor[i].get('codigo','')} · "
+                    f"{str(_inv_menor[i].get('marca') or '').upper()} · "
+                    f"{str(_inv_menor[i].get('descripcion') or '')[:32]} · "
+                    f"stock {cantidad_inv(_inv_menor[i].get('cantidad'))}"),
+                key="venta_menor_prod_sel", on_change=_al_elegir_producto_menor,
+                placeholder="Opcional — elígelo y se descuenta solo al guardar",
+                help="Si eliges un producto, se rellenan la descripción y el "
+                     "precio, y al guardar baja su stock. Déjalo vacío para "
+                     "cobrar algo que no está en el inventario.")
+            if _idx_pm is not None:
+                _stock_pm = cantidad_inv(_inv_menor[_idx_pm].get("cantidad"))
+                if _stock_pm <= 0:
+                    st.warning("📦 De este producto no queda ninguno en el "
+                               "inventario. La venta se registra igual, pero "
+                               "el stock no bajará de cero.")
+
         with st.form("form_venta_menor", clear_on_submit=True):
             fm1, fm2, fm3 = st.columns([3, 1, 1])
             with fm1:
                 desc_menor = st.text_input("Descripción del artículo", placeholder="Ej: Cordón, Líquido limpiador", key="desc_menor_input").upper()
             with fm2:
-                cantidad_menor = st.number_input("Cantidad", min_value=1, value=1, step=1)
+                cantidad_menor = st.number_input("Cantidad", min_value=1, value=1, step=1, key="cantidad_menor_input")
             with fm3:
-                valor_unit_menor = st.number_input("Valor unitario ($)", min_value=0, step=1000, value=0)
+                valor_unit_menor = st.number_input("Valor unitario ($)", min_value=0, step=1000, value=0, key="valor_menor_input")
             guardar_menor = st.form_submit_button("💾 Registrar Venta", type="primary", use_container_width=True)
 
         # El método de pago vive FUERA del form: dentro de un st.form, los
@@ -3160,7 +3426,19 @@ elif modulo == "🛍️ Óptica y Facturación":
                     "recargo_pct": recargo_pct_menor if recargo_pct_menor > 0 else None,
                     "recargo_valor": recargo_valor_menor,
                 }).execute()
-                st.session_state.global_toast = f"Venta menor registrada: {desc_final} — ${format_currency_co(total_menor)}"
+                _msg_menor = (f"Venta menor registrada: {desc_final} — "
+                              f"${format_currency_co(total_menor)}")
+                if _idx_pm is not None:
+                    _cod_pm = str(_inv_menor[_idx_pm].get("codigo") or "")
+                    _ok_pm, _nueva_pm, _aviso_pm = mover_inventario(
+                        _cod_pm, -int(cantidad_menor), "Venta menor",
+                        factura=num_menor)
+                    if _ok_pm and _nueva_pm is not None:
+                        _msg_menor += f" · stock de {_cod_pm}: {_nueva_pm}"
+                    if _aviso_pm:
+                        st.session_state.global_toast_icon = "⚠️"
+                        _msg_menor += f" · {_aviso_pm}"
+                st.session_state.global_toast = _msg_menor
                 st.session_state.trigger_clear_venta_menor = True
                 st.rerun()
 
@@ -3292,19 +3570,17 @@ elif modulo == "🛍️ Óptica y Facturación":
                             # la realidad física (la montura nunca salió de la
                             # tienda, pero el sistema la seguía contando como
                             # vendida).
-                            montura_venta = fac_a.get("montura_codigo")
-                            if montura_venta:
-                                try:
-                                    frame_data = supabase.table("inventario").select("cantidad").eq("codigo", montura_venta).execute().data
-                                    if frame_data:
-                                        supabase.table("inventario").update({"cantidad": frame_data[0]["cantidad"] + 1}).eq("codigo", montura_venta).execute()
-                                    case_data = supabase.table("inventario").select("cantidad").eq("codigo", "ESTUCHE-GENERICO").execute().data
-                                    if case_data:
-                                        supabase.table("inventario").update({"cantidad": case_data[0]["cantidad"] + 1}).eq("codigo", "ESTUCHE-GENERICO").execute()
-                                    st.session_state.global_toast = f"Factura ANULADA. Stock de la montura {montura_venta} restaurado."
-                                except Exception:
-                                    st.session_state.global_toast = "Factura ANULADA. No se pudo restaurar el stock automáticamente -- revísalo manualmente."
-                                    st.session_state.global_toast_icon = "⚠️"
+                            # Se devuelve lo que esta factura sacó de verdad,
+                            # leído del historial de movimientos. Antes se
+                            # devolvía siempre montura + estuche, aunque el
+                            # estuche nunca hubiera salido -- si el producto se
+                            # creó después de la venta, anular lo inventaba.
+                            _devueltos = _revertir_movimientos_de(
+                                fac_a["numero_factura"], fac_a.get("montura_codigo"))
+                            if _devueltos:
+                                st.session_state.global_toast = (
+                                    "Factura ANULADA. Stock devuelto: "
+                                    + ", ".join(_devueltos) + ".")
                             else:
                                 st.session_state.global_toast = "Factura ANULADA exitosamente."
                             st.session_state.global_toast_icon = "🚨"
@@ -4134,65 +4410,152 @@ elif modulo == "📊 Cuadre de Caja Físico":
 # ------------------------------------------
 elif modulo == "📦 Inventario":
     styled_header("Gestión de Bodega y Vitrinas", "📦")
-    tab_catalogo, tab_ingreso, tab_ajuste, tab_editar_prod = st.tabs(["📋 Catálogo y Stock", "➕ Registrar Producto", "🔄 Ajuste Rápido", "✏️ Editar Producto"])
-    
-    with tab_catalogo:
-        inventario = traer_todas_las_filas("inventario", orden_col="marca", orden_desc=False)
-        if inventario:
-            tabla_inv = []
-            inv_total = 0
-            potencial = 0
-            for p in inventario:
-                cant = int(p.get("cantidad", 0))
-                compra = int(p.get("precio_compra", 0))
-                venta = int(p.get("precio_venta", 0))
-                inv_total += (cant * compra)
-                potencial += (cant * venta)
-                fi_raw = p.get("fecha_ingreso", "")
-                fi_fmt = ""
-                if fi_raw:
-                    try: fi_fmt = datetime.strptime(str(fi_raw)[:10], "%Y-%m-%d").strftime("%d/%m/%Y")
-                    except: fi_fmt = str(fi_raw)[:10]
-                tabla_inv.append({"Código": str(p.get("codigo", "")), "Categoría": str(p.get("categoria", "")), "Marca": str(p.get("marca", "")).upper(), "Descripción": str(p.get("descripcion", "")).upper(), "Cant.": cant, "Costo": compra, "P. Venta": venta, "Ingreso": fi_fmt})
-            
-            df_inv = pd.DataFrame(tabla_inv)
-            
-            def color_stock(val):
-                return "color: #E61B23; font-weight: bold;" if val == 0 else ""
-                
-            st.dataframe(df_inv.style.format({"Costo": lambda x: f"${format_currency_co(x)}", "P. Venta": lambda x: f"${format_currency_co(x)}"}).map(color_stock, subset=['Cant.']), use_container_width=True)
-            st.download_button(label="📊 Exportar Inventario", data=convert_df_to_excel(df_inv, "Bodega"), file_name="Inventario.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-            
-            st.divider()
-            c1, c2, c3 = st.columns(3)
-            c1.info(f"**Stock Total:** {sum(i['Cant.'] for i in tabla_inv)} unds")
-            c2.warning(f"**Inversión:** ${format_currency_co(inv_total)}")
-            c3.success(f"**Ganancia Proyectada:** ${format_currency_co(potencial - inv_total)}")
-        else:
-            st.info("La bodega está vacía.")
 
+    _hay_estado_inv = columna_existe("inventario", "estado")
+    _hay_movimientos = tabla_existe("movimientos_inventario")
+
+    inventario = traer_todas_las_filas("inventario", orden_col="marca",
+                                       orden_desc=False)
+
+    def _esta_activo(p):
+        """Un producto descontinuado sigue existiendo, pero no cuenta."""
+        return str(p.get("estado") or "ACTIVO").upper() != "DESCONTINUADO"
+
+    _inv_activo = [p for p in inventario if _esta_activo(p)]
+
+    def _etiqueta_prod(p):
+        _d = str(p.get("descripcion") or "")
+        return (f"{p.get('codigo','')} · {str(p.get('marca') or '').upper()} · "
+                f"{_d[:38]}{'…' if len(_d) > 38 else ''} · "
+                f"stock {cantidad_inv(p.get('cantidad'))}"
+                + ("" if _esta_activo(p) else "  (descontinuado)"))
+
+    tab_catalogo, tab_ingreso, tab_ajuste, tab_editar_prod, tab_movs = st.tabs(
+        ["📋 Catálogo y Stock", "➕ Registrar Producto", "🔄 Ajuste Rápido",
+         "✏️ Editar Producto", "📜 Movimientos"])
+
+    # -----------------------------------------------------------------
+    # CATÁLOGO
+    # -----------------------------------------------------------------
+    with tab_catalogo:
+        if not inventario:
+            st.info("La bodega está vacía.")
+        else:
+            # Cada montura es un código único con cantidad 1: al venderse
+            # queda en cero y se quedaba en la tabla para siempre. Con el
+            # tiempo la mayoría del catálogo eran monturas que ya no
+            # existen, así que el filtro de "solo con stock" viene puesto.
+            fc1, fc2, fc3 = st.columns([2, 2, 3])
+            _cats = sorted({str(p.get("categoria") or "").strip()
+                            for p in inventario if p.get("categoria")})
+            _cat_f = fc1.selectbox("Categoría", ["Todas"] + _cats,
+                                   key="inv_filtro_categoria")
+            _marcas = sorted({str(p.get("marca") or "").strip().upper()
+                              for p in inventario if p.get("marca")})
+            _marca_f = fc2.selectbox("Marca", ["Todas"] + _marcas,
+                                     key="inv_filtro_marca")
+            with fc3:
+                _solo_stock = st.toggle("Solo con stock", value=True,
+                                        key="inv_filtro_solo_stock")
+                _ver_desc = st.toggle("Ver descontinuados", value=False,
+                                      key="inv_filtro_ver_desc")
+
+            _filtrado = [
+                p for p in inventario
+                if (_ver_desc or _esta_activo(p))
+                and (_cat_f == "Todas" or str(p.get("categoria") or "").strip() == _cat_f)
+                and (_marca_f == "Todas" or str(p.get("marca") or "").strip().upper() == _marca_f)
+                and (not _solo_stock or cantidad_inv(p.get("cantidad")) > 0)
+            ]
+
+            if not _filtrado:
+                st.info("Ningún producto coincide con esos filtros.")
+            else:
+                tabla_inv = []
+                inv_total = 0
+                potencial = 0
+                for p in _filtrado:
+                    cant = cantidad_inv(p.get("cantidad"))
+                    compra = cantidad_inv(p.get("precio_compra"))
+                    venta = cantidad_inv(p.get("precio_venta"))
+                    inv_total += cant * compra
+                    potencial += cant * venta
+                    fi_raw = p.get("fecha_ingreso", "")
+                    fi_fmt = ""
+                    if fi_raw:
+                        try:
+                            fi_fmt = datetime.strptime(str(fi_raw)[:10], "%Y-%m-%d").strftime("%d/%m/%Y")
+                        except Exception:
+                            fi_fmt = str(fi_raw)[:10]
+                    tabla_inv.append({
+                        "Código": str(p.get("codigo", "")),
+                        "Categoría": str(p.get("categoria", "")),
+                        "Marca": str(p.get("marca", "")).upper(),
+                        "Descripción": str(p.get("descripcion", "")).upper(),
+                        "Cant.": cant,
+                        "Costo": compra,
+                        "P. Venta": venta,
+                        "Ingreso": fi_fmt,
+                        "Estado": ("ACTIVO" if _esta_activo(p) else "DESCONTINUADO"),
+                    })
+
+                df_inv = pd.DataFrame(tabla_inv)
+                if not _ver_desc:
+                    df_inv = df_inv.drop(columns=["Estado"])
+
+                def color_stock(val):
+                    return "color: #E61B23; font-weight: bold;" if val == 0 else ""
+
+                st.dataframe(
+                    df_inv.style.format({
+                        "Costo": lambda x: f"${format_currency_co(x)}",
+                        "P. Venta": lambda x: f"${format_currency_co(x)}",
+                    }).map(color_stock, subset=["Cant."]),
+                    use_container_width=True, hide_index=True)
+                st.download_button(
+                    label="📊 Exportar lo que estás viendo",
+                    data=convert_df_to_excel(df_inv, "Bodega"),
+                    file_name="Inventario.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+                st.divider()
+                # Los totales responden al filtro: antes se calculaban sobre
+                # todo el inventario aunque estuvieras mirando una categoría,
+                # y no había forma de saber cuánto valía lo que veías.
+                c1, c2, c3 = st.columns(3)
+                c1.info(f"**Stock:** {sum(i['Cant.'] for i in tabla_inv)} unds")
+                c2.warning(f"**Inversión:** ${format_currency_co(inv_total)}")
+                c3.success(f"**Ganancia Proyectada:** ${format_currency_co(potencial - inv_total)}")
+                if len(_filtrado) != len(inventario):
+                    st.caption(f"Mostrando {len(_filtrado)} de {len(inventario)} "
+                               f"productos. Las cifras son de lo filtrado.")
+
+    # -----------------------------------------------------------------
+    # REGISTRAR PRODUCTO
+    # -----------------------------------------------------------------
     with tab_ingreso:
-        st.caption("💡 Sugerencia: Crea 'ESTUCHE-GENERICO' para que se descuente automáticamente al vender monturas.")
+        st.caption(f"💡 Sugerencia: Crea '{ESTUCHE_GENERICO}' para que se "
+                   f"descuente automáticamente al vender monturas.")
         with st.container(border=True):
-            inv_categoria = st.selectbox("Categoría", ["Montura", "Lente de Contacto", "Accesorio", "Estuche", "Líquido", "Otro"])
-            
+            inv_categoria = st.selectbox("Categoría", CATEGORIAS_INVENTARIO)
+
             if inv_categoria == "Montura":
                 col_m1, col_m2 = st.columns(2)
                 inv_marca = col_m1.text_input("Marca *", key="m_marca").upper()
                 inv_prov = col_m2.text_input("Proveedor", key="m_prov").upper()
-                
+
                 col_m3, col_m4 = st.columns(2)
                 inv_mat = col_m3.selectbox("Material", ["METALICA", "TITANIO", "ALUMINIO", "ACERO", "PLASTICO", "ACETATO", "TR 90"], key="m_mat")
                 inv_cant = col_m4.number_input("Cantidad a Ingresar", min_value=1, step=1, value=1, key="m_cant")
-                
+
                 c_pc, c_pv = st.columns(2)
                 val_compra = parse_money_co(c_pc.text_input("Precio Compra Unitario $", key="p_compra_m", on_change=on_p_compra_m_change))
                 val_venta = parse_money_co(c_pv.text_input("Precio Venta Unitario $", key="p_venta_m", on_change=on_p_venta_m_change))
-                
+
                 st.markdown("---")
                 st.markdown("**Detalle de Referencias y Colores**")
                 monturas_data = []
-                
+
                 if inv_cant == 1:
                     cm1, cm2 = st.columns(2)
                     m_ref = cm1.text_input("N° Referencia (Código) *", key="m_ref_unico").upper()
@@ -4206,7 +4569,7 @@ elif modulo == "📦 Inventario":
                         m_ref = cm1.text_input(f"Ref. Montura {i+1} *", value=f"{base_ref}-{i+1}" if base_ref else "", key=f"ref_{i}").upper()
                         m_color = cm2.text_input(f"Color Montura {i+1} *", key=f"col_{i}").upper()
                         monturas_data.append((m_ref, m_color))
-                
+
                 if st.button("💾 Guardar Montura(s)", type="primary", use_container_width=True):
                     codigos_lote = [r for r, c in monturas_data]
                     codigos_repetidos = {r for r in codigos_lote if codigos_lote.count(r) > 1}
@@ -4231,11 +4594,12 @@ elif modulo == "📦 Inventario":
                                 for r, c in monturas_data:
                                     desc_final = f"MONTURA {inv_mat} - COLOR {c}"
                                     supabase.table("inventario").insert({
-                                        "codigo": r, "categoria": "Montura", "marca": inv_marca, 
-                                        "descripcion": desc_final, "proveedor": inv_prov, 
-                                        "cantidad": 1, "precio_compra": val_compra, "precio_venta": val_venta, 
+                                        "codigo": r, "categoria": "Montura", "marca": inv_marca,
+                                        "descripcion": desc_final, "proveedor": inv_prov,
+                                        "cantidad": 1, "precio_compra": val_compra, "precio_venta": val_venta,
                                         "fecha_ingreso": now_co().isoformat()
                                     }).execute()
+                                    anotar_movimiento(r, 1, 1, "Ingreso de producto nuevo")
                                 st.session_state.global_toast = f"{inv_cant} montura(s) registrada(s) correctamente."
                                 st.session_state.ultima_cant_monturas = int(inv_cant)
                                 st.session_state.trigger_clear_montura = True
@@ -4250,14 +4614,14 @@ elif modulo == "📦 Inventario":
                 with col_i2:
                     inv_desc = st.text_input("Descripción *", key="inv_desc").upper()
                     inv_prov = st.text_input("Proveedor", key="inv_prov").upper()
-                    
+
                 c1, c2, c3 = st.columns(3)
                 inv_cant = c1.number_input("Cantidad Inicial", min_value=0, step=1, value=1)
                 val_compra = parse_money_co(c2.text_input("Precio Compra $", key="p_compra_input", on_change=on_p_compra_change))
                 val_venta = parse_money_co(c3.text_input("Precio Venta $", key="p_venta_input", on_change=on_p_venta_change))
-                    
+
                 if st.button("💾 Guardar Producto", type="primary", use_container_width=True):
-                    if not inv_codigo or not inv_marca or not inv_desc: 
+                    if not inv_codigo or not inv_marca or not inv_desc:
                         st.error("⚠️ Código, Marca y Descripción son obligatorios.")
                     else:
                         # Se verifica ANTES de insertar si el código ya existe,
@@ -4270,65 +4634,133 @@ elif modulo == "📦 Inventario":
                         else:
                             try:
                                 supabase.table("inventario").insert({
-                                    "codigo": inv_codigo, "categoria": inv_categoria, "marca": inv_marca, 
-                                    "descripcion": inv_desc, "proveedor": inv_prov, "cantidad": inv_cant, 
-                                    "precio_compra": val_compra, "precio_venta": val_venta, 
+                                    "codigo": inv_codigo, "categoria": inv_categoria, "marca": inv_marca,
+                                    "descripcion": inv_desc, "proveedor": inv_prov, "cantidad": int(inv_cant),
+                                    "precio_compra": val_compra, "precio_venta": val_venta,
                                     "fecha_ingreso": now_co().isoformat()
                                 }).execute()
+                                anotar_movimiento(inv_codigo, int(inv_cant), int(inv_cant),
+                                                  "Ingreso de producto nuevo")
                                 st.session_state.global_toast = f"Producto '{inv_codigo}' registrado."
                                 st.session_state.trigger_clear_producto = True
                                 st.rerun()
-                            except Exception as e: 
+                            except Exception as e:
                                 st.error(f"Error: {e}")
 
+    # -----------------------------------------------------------------
+    # AJUSTE RÁPIDO
+    # -----------------------------------------------------------------
     with tab_ajuste:
-        codigo_ajuste = st.text_input("Buscar por Código:", key="codigo_ajuste_input").upper()
-        if codigo_ajuste:
-            res_prod = supabase.table("inventario").select("*").eq("codigo", codigo_ajuste).execute()
-            if res_prod.data:
-                prod = res_prod.data[0]
-                stock = int(prod["cantidad"])
-                st.info(f"**{prod['marca']}** - {prod['descripcion']} | Stock: **{stock}**")
-                c1, c2, c3 = st.columns([1, 1, 2])
-                with c1: accion = st.radio("Acción:", ["Sumar (+)", "Restar (-)"], key="ajuste_accion")
-                with c2: cant_ajustar = st.number_input("Cantidad", min_value=1, step=1, value=1, key="ajuste_cantidad")
-                with c3:
-                    st.write(""); st.write("")
-                    if st.button("Actualizar Stock", type="primary", use_container_width=True):
-                        nuevo_stock = stock + cant_ajustar if accion == "Sumar (+)" else stock - cant_ajustar
-                        if nuevo_stock < 0: st.error("⚠️ Stock negativo.")
+        st.caption("Para cuadrar el stock con lo que hay de verdad en la "
+                   "vitrina. Las ventas ya descuentan solas: esto es para "
+                   "todo lo demás.")
+        if not _inv_activo:
+            st.info("No hay productos activos en el inventario.")
+        else:
+            # Antes había que saberse el código exacto de memoria: si no
+            # recordabas si era 123-1 o 123-01, tocaba ir al catálogo,
+            # buscarlo a ojo y volver.
+            _idx_aj = st.selectbox(
+                "¿Qué producto?", range(len(_inv_activo)), index=None,
+                format_func=lambda i: _etiqueta_prod(_inv_activo[i]),
+                key="ajuste_prod_sel",
+                placeholder="Escribe el código, la marca o la descripción")
+
+            if _idx_aj is not None:
+                prod = _inv_activo[_idx_aj]
+                codigo_ajuste = str(prod.get("codigo") or "")
+                stock = cantidad_inv(prod.get("cantidad"))
+                st.info(f"**{str(prod.get('marca') or '').upper()}** — "
+                        f"{prod.get('descripcion','')} | Stock: **{stock}**")
+
+                ca1, ca2 = st.columns(2)
+                accion = ca1.radio("Acción:", ["Sumar (+)", "Restar (-)"],
+                                   key="ajuste_accion", horizontal=True)
+                cant_ajustar = ca2.number_input("Cantidad", min_value=1, step=1,
+                                                value=1, key="ajuste_cantidad")
+                motivo_ajuste = st.selectbox(
+                    "¿Por qué cambia?", [MOTIVO_SIN_ELEGIR] + MOTIVOS_AJUSTE,
+                    key="ajuste_motivo",
+                    help="Un −3 puede ser una rotura, una pérdida, un conteo "
+                         "mal hecho o una venta sin registrar. Son cuatro "
+                         "problemas distintos, y sin el motivo no se "
+                         "distinguen dentro de un mes.")
+
+                _delta = int(cant_ajustar) if accion == "Sumar (+)" else -int(cant_ajustar)
+                _resultante = stock + _delta
+
+                # Un ajuste normal es de una o dos piezas. Diez ya es un
+                # recuento, y cien es casi siempre un cero de más.
+                _ok_grande = True
+                if cant_ajustar >= UMBRAL_AJUSTE_ALTO:
+                    st.warning(f"🔎 Vas a {'sumar' if _delta > 0 else 'restar'} "
+                               f"**{cant_ajustar} unidades**. Es un movimiento "
+                               f"grande: confirma que está bien.")
+                    _ok_grande = st.checkbox(
+                        f"Sí, son {cant_ajustar} unidades",
+                        key="confirmar_ajuste_alto")
+                else:
+                    st.caption(f"El stock quedará en **{max(_resultante, 0)}**.")
+
+                if st.button("Actualizar Stock", type="primary",
+                             use_container_width=True):
+                    if motivo_ajuste == MOTIVO_SIN_ELEGIR:
+                        st.warning("⚠️ Elige el motivo del ajuste.")
+                    elif not _ok_grande:
+                        st.error("Marca la casilla de confirmación para un "
+                                 "ajuste de este tamaño.")
+                    elif _resultante < 0:
+                        st.error(f"⚠️ No se puede restar {cant_ajustar}: solo "
+                                 f"hay {stock}.")
+                    else:
+                        _ok_mv, _nueva_mv, _aviso_mv = mover_inventario(
+                            codigo_ajuste, _delta, motivo_ajuste)
+                        if not _ok_mv:
+                            st.error(f"⚠️ {_aviso_mv}")
                         else:
-                            supabase.table("inventario").update({"cantidad": nuevo_stock, **sello_auditoria()}).eq("codigo", codigo_ajuste).execute()
-                            st.session_state.global_toast = f"Stock actualizado a {nuevo_stock}."
+                            st.session_state.global_toast = (
+                                f"Stock de {codigo_ajuste} actualizado a {_nueva_mv}.")
                             st.session_state.trigger_clear_ajuste = True
                             st.rerun()
 
+    # -----------------------------------------------------------------
+    # EDITAR PRODUCTO
+    # -----------------------------------------------------------------
     with tab_editar_prod:
-        st.markdown("#### ✏️ Editar Producto")
-        st.caption("Corrige marca, descripción, categoría, proveedor o precios de un producto ya "
-                   "registrado. Para cambiar solo la cantidad en stock, usa 'Ajuste Rápido'.")
-        codigo_editar_prod = st.text_input("Buscar por Código:", key="codigo_editar_prod_input").upper()
+        st.caption("Corrige marca, descripción, categoría, proveedor o precios "
+                   "de un producto ya registrado. Para cambiar solo la cantidad "
+                   "en stock, usa 'Ajuste Rápido'.")
+        if not inventario:
+            st.info("La bodega está vacía.")
+        else:
+            _idx_ed = st.selectbox(
+                "¿Qué producto?", range(len(inventario)), index=None,
+                format_func=lambda i: _etiqueta_prod(inventario[i]),
+                key="editar_prod_sel",
+                placeholder="Escribe el código, la marca o la descripción")
 
-        if codigo_editar_prod:
-            res_edit_prod = supabase.table("inventario").select("*").eq("codigo", codigo_editar_prod).execute().data
-            if not res_edit_prod:
-                st.error(f"No se encontró ningún producto con el código '{codigo_editar_prod}'.")
-            else:
-                prod_e = res_edit_prod[0]
-                st.info(f"✏️ Editando: **{prod_e.get('marca','')} — {prod_e.get('descripcion','')}**")
+            if _idx_ed is not None:
+                prod_e = inventario[_idx_ed]
+                codigo_editar_prod = str(prod_e.get("codigo") or "")
+                _activo_e = _esta_activo(prod_e)
+                if not _activo_e:
+                    st.warning("Este producto está **descontinuado**: no aparece "
+                               "en el catálogo ni en los ajustes. Puedes "
+                               "reactivarlo más abajo.")
 
-                with st.form("form_editar_producto"):
-                    CATEGORIAS_INV = ["Montura", "Lente de Contacto", "Accesorio", "Estuche", "Líquido", "Otro"]
+                with st.form(f"form_editar_producto_{codigo_editar_prod}"):
                     ep1, ep2 = st.columns(2)
                     ep_marca = ep1.text_input("Marca", value=(prod_e.get("marca") or "")).upper()
-                    ep_categoria = ep2.selectbox("Categoría", CATEGORIAS_INV,
-                                                  index=CATEGORIAS_INV.index(prod_e.get("categoria")) if prod_e.get("categoria") in CATEGORIAS_INV else 0)
+                    ep_categoria = ep2.selectbox(
+                        "Categoría", CATEGORIAS_INVENTARIO,
+                        index=CATEGORIAS_INVENTARIO.index(prod_e.get("categoria"))
+                        if prod_e.get("categoria") in CATEGORIAS_INVENTARIO else 0)
                     ep_desc = st.text_input("Descripción", value=(prod_e.get("descripcion") or "")).upper()
                     ep_prov = st.text_input("Proveedor", value=(prod_e.get("proveedor") or "")).upper()
 
                     ep3, ep4 = st.columns(2)
-                    ep_p_compra = ep3.number_input("Precio Compra ($)", min_value=0, step=1000, value=int(prod_e.get("precio_compra") or 0))
-                    ep_p_venta = ep4.number_input("Precio Venta ($)", min_value=0, step=1000, value=int(prod_e.get("precio_venta") or 0))
+                    ep_p_compra = ep3.number_input("Precio Compra ($)", min_value=0, step=1000, value=cantidad_inv(prod_e.get("precio_compra")))
+                    ep_p_venta = ep4.number_input("Precio Venta ($)", min_value=0, step=1000, value=cantidad_inv(prod_e.get("precio_venta")))
 
                     guardar_prod_edit = st.form_submit_button("💾 Guardar Cambios", type="primary", use_container_width=True)
 
@@ -4343,6 +4775,143 @@ elif modulo == "📦 Inventario":
                         }).eq("codigo", codigo_editar_prod).execute()
                         st.session_state.global_toast = f"Producto '{codigo_editar_prod}' actualizado."
                         st.rerun()
+
+                st.divider()
+                if not _hay_estado_inv:
+                    st.caption("ℹ️ Para poder descontinuar productos falta "
+                               "añadir la columna `estado` en Supabase "
+                               "(`migraciones/fase10_movimientos_inventario.sql`).")
+                elif not _activo_e:
+                    if st.button("♻️ Reactivar este producto",
+                                 key=f"react_prod_{codigo_editar_prod}",
+                                 use_container_width=True):
+                        supabase.table("inventario").update({
+                            "estado": "ACTIVO", **sello_auditoria(),
+                        }).eq("codigo", codigo_editar_prod).execute()
+                        st.session_state.global_toast = "Producto reactivado."
+                        st.rerun()
+                else:
+                    with st.expander("🚫 Descontinuar este producto"):
+                        st.caption("Para un producto creado por error o que ya "
+                                   "no se vende. No se borra: deja de aparecer "
+                                   "en el catálogo y en los ajustes, no cuenta "
+                                   "en los totales, y se puede reactivar. Su "
+                                   "historial de movimientos se conserva.")
+                        _ok_desc = st.checkbox(
+                            "Sí, este producto ya no va en el inventario",
+                            key=f"conf_desc_{codigo_editar_prod}")
+                        if st.button("Descontinuar",
+                                     key=f"btn_desc_{codigo_editar_prod}",
+                                     disabled=not _ok_desc):
+                            supabase.table("inventario").update({
+                                "estado": "DESCONTINUADO", **sello_auditoria(),
+                            }).eq("codigo", codigo_editar_prod).execute()
+                            st.session_state.global_toast = "Producto descontinuado."
+                            st.rerun()
+
+                if prod_e.get("modificado_por"):
+                    st.caption(f"✏️ Última corrección: {prod_e['modificado_por']} · "
+                               f"{hora_co(prod_e.get('modificado_fecha'), '%d/%m/%Y %H:%M')}")
+
+    # -----------------------------------------------------------------
+    # MOVIMIENTOS
+    # -----------------------------------------------------------------
+    with tab_movs:
+        if not _hay_movimientos:
+            st.warning("⚠️ Falta la tabla `movimientos_inventario` en Supabase. "
+                       "Corre `migraciones/fase10_movimientos_inventario.sql` "
+                       "y vuelve a entrar.")
+            st.caption("Sin ella el inventario guarda una cantidad, no una "
+                       "historia: si un producto dice 3 y compraste 10, no hay "
+                       "forma de saber a dónde fueron los otros siete. Todo lo "
+                       "demás funciona igual mientras tanto.")
+        else:
+            _movs = traer_todas_las_filas("movimientos_inventario",
+                                          orden_col="fecha", orden_desc=True)
+            if not _movs:
+                st.info("Todavía no hay movimientos registrados.")
+            else:
+                _idx_mv = st.selectbox(
+                    "Ver un producto en concreto", range(len(inventario)),
+                    index=None,
+                    format_func=lambda i: _etiqueta_prod(inventario[i]),
+                    key="movs_prod_sel",
+                    placeholder="Todos los productos")
+                _cod_mv = (str(inventario[_idx_mv].get("codigo") or "")
+                           if _idx_mv is not None else None)
+                _vista = ([m for m in _movs
+                           if str(m.get("codigo") or "").upper() == _cod_mv.upper()]
+                          if _cod_mv else _movs[:300])
+
+                if not _vista:
+                    st.info("Ese producto no tiene movimientos todavía.")
+                else:
+                    df_mv = pd.DataFrame([{
+                        "Fecha": hora_co(m.get("fecha"), "%d/%m/%Y %H:%M"),
+                        "Código": m.get("codigo"),
+                        "Entra / Sale": int(m.get("delta") or 0),
+                        "Queda en": cantidad_inv(m.get("cantidad_resultante")),
+                        "Motivo": m.get("motivo") or "—",
+                        "Factura": m.get("numero_factura") or "—",
+                        "Registró": m.get("registrado_por") or "—",
+                    } for m in _vista])
+
+                    def _color_delta(v):
+                        if v > 0:
+                            return "color: #2c7a5b; font-weight: 600;"
+                        if v < 0:
+                            return "color: #b0413c; font-weight: 600;"
+                        return ""
+
+                    st.dataframe(
+                        df_mv.style.format({"Entra / Sale": lambda x: f"{x:+d}"})
+                        .map(_color_delta, subset=["Entra / Sale"]),
+                        use_container_width=True, hide_index=True)
+                    if _cod_mv:
+                        st.caption(f"{len(_vista)} movimiento(s) de {_cod_mv}.")
+                    else:
+                        st.caption(f"Últimos {len(_vista)} movimientos de "
+                                   f"{len(_movs)} en total. Elige un producto "
+                                   f"arriba para ver su historia completa.")
+
+                st.divider()
+                # La cantidad del producto y la suma de sus movimientos tienen
+                # que coincidir. Si no, alguien escribió en la tabla sin pasar
+                # por la app, o un apunte se perdió: cualquiera de las dos es
+                # algo que conviene saber antes de fiarse de las cifras.
+                with st.expander("🔍 Comprobar que el stock cuadra con su historia"):
+                    _suma = {}
+                    for m in _movs:
+                        _k = str(m.get("codigo") or "").upper()
+                        _suma[_k] = _suma.get(_k, 0) + int(m.get("delta") or 0)
+                    _descuadres = []
+                    for p in inventario:
+                        _k = str(p.get("codigo") or "").upper()
+                        if _k not in _suma:
+                            continue
+                        _real = cantidad_inv(p.get("cantidad"))
+                        if _real != _suma[_k]:
+                            _descuadres.append({
+                                "Código": _k,
+                                "Dice el inventario": _real,
+                                "Suman los movimientos": _suma[_k],
+                                "Diferencia": _real - _suma[_k],
+                            })
+                    _sin_historia = [p for p in inventario
+                                     if str(p.get("codigo") or "").upper() not in _suma]
+                    if _descuadres:
+                        st.error(f"⚠️ {len(_descuadres)} producto(s) no cuadran.")
+                        st.dataframe(pd.DataFrame(_descuadres),
+                                     use_container_width=True, hide_index=True)
+                        st.caption("Un ajuste con motivo «Corrección de un error "
+                                   "de digitación» los deja iguales y explica "
+                                   "por qué.")
+                    else:
+                        st.success("✅ Todos los productos con historial cuadran.")
+                    if _sin_historia:
+                        st.caption(f"{len(_sin_historia)} producto(s) todavía sin "
+                                   f"ningún movimiento: su historia empieza en el "
+                                   f"próximo cambio.")
 
 # ------------------------------------------
 # MÓDULO 5: CONTROL DE TRABAJOS
