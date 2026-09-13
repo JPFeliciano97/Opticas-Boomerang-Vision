@@ -172,6 +172,40 @@ específicamente eso -- es una limitación externa conocida, verifica el resto d
 flujo (que el diálogo se abra/cierre en las condiciones correctas) y sigue
 adelante.
 
+### 8. El icono `?` de `help=` se alinea a la COLUMNA, no a la etiqueta
+
+`help=` no pone el `?` al lado del texto de la etiqueta: lo empuja al extremo
+derecho del contenedor donde vive el widget. Si el campo está dentro de una
+columna ancha, o si es el único campo de una fila a ancho completo, el icono se
+va a cientos de píxeles de su etiqueta y además estira la altura de esa fila,
+desalineando los campos vecinos.
+
+Esto ya se corrigió una vez en este proyecto y volvió a colarse. Medido en el
+navegador real, tres campos de Inventario tenían su `?` a **309 px, 309 px y
+1.024 px** de la etiqueta a la que pertenecía.
+
+**Comprobación obligatoria antes de dar por bueno cualquier formulario nuevo o
+retocado:** mide en el navegador la distancia horizontal entre cada icono `?` y
+el final del texto de su etiqueta. Si pasa de ~100 px, quita el `help=` y pon
+ese texto en un `st.caption()` justo debajo del campo.
+
+```python
+# Ejecutar contra la página ya renderizada (Playwright, page.evaluate)
+const filas = [...document.querySelectorAll('[data-testid="stTooltipIcon"]')].map(ic => {
+  const lbl = ic.closest('[data-testid="stWidgetLabel"], label')
+                ?.querySelector('p, div');
+  if (!lbl) return null;
+  const a = lbl.getBoundingClientRect(), b = ic.getBoundingClientRect();
+  return { etiqueta: lbl.innerText.trim().slice(0, 40), distancia: Math.round(b.left - a.right) };
+}).filter(Boolean);
+console.table(filas);   // cualquier distancia > 100 hay que corregirla
+```
+
+Regla práctica para no tener que medir: **`help=` solo es aceptable en campos
+estrechos** (columnas de un tercio o menos, donde el `?` cae físicamente cerca).
+Para todo lo demás, la ayuda va en un `st.caption()` -- se lee sin pasar el ratón
+por encima, que además es lo que hace falta en tablet.
+
 ## Convenciones de diseño ya establecidas en este proyecto
 
 - **Paleta**: negro / blanco / rojo (`#e57373` como acento). Reutiliza ese color
