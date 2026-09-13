@@ -1400,6 +1400,79 @@ MOTIVOS_AJUSTE = [
 ]
 MOTIVO_SIN_ELEGIR = "— Elige un motivo —"
 
+# Estaba escrito dentro del formulario de monturas. Sube aquí porque
+# ahora el material es una columna propia y lo usan tres sitios.
+MATERIALES_MONTURA = ["METALICA", "TITANIO", "ALUMINIO", "ACERO",
+                      "PLASTICO", "ACETATO", "TR 90"]
+
+# Margen = precio de venta dividido por el de compra. En el inventario
+# real va de x4,3 a x12 según la montura, así que estos topes solo
+# saltan ante algo claramente raro -- casi siempre un cero de más o de
+# menos al teclear.
+MARGEN_MINIMO_RARO = 1.3
+MARGEN_MAXIMO_RARO = 20.0
+
+
+def revisar_precios(compra, venta):
+    """
+    Mira si un par de precios tiene sentido. Devuelve (bloquea, aviso).
+
+    Bloquea solo lo imposible: comprar más caro de lo que se vende. En el
+    inventario había una montura a compra $250.000 y venta $130.000 --
+    sus dos hermanas del mismo modelo costaban $25.000 -- y cada venta
+    habría perdido $120.000 sin que nada lo dijera.
+
+    Lo demás avisa y deja pasar: un margen puede ser raro y aun así ser
+    verdad, y frenar a quien está registrando mercancía por una sospecha
+    haría que se registre menos, que es peor.
+    """
+    compra, venta = cantidad_inv(compra), cantidad_inv(venta)
+    if venta <= 0 or compra <= 0:
+        return False, None
+    if compra > venta:
+        # Los '$' van escapados: dos sin escapar en el mismo texto los
+        # toma Streamlit como delimitadores de fórmula LaTeX y se come lo
+        # que hay en medio. El aviso salía con el icono y nada más.
+        return True, (f"El precio de compra (\\${format_currency_co(compra)}) es "
+                      f"mayor que el de venta (\\${format_currency_co(venta)}). "
+                      f"Así se perdería dinero en cada venta: revisa si "
+                      f"sobra o falta un cero.")
+    margen = venta / compra
+    if margen < MARGEN_MINIMO_RARO:
+        return False, (f"El margen queda en x{margen:.1f}, muy justo. "
+                       f"Comprueba que los dos precios están bien.")
+    if margen > MARGEN_MAXIMO_RARO:
+        return False, (f"El margen sale x{margen:.0f}, mucho más de lo "
+                       f"normal. Suele ser un cero de menos en el precio "
+                       f"de compra.")
+    return False, None
+
+
+def opciones_de(filas, campo):
+    """
+    Los valores que ya existen en un campo, los más usados primero.
+
+    Para ofrecerlos en un desplegable en vez de dejar el campo en texto
+    libre. En 38 monturas había cuatro erratas -- MF APLQIUE, MF BLUE
+    LIGTH, MF COMPAMY -- que son la misma marca escrita dos veces y
+    parten sus cifras en dos.
+    """
+    cuenta = {}
+    for f in filas:
+        v = str(f.get(campo) or "").strip().upper()
+        if v:
+            cuenta[v] = cuenta.get(v, 0) + 1
+    return sorted(cuenta, key=lambda x: (-cuenta[x], x))
+
+
+def dias_en_vitrina(fecha_ingreso):
+    """Días desde que entró. None si la fecha no se puede leer."""
+    try:
+        d = datetime.strptime(str(fecha_ingreso)[:10], "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return None
+    return (now_co().date() - d).days
+
 # Por encima de estas unidades el ajuste pide confirmación. Un ajuste
 # normal es de una o dos piezas; diez ya es un recuento, y cien es casi
 # siempre un cero de más.
@@ -1689,6 +1762,14 @@ def mover_inventario(codigo, delta, motivo, factura=None, permitir_negativo=Fals
         return False, None, f"No se pudo actualizar el stock: {e}"
 
     anotar_movimiento(codigo, delta_real, nueva, motivo, factura)
+    # La caché de 60 s alimenta la alerta de la barra lateral y los
+    # desplegables de montura y de venta menor. Si no se vacía aquí, una
+    # montura recién vendida se seguiría ofreciendo durante un minuto --
+    # y se podría vender dos veces.
+    try:
+        query_cached.clear()
+    except Exception:
+        pass
     return True, nueva, aviso
 
 
@@ -2215,6 +2296,9 @@ if "trigger_clear_factura" in st.session_state and st.session_state.trigger_clea
     # la siguiente factura saldría sin agudeza y nadie lo notaría.
     for k in ["av_od_ext", "av_oi_ext"]: st.session_state[k] = AV_LEJOS_DEFECTO
     for k in ["av_cerca_od_ext", "av_cerca_oi_ext"]: st.session_state[k] = AV_CERCA_DEFECTO
+    # La montura elegida de la vitrina: sin esto, la siguiente factura
+    # arranca con la montura de la anterior ya seleccionada.
+    st.session_state.montura_vitrina_sel = None
     st.session_state.trigger_clear_factura = False
 
 # Los campos de AV usan 'key' y no 'value', así que Streamlit ignora
@@ -2273,8 +2357,11 @@ if "trigger_clear_laboratorio" in st.session_state and st.session_state.trigger_
     st.session_state.trigger_clear_laboratorio = False
 
 if "trigger_clear_montura" in st.session_state and st.session_state.trigger_clear_montura:
-    for k in ["m_marca", "m_prov", "p_compra_m", "p_venta_m", "m_ref_unico", "m_color_unico", "m_base_ref"]:
+    for k in ["p_compra_m", "p_venta_m", "m_modelo", "m_talla"]:
         if k in st.session_state: st.session_state[k] = ""
+    # Marca y proveedor son desplegables: se vacían con None, no con "".
+    for k in ["m_marca", "m_prov"]:
+        if k in st.session_state: st.session_state[k] = None
     for i in range(st.session_state.get("ultima_cant_monturas", 1)):
         for k in [f"ref_{i}", f"col_{i}"]:
             if k in st.session_state: st.session_state[k] = ""
@@ -2282,8 +2369,10 @@ if "trigger_clear_montura" in st.session_state and st.session_state.trigger_clea
     st.session_state.trigger_clear_montura = False
 
 if "trigger_clear_producto" in st.session_state and st.session_state.trigger_clear_producto:
-    for k in ["inv_codigo", "inv_marca", "inv_desc", "inv_prov", "p_compra_input", "p_venta_input"]:
+    for k in ["inv_codigo", "inv_desc", "p_compra_input", "p_venta_input"]:
         st.session_state[k] = ""
+    for k in ["inv_marca", "inv_prov"]:
+        st.session_state[k] = None
     st.session_state.trigger_clear_producto = False
 
 if "trigger_clear_paciente_rapido" in st.session_state and st.session_state.trigger_clear_paciente_rapido:
@@ -2414,7 +2503,7 @@ def hay_cambios_sin_guardar():
         return False
 
     if m == "📦 Inventario":
-        campos = ["inv_codigo", "inv_marca", "inv_desc", "m_marca", "m_ref_unico"]
+        campos = ["inv_codigo", "inv_marca", "inv_desc", "m_marca", "m_modelo", "ref_0"]
         if any(_txt(k) for k in campos):
             return True
         # Hay un producto cargado en Ajuste Rápido o Editar Producto.
@@ -3106,36 +3195,94 @@ elif modulo == "🛍️ Óptica y Facturación":
                 selected_frame_code = None
                 
                 if origen_montura == "Montura de Vitrina":
-                    col_vit1, col_vit2 = st.columns([1, 2])
-                    ref_busqueda = col_vit1.text_input("🔍 N° Referencia Montura:").upper()
-                    
-                    if ref_busqueda:
-                        res_montura = supabase.table("inventario").select("*").eq("codigo", ref_busqueda).ilike("categoria", "Montura").execute().data
-                        if res_montura:
-                            m_encontrada = res_montura[0]
-                            if cantidad_inv(m_encontrada.get("cantidad")) > 0:
-                                col_vit2.success(f"✅ {m_encontrada['marca']} | ${format_currency_co(m_encontrada['precio_venta'])}")
-                                selected_frame_code = m_encontrada['codigo']
-                                desc_sug = f"LENTES + MONTURA {m_encontrada['marca']} REF. {selected_frame_code}"
-                                # Al facturar se descuenta también un estuche.
-                                # Si no quedan, la venta sigue -- lo que no
-                                # puede es enterarse nadie: antes el stock se
-                                # iba a negativo en silencio.
-                                _est_row = [q for q in (query_cached("inventario") or [])
-                                            if str(q.get("codigo") or "").upper() == ESTUCHE_GENERICO]
-                                if _est_row and cantidad_inv(_est_row[0].get("cantidad")) <= 0:
-                                    col_vit2.warning("📦 No quedan estuches en el "
-                                                     "inventario. La venta sigue, "
-                                                     "pero hay que reponerlos.")
-                            else:
-                                col_vit2.error("⚠️ SIN STOCK (Cant: 0)")
-                                desc_sug = f"LENTES + MONTURA {m_encontrada['marca']} REF. {ref_busqueda} (SIN STOCK)"
-                        else:
-                            col_vit2.warning("⚠️ No encontrada en el inventario.")
-                            desc_sug = f"LENTES + MONTURA REF. {ref_busqueda}"
-                    else:
+                    # Antes había que teclear el código exacto. Con códigos
+                    # como 'DZM110-55-18-140', o 'PC-008' y 'PC008' -- que son
+                    # dos monturas distintas y solo cambian en el guion --
+                    # acertar es una lotería. Y cuando no se encuentra, lo
+                    # rápido es marcar "montura del paciente" y seguir: la
+                    # venta queda sin enlazar, el stock no baja y la rotación
+                    # nunca se puede medir. Por eso se elige de una lista.
+                    _monturas_vitrina = [
+                        q for q in (query_cached("inventario") or [])
+                        if str(q.get("categoria") or "").strip().lower() == "montura"
+                        and str(q.get("estado") or "ACTIVO").upper() != "DESCONTINUADO"
+                        and cantidad_inv(q.get("cantidad")) > 0]
+                    _monturas_vitrina.sort(key=lambda q: (str(q.get("marca") or ""),
+                                                          str(q.get("codigo") or "")))
+                    def _al_elegir_montura():
+                        """
+                        Escribe la descripción de la factura al elegir la
+                        montura.
+
+                        Hace falta un callback: el campo de descripción
+                        tiene `key`, y con `key` Streamlit ignora `value`
+                        a partir del primer render. Pasarle el texto
+                        calculado no servía de nada -- la descripción se
+                        quedaba en "LENTES + MONTURA REF. " aunque se
+                        eligiera una montura, y salía así en la factura
+                        impresa si nadie la reescribía a mano.
+
+                        Solo pisa lo que la propia app había puesto: si
+                        alguien escribió su propia descripción, se
+                        respeta.
+                        """
+                        _i = st.session_state.get("montura_vitrina_sel")
+                        if _i is None:
+                            return
+                        _lista = [q for q in (query_cached("inventario") or [])
+                                  if str(q.get("categoria") or "").strip().lower() == "montura"
+                                  and str(q.get("estado") or "ACTIVO").upper() != "DESCONTINUADO"
+                                  and cantidad_inv(q.get("cantidad")) > 0]
+                        _lista.sort(key=lambda q: (str(q.get("marca") or ""),
+                                                   str(q.get("codigo") or "")))
+                        if _i >= len(_lista):
+                            return
+                        _m = _lista[_i]
+                        _actual = str(st.session_state.get("desc_producto_input") or "").strip()
+                        if _actual and not _actual.startswith("LENTES + MONTURA"):
+                            return
+                        st.session_state.desc_producto_input = (
+                            f"LENTES + MONTURA {str(_m.get('marca') or '').upper()} "
+                            f"REF. {_m.get('codigo','')}")
+
+                    if not _monturas_vitrina:
+                        st.warning("⚠️ No hay monturas con stock en el inventario. "
+                                   "Regístralas en Inventario, o marca 'Montura del "
+                                   "paciente' si no sale de la vitrina.")
                         desc_sug = "LENTES + MONTURA REF. "
-                        
+                    else:
+                        _idx_mv = st.selectbox(
+                            "🔍 Montura de la vitrina",
+                            range(len(_monturas_vitrina)), index=None,
+                            format_func=lambda i: (
+                                f"{_monturas_vitrina[i].get('codigo','')} · "
+                                f"{str(_monturas_vitrina[i].get('marca') or '').upper()} · "
+                                f"{str(_monturas_vitrina[i].get('descripcion') or '')[:40]} · "
+                                f"${format_currency_co(_monturas_vitrina[i].get('precio_venta'))}"),
+                            key="montura_vitrina_sel", on_change=_al_elegir_montura,
+                            placeholder="Escribe el código, la marca o el color")
+                        if _idx_mv is None:
+                            desc_sug = "LENTES + MONTURA REF. "
+                        else:
+                            m_encontrada = _monturas_vitrina[_idx_mv]
+                            selected_frame_code = str(m_encontrada.get("codigo") or "")
+                            st.success(f"✅ {str(m_encontrada.get('marca') or '').upper()} · "
+                                       f"{m_encontrada.get('descripcion','')} · "
+                                       f"${format_currency_co(m_encontrada.get('precio_venta'))}")
+                            desc_sug = (f"LENTES + MONTURA "
+                                        f"{str(m_encontrada.get('marca') or '').upper()} "
+                                        f"REF. {selected_frame_code}")
+                            # Al facturar se descuenta también un estuche. Si no
+                            # quedan, la venta sigue -- lo que no puede es
+                            # enterarse nadie: antes el stock se iba a negativo
+                            # en silencio.
+                            _est_row = [q for q in (query_cached("inventario") or [])
+                                        if str(q.get("codigo") or "").upper() == ESTUCHE_GENERICO]
+                            if _est_row and cantidad_inv(_est_row[0].get("cantidad")) <= 0:
+                                st.warning("📦 No quedan estuches en el inventario. "
+                                           "La venta sigue, pero hay que reponerlos.")
+
+                
                 elif origen_montura == "No aplica":
                     desc_sug = "SERVICIO / OTRO (TRASPASO / SOLDADURA / PROVEEDOR)"
                 
@@ -4412,6 +4559,7 @@ elif modulo == "📦 Inventario":
     styled_header("Gestión de Bodega y Vitrinas", "📦")
 
     _hay_estado_inv = columna_existe("inventario", "estado")
+    _hay_ficha_montura = columna_existe("inventario", "modelo")
     _hay_movimientos = tabla_existe("movimientos_inventario")
 
     inventario = traer_todas_las_filas("inventario", orden_col="marca",
@@ -4459,6 +4607,14 @@ elif modulo == "📦 Inventario":
                                         key="inv_filtro_solo_stock")
                 _ver_desc = st.toggle("Ver descontinuados", value=False,
                                       key="inv_filtro_ver_desc")
+            # Una montura que lleva un año en la vitrina es plata quieta, y
+            # hasta ahora no había forma de verlo: la fecha de ingreso
+            # estaba en la tabla pero nadie contaba los días.
+            _TRAMOS = {"Todo": None, "Más de 3 meses": 90,
+                       "Más de 6 meses": 180, "Más de un año": 365}
+            _tramo = st.radio("Tiempo en vitrina", list(_TRAMOS), horizontal=True,
+                              key="inv_filtro_antiguedad")
+            _min_dias = _TRAMOS[_tramo]
 
             _filtrado = [
                 p for p in inventario
@@ -4466,6 +4622,8 @@ elif modulo == "📦 Inventario":
                 and (_cat_f == "Todas" or str(p.get("categoria") or "").strip() == _cat_f)
                 and (_marca_f == "Todas" or str(p.get("marca") or "").strip().upper() == _marca_f)
                 and (not _solo_stock or cantidad_inv(p.get("cantidad")) > 0)
+                and (_min_dias is None
+                     or (dias_en_vitrina(p.get("fecha_ingreso")) or 0) >= _min_dias)
             ]
 
             if not _filtrado:
@@ -4487,6 +4645,7 @@ elif modulo == "📦 Inventario":
                             fi_fmt = datetime.strptime(str(fi_raw)[:10], "%Y-%m-%d").strftime("%d/%m/%Y")
                         except Exception:
                             fi_fmt = str(fi_raw)[:10]
+                    _dias = dias_en_vitrina(p.get("fecha_ingreso"))
                     tabla_inv.append({
                         "Código": str(p.get("codigo", "")),
                         "Categoría": str(p.get("categoria", "")),
@@ -4496,6 +4655,7 @@ elif modulo == "📦 Inventario":
                         "Costo": compra,
                         "P. Venta": venta,
                         "Ingreso": fi_fmt,
+                        "Días": (_dias if _dias is not None else 0),
                         "Estado": ("ACTIVO" if _esta_activo(p) else "DESCONTINUADO"),
                     })
 
@@ -4506,11 +4666,21 @@ elif modulo == "📦 Inventario":
                 def color_stock(val):
                     return "color: #E61B23; font-weight: bold;" if val == 0 else ""
 
+                def color_dias(val):
+                    # Medio año quieto ya es mucho para una montura; un año
+                    # es plata que lleva doce meses sin trabajar.
+                    if val >= 365:
+                        return "color: #b0413c; font-weight: bold;"
+                    if val >= 180:
+                        return "color: #9a6a12; font-weight: 600;"
+                    return ""
+
                 st.dataframe(
                     df_inv.style.format({
                         "Costo": lambda x: f"${format_currency_co(x)}",
                         "P. Venta": lambda x: f"${format_currency_co(x)}",
-                    }).map(color_stock, subset=["Cant."]),
+                    }).map(color_stock, subset=["Cant."])
+                    .map(color_dias, subset=["Días"]),
                     use_container_width=True, hide_index=True)
                 st.download_button(
                     label="📊 Exportar lo que estás viendo",
@@ -4526,6 +4696,12 @@ elif modulo == "📦 Inventario":
                 c1.info(f"**Stock:** {sum(i['Cant.'] for i in tabla_inv)} unds")
                 c2.warning(f"**Inversión:** ${format_currency_co(inv_total)}")
                 c3.success(f"**Ganancia Proyectada:** ${format_currency_co(potencial - inv_total)}")
+                _quieta = sum(i["Costo"] * i["Cant."] for i in tabla_inv
+                              if i["Días"] >= 180 and i["Cant."] > 0)
+                if _quieta:
+                    st.caption(f"⏳ De esa inversión, "
+                               f"**${format_currency_co(_quieta)}** llevan más de "
+                               f"seis meses sin venderse.")
                 if len(_filtrado) != len(inventario):
                     st.caption(f"Mostrando {len(_filtrado)} de {len(inventario)} "
                                f"productos. Las cifras son de lo filtrado.")
@@ -4539,42 +4715,83 @@ elif modulo == "📦 Inventario":
         with st.container(border=True):
             inv_categoria = st.selectbox("Categoría", CATEGORIAS_INVENTARIO)
 
+            # Marca y proveedor dejan de ser texto libre. En 38 monturas
+            # había cuatro erratas -- MF APLQIUE, MF BLUE LIGTH, MF COMPAMY
+            # -- que son la misma marca escrita dos veces y le parten sus
+            # cifras. Elegir de la lista es lo que evita la quinta.
+            _marcas_inv = opciones_de(inventario, "marca")
+            _provs_inv = opciones_de(inventario, "proveedor")
+
             if inv_categoria == "Montura":
                 col_m1, col_m2 = st.columns(2)
-                inv_marca = col_m1.text_input("Marca *", key="m_marca").upper()
-                inv_prov = col_m2.text_input("Proveedor", key="m_prov").upper()
+                inv_marca = str(col_m1.selectbox(
+                    "Marca *", _marcas_inv, index=None, accept_new_options=True,
+                    key="m_marca", placeholder="Elige o escribe la marca") or "").strip().upper()
+                inv_prov = str(col_m2.selectbox(
+                    "Proveedor", _provs_inv, index=None, accept_new_options=True,
+                    key="m_prov", placeholder="Elige o escribe el proveedor") or "").strip().upper()
 
-                col_m3, col_m4 = st.columns(2)
-                inv_mat = col_m3.selectbox("Material", ["METALICA", "TITANIO", "ALUMINIO", "ACERO", "PLASTICO", "ACETATO", "TR 90"], key="m_mat")
-                inv_cant = col_m4.number_input("Cantidad a Ingresar", min_value=1, step=1, value=1, key="m_cant")
+                col_m3, col_m4, col_m5 = st.columns([2, 2, 2])
+                inv_modelo = str(col_m3.text_input(
+                    "Modelo *", key="m_modelo",
+                    help="La referencia del modelo, sin el color. Los colores "
+                         "van abajo, uno por montura.").strip().upper())
+                inv_mat = col_m4.selectbox("Material", MATERIALES_MONTURA, key="m_mat")
+                inv_talla = str(col_m5.text_input(
+                    "Talla", key="m_talla", placeholder="55-18-140",
+                    help="Calibre-puente-varilla. Opcional, pero es lo primero "
+                         "que se mira al reponer.").strip().upper())
 
-                c_pc, c_pv = st.columns(2)
+                col_m6, c_pc, c_pv = st.columns([1, 2, 2])
+                inv_cant = col_m6.number_input("Cantidad", min_value=1, step=1, value=1, key="m_cant")
                 val_compra = parse_money_co(c_pc.text_input("Precio Compra Unitario $", key="p_compra_m", on_change=on_p_compra_m_change))
                 val_venta = parse_money_co(c_pv.text_input("Precio Venta Unitario $", key="p_venta_m", on_change=on_p_venta_m_change))
+                _bloquea_m, _aviso_m = revisar_precios(val_compra, val_venta)
+                if _aviso_m:
+                    (st.error if _bloquea_m else st.warning)(f"💲 {_aviso_m}")
 
                 st.markdown("---")
-                st.markdown("**Detalle de Referencias y Colores**")
-                monturas_data = []
+                st.markdown("**Un código y un color por montura**")
+                st.caption("Al escribir el color se propone el código, "
+                           "siguiendo la forma que ya se venía usando: la "
+                           "primera del modelo lleva el código a secas y las "
+                           "demás llevan el color detrás (KNM28, KNM28 "
+                           "BLANCA, KNM28 LILA). Cámbialo si hace falta.")
 
-                if inv_cant == 1:
+                def _sugerir_codigo_montura(i):
+                    """
+                    Propone el código al escribir el color, y solo si el
+                    campo está vacío -- para no pisar lo que alguien haya
+                    escrito a mano al corregir una errata del color.
+
+                    No se puede hacer con el parámetro `value` del widget:
+                    teniendo `key`, Streamlit lo ignora a partir del primer
+                    render y la sugerencia nunca se actualizaría.
+                    """
+                    _mod = str(st.session_state.get("m_modelo") or "").strip().upper()
+                    _col = str(st.session_state.get(f"col_{i}") or "").strip().upper()
+                    if not _mod or str(st.session_state.get(f"ref_{i}") or "").strip():
+                        return
+                    st.session_state[f"ref_{i}"] = _mod if i == 0 else f"{_mod} {_col}".strip()
+
+                monturas_data = []
+                for i in range(int(inv_cant)):
                     cm1, cm2 = st.columns(2)
-                    m_ref = cm1.text_input("N° Referencia (Código) *", key="m_ref_unico").upper()
-                    m_color = cm2.text_input("Color *", key="m_color_unico").upper()
+                    m_color = str(cm2.text_input(
+                        f"Color {i+1} *", key=f"col_{i}",
+                        on_change=_sugerir_codigo_montura, args=(i,)).strip().upper())
+                    m_ref = str(cm1.text_input(
+                        f"Código {i+1} *", key=f"ref_{i}").strip().upper())
                     monturas_data.append((m_ref, m_color))
-                else:
-                    base_ref = st.text_input("Referencia Base (Para autocompletar)", help="Ej: Si digitas '123', se autocompletará 123-1, 123-2, etc.", key="m_base_ref").upper()
-                    st.caption("Modifica manualmente los colores y el número de referencia final si es necesario:")
-                    for i in range(int(inv_cant)):
-                        cm1, cm2 = st.columns(2)
-                        m_ref = cm1.text_input(f"Ref. Montura {i+1} *", value=f"{base_ref}-{i+1}" if base_ref else "", key=f"ref_{i}").upper()
-                        m_color = cm2.text_input(f"Color Montura {i+1} *", key=f"col_{i}").upper()
-                        monturas_data.append((m_ref, m_color))
 
                 if st.button("💾 Guardar Montura(s)", type="primary", use_container_width=True):
                     codigos_lote = [r for r, c in monturas_data]
                     codigos_repetidos = {r for r in codigos_lote if codigos_lote.count(r) > 1}
-                    if not inv_marca or any(not r or not c for r, c in monturas_data):
-                        st.error("⚠️ Marca, Referencia y Color son obligatorios para todas las monturas listadas.")
+                    if not inv_marca or not inv_modelo or any(not r or not c for r, c in monturas_data):
+                        st.error("⚠️ Marca, Modelo, Código y Color son obligatorios "
+                                 "para todas las monturas listadas.")
+                    elif _bloquea_m:
+                        st.error(f"⚠️ {_aviso_m}")
                     elif codigos_repetidos:
                         st.error(f"⚠️ Hay referencias repetidas en esta lista: {', '.join(codigos_repetidos)}. "
                                  f"Cada montura necesita un código único.")
@@ -4592,13 +4809,23 @@ elif modulo == "📦 Inventario":
                         else:
                             try:
                                 for r, c in monturas_data:
+                                    # La descripción se sigue componiendo igual
+                                    # para no romper lo que ya la lee, pero el
+                                    # material y el color viven ahora en su
+                                    # propia columna: dentro de una frase no se
+                                    # pueden contar ni comparar.
                                     desc_final = f"MONTURA {inv_mat} - COLOR {c}"
-                                    supabase.table("inventario").insert({
+                                    _fila_inv = {
                                         "codigo": r, "categoria": "Montura", "marca": inv_marca,
                                         "descripcion": desc_final, "proveedor": inv_prov,
                                         "cantidad": 1, "precio_compra": val_compra, "precio_venta": val_venta,
                                         "fecha_ingreso": now_co().isoformat()
-                                    }).execute()
+                                    }
+                                    if _hay_ficha_montura:
+                                        _fila_inv.update({"modelo": inv_modelo, "color": c,
+                                                          "material": inv_mat,
+                                                          "talla": inv_talla or None})
+                                    supabase.table("inventario").insert(_fila_inv).execute()
                                     anotar_movimiento(r, 1, 1, "Ingreso de producto nuevo")
                                 st.session_state.global_toast = f"{inv_cant} montura(s) registrada(s) correctamente."
                                 st.session_state.ultima_cant_monturas = int(inv_cant)
@@ -4609,20 +4836,33 @@ elif modulo == "📦 Inventario":
             else:
                 col_i1, col_i2 = st.columns(2)
                 with col_i1:
-                    inv_codigo = st.text_input("Código *", key="inv_codigo").upper()
-                    inv_marca = st.text_input("Marca *", key="inv_marca").upper()
+                    # .strip() en el código: sin él, "H1905 " con un espacio
+                    # al final pasa por un código distinto de "H1905", se
+                    # salta la comprobación de duplicados y en pantalla se
+                    # ve idéntico. Así entró el duplicado que había.
+                    inv_codigo = st.text_input("Código *", key="inv_codigo").strip().upper()
+                    inv_marca = str(st.selectbox(
+                        "Marca *", _marcas_inv, index=None, accept_new_options=True,
+                        key="inv_marca", placeholder="Elige o escribe la marca") or "").strip().upper()
                 with col_i2:
-                    inv_desc = st.text_input("Descripción *", key="inv_desc").upper()
-                    inv_prov = st.text_input("Proveedor", key="inv_prov").upper()
+                    inv_desc = st.text_input("Descripción *", key="inv_desc").strip().upper()
+                    inv_prov = str(st.selectbox(
+                        "Proveedor", _provs_inv, index=None, accept_new_options=True,
+                        key="inv_prov", placeholder="Elige o escribe el proveedor") or "").strip().upper()
 
                 c1, c2, c3 = st.columns(3)
                 inv_cant = c1.number_input("Cantidad Inicial", min_value=0, step=1, value=1)
                 val_compra = parse_money_co(c2.text_input("Precio Compra $", key="p_compra_input", on_change=on_p_compra_change))
                 val_venta = parse_money_co(c3.text_input("Precio Venta $", key="p_venta_input", on_change=on_p_venta_change))
+                _bloquea_g, _aviso_g = revisar_precios(val_compra, val_venta)
+                if _aviso_g:
+                    (st.error if _bloquea_g else st.warning)(f"💲 {_aviso_g}")
 
                 if st.button("💾 Guardar Producto", type="primary", use_container_width=True):
                     if not inv_codigo or not inv_marca or not inv_desc:
                         st.error("⚠️ Código, Marca y Descripción son obligatorios.")
+                    elif _bloquea_g:
+                        st.error(f"⚠️ {_aviso_g}")
                     else:
                         # Se verifica ANTES de insertar si el código ya existe,
                         # para dar un mensaje claro en vez del error técnico de
@@ -4748,15 +4988,40 @@ elif modulo == "📦 Inventario":
                                "en el catálogo ni en los ajustes. Puedes "
                                "reactivarlo más abajo.")
 
+                _es_montura_e = str(prod_e.get("categoria") or "").strip().lower() == "montura"
+
+                def _indice(lista, valor):
+                    v = str(valor or "").strip().upper()
+                    return lista.index(v) if v in lista else None
+
                 with st.form(f"form_editar_producto_{codigo_editar_prod}"):
                     ep1, ep2 = st.columns(2)
-                    ep_marca = ep1.text_input("Marca", value=(prod_e.get("marca") or "")).upper()
+                    ep_marca = str(ep1.selectbox(
+                        "Marca", _marcas_inv, index=_indice(_marcas_inv, prod_e.get("marca")),
+                        accept_new_options=True,
+                        placeholder="Elige o escribe la marca") or "").strip().upper()
                     ep_categoria = ep2.selectbox(
                         "Categoría", CATEGORIAS_INVENTARIO,
                         index=CATEGORIAS_INVENTARIO.index(prod_e.get("categoria"))
                         if prod_e.get("categoria") in CATEGORIAS_INVENTARIO else 0)
-                    ep_desc = st.text_input("Descripción", value=(prod_e.get("descripcion") or "")).upper()
-                    ep_prov = st.text_input("Proveedor", value=(prod_e.get("proveedor") or "")).upper()
+                    ep_desc = st.text_input("Descripción", value=(prod_e.get("descripcion") or "")).strip().upper()
+                    ep_prov = str(st.selectbox(
+                        "Proveedor", _provs_inv, index=_indice(_provs_inv, prod_e.get("proveedor")),
+                        accept_new_options=True,
+                        placeholder="Elige o escribe el proveedor") or "").strip().upper()
+
+                    # La ficha de la montura: modelo, color, material y talla
+                    # dejaron de vivir dentro del código y de la descripción.
+                    ep_modelo = ep_color = ep_material = ep_talla = None
+                    if _es_montura_e and _hay_ficha_montura:
+                        em1, em2, em3, em4 = st.columns(4)
+                        ep_modelo = em1.text_input("Modelo", value=(prod_e.get("modelo") or "")).strip().upper()
+                        ep_color = em2.text_input("Color", value=(prod_e.get("color") or "")).strip().upper()
+                        ep_material = em3.selectbox(
+                            "Material", MATERIALES_MONTURA,
+                            index=_indice(MATERIALES_MONTURA, prod_e.get("material")) or 0)
+                        ep_talla = em4.text_input("Talla", value=(prod_e.get("talla") or ""),
+                                                  placeholder="55-18-140").strip().upper()
 
                     ep3, ep4 = st.columns(2)
                     ep_p_compra = ep3.number_input("Precio Compra ($)", min_value=0, step=1000, value=cantidad_inv(prod_e.get("precio_compra")))
@@ -4765,14 +5030,25 @@ elif modulo == "📦 Inventario":
                     guardar_prod_edit = st.form_submit_button("💾 Guardar Cambios", type="primary", use_container_width=True)
 
                 if guardar_prod_edit:
+                    _bloquea_e, _aviso_e = revisar_precios(ep_p_compra, ep_p_venta)
                     if not ep_marca or not ep_desc:
                         st.error("⚠️ Marca y Descripción son obligatorios.")
+                    elif _bloquea_e:
+                        st.error(f"⚠️ {_aviso_e}")
                     else:
-                        supabase.table("inventario").update({
+                        if _aviso_e:
+                            st.warning(f"💲 {_aviso_e}")
+                        _cambios_prod = {
                             "marca": ep_marca, "categoria": ep_categoria, "descripcion": ep_desc,
-                            "proveedor": ep_prov, "precio_compra": int(ep_p_compra), "precio_venta": int(ep_p_venta),
-                            **sello_auditoria(),
-                        }).eq("codigo", codigo_editar_prod).execute()
+                            "proveedor": ep_prov, "precio_compra": int(ep_p_compra),
+                            "precio_venta": int(ep_p_venta), **sello_auditoria(),
+                        }
+                        if _es_montura_e and _hay_ficha_montura:
+                            _cambios_prod.update({
+                                "modelo": ep_modelo or None, "color": ep_color or None,
+                                "material": ep_material, "talla": ep_talla or None})
+                        supabase.table("inventario").update(
+                            _cambios_prod).eq("codigo", codigo_editar_prod).execute()
                         st.session_state.global_toast = f"Producto '{codigo_editar_prod}' actualizado."
                         st.rerun()
 
