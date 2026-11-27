@@ -12,7 +12,7 @@ import pandas as pd
 import altair as alt
 from dotenv import load_dotenv
 from fpdf import FPDF
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, time
 import bcrypt
 import hmac
 import hashlib
@@ -1126,10 +1126,11 @@ def mostrar_buscador_historial(key_prefix):
     if pac_hist:
         p = pac_hist[0]
         with st.container(border=True):
-            c1, c2, c3 = st.columns(3)
+            c1, c2, c3, c4 = st.columns([3, 2, 2, 2])
             c1.markdown(f"**👤 {str(p.get('nombre_completo','')).upper()}**")
-            c2.markdown(f"**📱** {p.get('celular','N/A')}")
-            c3.markdown(f"**🎂** {p.get('fecha_nacimiento','N/A')}")
+            c2.markdown(f"**🪪** `{p.get('documento','N/A')}`")
+            c3.markdown(f"**📱** {p.get('celular','N/A')}")
+            c4.markdown(f"**🎂** {p.get('fecha_nacimiento','N/A')}")
     else:
         aviso = "no está registrado como paciente activo" if not doc_sel else \
                 "este documento no está registrado como paciente activo"
@@ -1139,6 +1140,39 @@ def mostrar_buscador_historial(key_prefix):
     # --- Historias clínicas (actuales y legado, ya unificadas) ---
     if hist_data:
         st.markdown(f"##### 📋 {len(hist_data)} historia(s) clínica(s)")
+
+        # Todas las formulas juntas y por fecha, para ver de un vistazo como
+        # ha cambiado la vista del paciente. Antes habia que ir abriendo
+        # consulta por consulta y compararlas de memoria.
+        _filas_rx = []
+        for h in hist_data:
+            if not (h.get("rx_final_od") or h.get("rx_final_oi")):
+                continue
+            _f = (h.get("fecha") or "")[:10]
+            try:
+                _f = datetime.strptime(_f, "%Y-%m-%d").strftime("%d/%m/%Y")
+            except ValueError:
+                pass
+            _filas_rx.append({
+                "Fecha": _f,
+                "Rx OD": format_rx_ui(h.get("rx_final_od") or ""),
+                "Rx OI": format_rx_ui(h.get("rx_final_oi") or ""),
+                "Adición": h.get("adicion") or "—",
+                "D.P.": h.get("dp") or "—",
+                "Origen": "Migrada" if h.get("origen") == "LEGADO" else "Del sistema",
+            })
+
+        if len(_filas_rx) > 1:
+            _df_rx = pd.DataFrame(_filas_rx)
+            # En Consultorio se mira siempre, asi que va abierto; en
+            # Facturacion estorba mas de lo que ayuda y va plegado.
+            if key_prefix.startswith("hist_consultorio"):
+                st.caption("**Evolución de la fórmula** — de la más reciente a la más antigua.")
+                st.dataframe(_df_rx, use_container_width=True, hide_index=True)
+            else:
+                with st.expander(f"📈 Evolución de la fórmula ({len(_filas_rx)} registros)"):
+                    st.dataframe(_df_rx, use_container_width=True, hide_index=True)
+
         for h in hist_data:
             fecha_fmt = (h.get("fecha") or "")[:10]
             try:
@@ -1162,6 +1196,23 @@ def mostrar_buscador_historial(key_prefix):
                     st.markdown(f"**Rx OD:** `{rx_od}`  |  **Rx OI:** `{rx_oi}`" + (f"  |  **D.P.:** `{dp}`" if dp else "") + (f"  |  **Adición:** `{add}`" if add else ""))
                 if obs:
                     st.caption(f"📝 {obs}")
+                # Lentes de contacto: solo aparece en las consultas que lo
+                # tengan, que son pocas.
+                if h.get("lc_marca") or h.get("lc_esfera_od") or h.get("lc_esfera_oi"):
+                    def _ojo_lc(esf, cil, eje):
+                        if esf in (None, "") and cil in (None, ""):
+                            return "—"
+                        _t = f"{float(esf or 0):+.2f}"
+                        if cil:
+                            _t += f" {float(cil):.2f} x {int(eje or 0)}°"
+                        else:
+                            _t += " esférico"
+                        return _t
+                    st.caption(
+                        f"👁️ **Lentes de contacto** — "
+                        f"OD `{_ojo_lc(h.get('lc_esfera_od'), h.get('lc_cilindro_od'), h.get('lc_eje_od'))}` · "
+                        f"OI `{_ojo_lc(h.get('lc_esfera_oi'), h.get('lc_cilindro_oi'), h.get('lc_eje_oi'))}`"
+                        + (f" · {h.get('lc_marca')}" if h.get("lc_marca") else ""))
 
     # --- Ventas / trabajos (actuales y legado, ya unificadas) ---
     if ventas_data:
@@ -1215,6 +1266,7 @@ COLOR_URGENTE = "#E61B23"  # rojo "pendiente / urgente"
 # dejar de ser laboratorio.
 CATEGORIAS_GASTO = [
     "LABORATORIO Y PROVEEDORES",
+    "BISEL",
     "NOMINA",
     "ARRIENDO Y ADMINISTRACION",
     "SERVICIOS PUBLICOS",
@@ -1341,6 +1393,7 @@ CONCEPTOS_FRECUENTES = [
     ("ALMUERZOS",              "ALIMENTACION"),
     ("PARQUEADERO",            "TRANSPORTE"),
     ("BUSES Y TRANSMILENIO",   "TRANSPORTE"),
+    ("BISEL",                  "BISEL"),
 ]
 CAT_POR_CONCEPTO = dict(CONCEPTOS_FRECUENTES)
 
@@ -1489,6 +1542,111 @@ def dias_en_vitrina(fecha_ingreso):
 # normal es de una o dos piezas; diez ya es un recuento, y cien es casi
 # siempre un cero de más.
 UMBRAL_AJUSTE_ALTO = 10
+
+
+# =====================================================================
+# LA FECHA DE ENTREGA
+# =====================================================================
+# Venia siendo texto libre -- "3 dias", "manana", "15-ago" -- asi que no
+# se podia ordenar ni saber que estaba atrasado. Las nuevas se guardan en
+# un formato fijo, 'YYYY-MM-DD HH:MM', y las viejas se siguen mostrando
+# tal como se escribieron: no se puede convertir "3 dias" en una fecha
+# sin saber desde cuando se contaban.
+ENTREGA_PENDIENTE = "PENDIENTE"
+
+# Los cilindros de lente de contacto no son continuos como los de unas
+# gafas: se fabrican en estos pasos. Siempre negativos, y sin cilindro
+# significa que la lente es esferica.
+CILINDROS_LC = [0.0, -0.75, -1.25, -1.75, -2.25, -2.75]
+
+
+def gastos_vigentes(filas):
+    """
+    Los gastos que de verdad cuentan: fuera los anulados.
+
+    Un gasto anulado se queda en la base -- para saber que existio y quien
+    lo deshizo -- pero no es dinero que salio. Se filtra aqui y no en cada
+    suma: olvidarlo en una sola daria cifras que no cuadran entre si.
+    """
+    return [g for g in filas
+            if str(g.get("estado") or "ACTIVO").upper() != "ANULADO"]
+
+# Las dos horas a las que se entrega casi siempre.
+HORAS_ENTREGA = ["10:00", "17:30"]
+
+# Dias habiles que se prometen segun el trabajo. Un terminado sale en
+# tres; un progresivo o un tallado necesita cinco.
+DIAS_ENTREGA_NORMAL = 3
+DIAS_ENTREGA_TALLADO = 5
+FORMATOS_TALLADOS = ("Adición (Bifocal/Progresivo)", "Dos Pares")
+
+
+def sumar_dias_habiles(desde, dias):
+    """
+    Suma dias habiles contando de lunes a sabado -- la optica abre el
+    sabado, asi que descontarlo prometeria entregas mas tarde de lo real.
+    """
+    d = desde
+    while dias > 0:
+        d += timedelta(days=1)
+        if d.weekday() != 6:          # 6 = domingo
+            dias -= 1
+    return d
+
+
+def entrega_a_fecha(valor):
+    """
+    La fecha de entrega como fecha de verdad, o None si no se puede leer
+    (las de texto libre de antes, y las que estan en PENDIENTE).
+    """
+    t = str(valor or "").strip()
+    if not t or t.upper() == ENTREGA_PENDIENTE:
+        return None
+    try:
+        return datetime.strptime(t[:16], "%Y-%m-%d %H:%M")
+    except ValueError:
+        try:
+            return datetime.strptime(t[:10], "%Y-%m-%d")
+        except ValueError:
+            return None
+
+
+def formatear_entrega(valor):
+    """Como se le ensena al cliente. Lo viejo pasa tal cual."""
+    t = str(valor or "").strip()
+    if not t:
+        return ""
+    if t.upper() == ENTREGA_PENDIENTE:
+        return ENTREGA_PENDIENTE
+    d = entrega_a_fecha(t)
+    if not d:
+        return t
+    am_pm = "a. m." if d.hour < 12 else "p. m."
+    h12 = d.hour % 12 or 12
+    return f"{d.strftime('%d/%m/%Y')} {h12}:{d.strftime('%M')} {am_pm}"
+
+
+def estado_entrega(valor, ahora=None):
+    """
+    En que punto esta la entrega: ('atrasado'|'hoy'|'manana'|'proximo'|
+    'pendiente'|'sin_fecha', texto para mostrar). Solo lo sabe de las
+    fechas nuevas; de "3 dias" no se puede deducir nada.
+    """
+    t = str(valor or "").strip()
+    if t.upper() == ENTREGA_PENDIENTE:
+        return "pendiente", "Sin fecha acordada"
+    d = entrega_a_fecha(t)
+    if not d:
+        return "sin_fecha", ""
+    hoy = (ahora or now_co()).replace(tzinfo=None).date()
+    dias = (d.date() - hoy).days
+    if dias < 0:
+        return "atrasado", f"Atrasado {abs(dias)} día(s)"
+    if dias == 0:
+        return "hoy", "Se entrega hoy"
+    if dias == 1:
+        return "manana", "Se entrega mañana"
+    return "proximo", f"En {dias} día(s)"
 
 
 def cantidad_inv(valor):
@@ -1970,7 +2128,7 @@ def dibujar_media_carta(pdf, paciente, historia, venta, tipo_documento, logo_pat
     pdf.cell(15, 6, "", border=1); pdf.cell(110, 6, "", border=1); pdf.cell(15, 6, "", border=1); pdf.cell(27, 6, "", border=1); pdf.cell(28, 6, "", border=1, ln=1)
 
     pdf.set_font("helvetica", "B", 8.5); pdf.set_xy(10, 81)
-    pdf.cell(110, 5, f"ENTREGA: {venta['fecha_entrega']}", border=1, ln=1)
+    pdf.cell(110, 5, f"ENTREGA: {formatear_entrega(venta.get('fecha_entrega'))}", border=1, ln=1)
     
     pdf.set_font("helvetica", "", 8); pdf.set_xy(10, 86)
     pdf.cell(70, 5, f"RX FINAL: {paciente['nombre_completo']}", border="L,T,B")
@@ -2005,7 +2163,9 @@ def dibujar_media_carta(pdf, paciente, historia, venta, tipo_documento, logo_pat
         pdf.cell(35, 5, f"$ {format_currency_co(valor)}", border=1, ln=1, align="R")
 
     pdf.set_font("helvetica", "", 7.5); pdf.set_xy(120, 106)
-    obs_texto = f"OBS: {historia.get('observaciones', '') or ''}"
+    # De la venta, no de la historia clinica: son dos cosas distintas y el
+    # diagnostico del paciente no tiene por que ir en un documento de cobro.
+    obs_texto = f"OBS: {venta.get('observaciones', '') or ''}"
     pdf.cell(85, 5, (obs_texto[:95] + '...') if len(obs_texto) > 95 else obs_texto, border=1)
 
     pdf.set_font("helvetica", "B", 8); pdf.set_xy(10, 112)
@@ -2035,10 +2195,15 @@ def dibujar_orden_laboratorio(pdf, paciente, historia, venta, tipo_orden="", log
     pdf.cell(15, 6, "FECHA", border="T,B")
     pdf.set_font("helvetica", "", 9); pdf.cell(55, 6, (fecha_impresion or now_co()).strftime("%d/%m/%Y %H:%M"), border="T,B", ln=1)
     
-    pdf.set_xy(10, 38); pdf.set_font("helvetica", "", 8.5); pdf.cell(20, 6, "NOMBRE:  ", border="B")
-    pdf.set_font("helvetica", "B", 9); pdf.cell(100, 6, venta['titular_nombre'].upper(), border="B")
-    pdf.set_font("helvetica", "", 8.5); pdf.cell(15, 6, "TEL:      ", border="B")
-    pdf.set_font("helvetica", "", 9); pdf.cell(60, 6, str(venta['titular_tel']), border="B", ln=1)
+    # El documento faltaba por completo en esta orden: con dos trabajos del
+    # mismo nombre no habia forma de distinguirlos. Se reparte el ancho de
+    # la fila (195 mm) para que quepan los tres datos.
+    pdf.set_xy(10, 38); pdf.set_font("helvetica", "", 8.5); pdf.cell(18, 6, "NOMBRE:", border="B")
+    pdf.set_font("helvetica", "B", 9); pdf.cell(72, 6, venta['titular_nombre'].upper(), border="B")
+    pdf.set_font("helvetica", "", 8.5); pdf.cell(13, 6, "D.I:", border="B")
+    pdf.set_font("helvetica", "", 9); pdf.cell(40, 6, str(venta.get('titular_doc') or ''), border="B")
+    pdf.set_font("helvetica", "", 8.5); pdf.cell(12, 6, "TEL:", border="B")
+    pdf.set_font("helvetica", "", 9); pdf.cell(40, 6, str(venta['titular_tel']), border="B", ln=1)
     
     pdf.set_xy(10, 46); pdf.set_font("helvetica", "B", 8); pdf.cell(195, 5, "DETALLE", border="B", ln=1, align="C")
     
@@ -2071,7 +2236,8 @@ def dibujar_orden_laboratorio(pdf, paciente, historia, venta, tipo_orden="", log
     dp_texto_ol = dp_calculada_ol if dp_calculada_ol else (historia.get('dp') or '')
     pdf.cell(75, 6, f"DP: {dp_texto_ol}", border=1); pdf.cell(35, 6, f"ALTURA: {alt_val}", border=1, ln=1, align="C")
     
-    pdf.set_xy(10, 87); pdf.set_font("helvetica", "B", 18); pdf.multi_cell(110, 8, f"{venta['fecha_entrega'].upper()}", border=0)
+    pdf.set_xy(10, 87); pdf.set_font("helvetica", "B", 18)
+    pdf.multi_cell(110, 8, formatear_entrega(venta.get('fecha_entrega')).upper(), border=0)
     
     totales_orden = [("TOTAL", venta['total']), ("ABONO", venta['abono']), ("SALDO", venta['saldo'])]
     for i, (concepto, valor) in enumerate(totales_orden):
@@ -2817,6 +2983,45 @@ if modulo == "👨‍⚕️ Consultorio":
 
     with tab_cierre:
         obs = st.text_area("Observaciones Clínicas", height=100, key="obs_input")
+
+        # Lentes de contacto. Va plegado porque se usa en pocos pacientes,
+        # pero con el titulo a la vista para que se sepa que esta. Es solo
+        # para consulta interna: no sale impreso en ningun documento.
+        _hay_lc = columna_existe("historias_clinicas", "lc_marca")
+        lc = {}
+        if _hay_lc:
+            with st.expander("👁️ Rx de lentes de contacto (opcional)"):
+                st.caption("Solo para consultarlo después. No se imprime en la "
+                           "receta ni en la factura.")
+                _marcas_lc = opciones_de(
+                    supabase.table("historias_clinicas").select("lc_marca")
+                    .neq("lc_marca", "").execute().data or [], "lc_marca")
+
+                def _fmt_cil_lc(v):
+                    return "Esférico (sin cilindro)" if not v else f"{v:.2f}"
+
+                lc1, lc2, lc3 = st.columns(3)
+                lc["lc_esfera_od"] = lc1.number_input(
+                    "Esfera OD", step=0.25, format="%.2f", key="lc_esf_od")
+                lc["lc_cilindro_od"] = lc2.selectbox(
+                    "Cilindro OD", CILINDROS_LC, format_func=_fmt_cil_lc, key="lc_cil_od")
+                lc["lc_eje_od"] = lc3.number_input(
+                    "Eje OD", min_value=0, max_value=180, step=10, key="lc_eje_od")
+
+                lc4, lc5, lc6 = st.columns(3)
+                lc["lc_esfera_oi"] = lc4.number_input(
+                    "Esfera OI", step=0.25, format="%.2f", key="lc_esf_oi")
+                lc["lc_cilindro_oi"] = lc5.selectbox(
+                    "Cilindro OI", CILINDROS_LC, format_func=_fmt_cil_lc, key="lc_cil_oi")
+                lc["lc_eje_oi"] = lc6.number_input(
+                    "Eje OI", min_value=0, max_value=180, step=10, key="lc_eje_oi")
+
+                lc["lc_marca"] = str(st.selectbox(
+                    "Marca", _marcas_lc, index=None, accept_new_options=True,
+                    key="lc_marca_sel",
+                    placeholder="Elige o escribe la marca") or "").strip().upper()
+                st.caption("El eje solo cuenta si hay cilindro. Sin cilindro, la "
+                           "lente es esférica.")
         
         st.markdown("<br>", unsafe_allow_html=True)
         habeas_data_autorizado = st.toggle("✅ El paciente autoriza el tratamiento de sus datos personales (Habeas Data)", key="habeas_check")
@@ -2857,7 +3062,15 @@ if modulo == "👨‍⚕️ Consultorio":
                 try: supabase.table("pacientes").upsert({"documento": doc_up, "nombre_completo": nom_up, "celular": cel_up, "ocupacion": str(ocupacion).upper(), "direccion": str(direccion).upper(), "edad": str(edad).upper(), "fecha_nacimiento": fecha_nacimiento.strftime("%Y-%m-%d"), "habeas_data": True, "habeas_data_fecha": fecha_habeas_final}).execute()
                 except Exception: supabase.table("pacientes").upsert({"documento": doc_up, "nombre_completo": nom_up, "celular": cel_up, "ocupacion": str(ocupacion).upper(), "direccion": str(direccion).upper(), "fecha_nacimiento": fecha_nacimiento.strftime("%Y-%m-%d"), "habeas_data": True, "habeas_data_fecha": fecha_habeas_final}).execute()
 
-                supabase.table("historias_clinicas").insert({"paciente_documento": doc_up, "motivo_consulta": str(motivo).upper(), "rx_final_od": rx_od_final, "rx_final_oi": rx_oi_final, "dp": dp_combined, "ultimo_control": str(ultimo_control).upper(), "observaciones": str(obs).upper(), "adicion": f"{adicion:+.2f}" if adicion > 0.0 else "", "fecha": now_co().isoformat()}).execute()
+                # La ficha de lentes de contacto solo se guarda si se
+                # lleno algo: una historia sin lentes de contacto no tiene
+                # por que llevar seis ceros.
+                _lc_guardar = {}
+                if _hay_lc and (lc.get("lc_marca") or lc.get("lc_esfera_od")
+                                or lc.get("lc_esfera_oi")):
+                    _lc_guardar = {k: (v if v != 0 else None) if k != "lc_marca" else (v or None)
+                                   for k, v in lc.items()}
+                supabase.table("historias_clinicas").insert({"paciente_documento": doc_up, "motivo_consulta": str(motivo).upper(), "rx_final_od": rx_od_final, "rx_final_oi": rx_oi_final, "dp": dp_combined, "ultimo_control": str(ultimo_control).upper(), "observaciones": str(obs).upper(), "adicion": f"{adicion:+.2f}" if adicion > 0.0 else "", "fecha": now_co().isoformat(), **_lc_guardar}).execute()
 
                 # El paciente acaba de ser reatendido con una historia real:
                 # se resuelven sus pendientes de revisión anteriores, si tenía.
@@ -3154,6 +3367,8 @@ elif modulo == "🛍️ Óptica y Facturación":
                                  "vuelve a intentarlo.")
                         factura_existe = True
 
+                _hay_obs_factura = columna_existe("ventas_facturacion", "observaciones")
+
                 st.markdown("##### Origen de los Lentes")
                 opc_rx = ["Fórmula del Sistema"] if historias_data else []
                 opc_rx.extend(["Fórmula Externa", "No aplica"])
@@ -3384,9 +3599,54 @@ elif modulo == "🛍️ Óptica y Facturación":
                     if sal_pend <= 0 and tot_neto > 0:
                         st.caption("✅ Queda pagada completa.")
 
+                # Antes era texto libre ("3 días", "mañana"), que no se puede
+                # ordenar ni comparar: no habia forma de saber que estaba
+                # atrasado. Ahora es una fecha de verdad, con la que el
+                # Control de Trabajos ya puede avisar.
                 col_ent1, col_ent2 = st.columns(2)
-                fecha_entrega = col_ent1.text_input("Fecha/Hora Entrega", placeholder="Ej: 3 días / Mañana / 15-ago").upper()
+                _modo_entrega = col_ent1.radio(
+                    "Entrega", ["Con fecha", "Pendiente"], horizontal=True,
+                    key="modo_entrega_sel")
                 altura_focal = col_ent2.text_input("Alt. Focal (Opcional)", key="altura_focal_input", on_change=on_altura_focal_change).upper()
+
+                if _modo_entrega == "Pendiente":
+                    fecha_entrega = ENTREGA_PENDIENTE
+                    st.caption("Queda sin fecha acordada — para cuando el paciente "
+                               "solo deja un abono pequeño. Se le pone fecha después "
+                               "desde Control de Trabajos.")
+                else:
+                    # Un progresivo o un tallado tarda mas que un terminado, y
+                    # el sabado cuenta como habil porque la optica abre.
+                    _dias_prop = (DIAS_ENTREGA_TALLADO if tipo_gafas in FORMATOS_TALLADOS
+                                  else DIAS_ENTREGA_NORMAL)
+                    _fecha_prop = sumar_dias_habiles(
+                        now_co().replace(tzinfo=None), _dias_prop).date()
+                    ce1, ce2, ce3 = st.columns([2, 2, 2])
+                    _dia_ent = ce1.date_input("Fecha de entrega", value=_fecha_prop,
+                                              format="DD/MM/YYYY", key="dia_entrega_sel")
+                    _hora_ent = ce2.selectbox("Hora", ["10:00 a. m.", "5:30 p. m.", "Otra hora"],
+                                              key="hora_entrega_sel")
+                    if _hora_ent == "Otra hora":
+                        _h = ce3.time_input("¿A qué hora?", value=time(10, 0),
+                                            step=1800, key="hora_entrega_otra")
+                    else:
+                        _h = time(10, 0) if _hora_ent.startswith("10") else time(17, 30)
+                    fecha_entrega = f"{_dia_ent:%Y-%m-%d} {_h:%H:%M}"
+                    st.caption(f"Se proponen **{_dias_prop} días hábiles** "
+                               f"({'tallado o progresivo' if _dias_prop == DIAS_ENTREGA_TALLADO else 'trabajo terminado'}), "
+                               f"contando el sábado. Cámbiala si hace falta.")
+
+                # Las observaciones de la factura son suyas, no de la historia
+                # clinica. Antes el recuadro OBS del papel se llenaba con las
+                # observaciones clinicas del paciente -- que son otra cosa, y
+                # no tenian por que ir en un documento de cobro -- y no habia
+                # ningun sitio donde escribir una nota de la venta.
+                obs_factura = st.text_input(
+                    "Observaciones de la factura (opcional)",
+                    key="obs_factura_input",
+                    placeholder="Lo que deba salir impreso en la factura").upper()
+                st.caption("Sale en el recuadro OBS del papel. Es distinto de las "
+                           "observaciones clínicas, que no se imprimen aquí.")
 
                 with st.expander("Opcional: Detalles para Receta Clínica"):
                     col_rx1, col_rx2 = st.columns(2)
@@ -3422,8 +3682,8 @@ elif modulo == "🛍️ Óptica y Facturación":
                         # El '$' va escapado: dos sin escapar en el mismo
                         # texto los toma Streamlit como delimitadores de
                         # fórmula LaTeX y se come lo que hay en medio.
-                        st.warning(f"⚠️ El abono (\${format_currency_co(abono_val)}) no puede ser mayor que el total "
-                                   f"a pagar (\${format_currency_co(tot_neto)}). Revisa los valores.")
+                        st.warning(f"⚠️ El abono (\\${format_currency_co(abono_val)}) no puede ser mayor que el total "
+                                   f"a pagar (\\${format_currency_co(tot_neto)}). Revisa los valores.")
                     else:
                         venta_data = {
                             "numero_factura": num_factura, "titular_nombre": titular_nombre, "titular_doc": titular_doc, "titular_tel": titular_tel,
@@ -3448,6 +3708,7 @@ elif modulo == "🛍️ Óptica y Facturación":
                                 "descuento": desc_calc, "total": tot_neto, "abono": abono_val, "saldo": sal_pend,
                                 "fecha_entrega": fecha_entrega, "altura_focal": altura_focal, "metodo_pago": metodo_pago,
                                 "estado": "ACTIVA", "estado_lab": "Pendiente de enviar", "fecha_venta": now_co().isoformat(),
+                                **({"observaciones": obs_factura} if _hay_obs_factura else {}),
                                 "rx_final_od": hist_factura.get("rx_final_od", ""), "rx_final_oi": hist_factura.get("rx_final_oi", ""),
                                 "adicion": hist_factura.get("adicion", ""), "dp": hist_factura.get("dp", ""),
                                 "av_od": detalles_rx.get("av_od", ""), "av_oi": detalles_rx.get("av_oi", ""),
@@ -3547,9 +3808,11 @@ elif modulo == "🛍️ Óptica y Facturación":
         # El selector va FUERA del form: dentro de un st.form elegir no
         # refresca nada, y la descripción y el precio no podrían rellenarse
         # hasta después de guardar.
+        # Las monturas entran aqui tambien: a veces se vende solo la
+        # montura y no hace falta una factura numerada. Antes estaban
+        # excluidas a proposito y habia que hacer la venta completa.
         _inv_menor = [q for q in (query_cached("inventario") or [])
-                      if str(q.get("categoria") or "").strip().lower() != "montura"
-                      and str(q.get("estado") or "ACTIVO").upper() != "DESCONTINUADO"]
+                      if str(q.get("estado") or "ACTIVO").upper() != "DESCONTINUADO"]
         _inv_menor.sort(key=lambda q: (str(q.get("marca") or ""), str(q.get("codigo") or "")))
 
         def _al_elegir_producto_menor():
@@ -3635,7 +3898,8 @@ elif modulo == "🛍️ Óptica y Facturación":
                 _msg_menor = (f"Venta menor registrada: {desc_final} — "
                               f"${format_currency_co(total_menor)}")
                 if _idx_pm is not None:
-                    _cod_pm = str(_inv_menor[_idx_pm].get("codigo") or "")
+                    _prod_pm = _inv_menor[_idx_pm]
+                    _cod_pm = str(_prod_pm.get("codigo") or "")
                     _ok_pm, _nueva_pm, _aviso_pm = mover_inventario(
                         _cod_pm, -int(cantidad_menor), "Venta menor",
                         factura=num_menor)
@@ -3644,6 +3908,24 @@ elif modulo == "🛍️ Óptica y Facturación":
                     if _aviso_pm:
                         st.session_state.global_toast_icon = "⚠️"
                         _msg_menor += f" · {_aviso_pm}"
+
+                    # Una montura sale con su estuche, igual que en la venta
+                    # completa. Solo si el estuche existe en el inventario y
+                    # queda alguno: si no hay, la venta se registra igual y no
+                    # se inventa un movimiento.
+                    _es_montura_pm = (str(_prod_pm.get("categoria") or "")
+                                      .strip().lower() == "montura")
+                    if _es_montura_pm:
+                        _estuche = next(
+                            (q for q in (query_cached("inventario") or [])
+                             if str(q.get("codigo") or "").upper() == ESTUCHE_GENERICO
+                             and cantidad_inv(q.get("cantidad")) > 0), None)
+                        if _estuche:
+                            _ok_es, _nueva_es, _ = mover_inventario(
+                                ESTUCHE_GENERICO, -int(cantidad_menor),
+                                "Venta menor", factura=num_menor)
+                            if _ok_es and _nueva_es is not None:
+                                _msg_menor += f" · estuches: {_nueva_es}"
                 st.session_state.global_toast = _msg_menor
                 st.session_state.trigger_clear_venta_menor = True
                 st.rerun()
@@ -3896,7 +4178,41 @@ elif modulo == "🛍️ Óptica y Facturación":
                     e_saldo_calc = max(0, e_total - e_abono)
                     fe5.metric("Saldo (calculado)", f"${format_currency_co(e_saldo_calc)}")
 
-                    e_entrega = st.text_input("Fecha/Hora Entrega", value=(venta_e.get("fecha_entrega") or "")).upper()
+                    # El valor que ya tiene puede ser una fecha nueva, un
+                    # PENDIENTE, o el texto libre de antes. Lo que no se
+                    # puede leer como fecha se ofrece dejarlo intacto, para
+                    # no borrar lo que alguien escribio al corregir otra cosa.
+                    _ent_actual = str(venta_e.get("fecha_entrega") or "")
+                    _ent_fecha = entrega_a_fecha(_ent_actual)
+                    _opc_ent = ["Con fecha", "Pendiente"]
+                    if _ent_actual and not _ent_fecha and _ent_actual.upper() != ENTREGA_PENDIENTE:
+                        _opc_ent.append(f"Dejar como está ({_ent_actual})")
+                    _ent_defecto = 0
+                    if _ent_actual.upper() == ENTREGA_PENDIENTE:
+                        _ent_defecto = 1
+                    elif len(_opc_ent) == 3:
+                        _ent_defecto = 2
+                    # Todo se dibuja siempre, sin esconder nada segun lo
+                    # elegido: esto vive dentro de un st.form y ahi los
+                    # campos no reaccionan hasta pulsar Guardar, asi que un
+                    # bloque que aparece y desaparece se quedaria a medias.
+                    # La eleccion se resuelve despues del submit.
+                    _modo_ent_e = st.radio("Entrega", _opc_ent, index=_ent_defecto,
+                                           horizontal=True,
+                                           key=f"modo_ent_e_{venta_e['numero_factura']}")
+                    ee1, ee2 = st.columns(2)
+                    _dia_e = ee1.date_input(
+                        "Fecha de entrega",
+                        value=(_ent_fecha.date() if _ent_fecha else now_co().replace(tzinfo=None).date()),
+                        format="DD/MM/YYYY", key=f"dia_ent_e_{venta_e['numero_factura']}")
+                    _hora_e = ee2.time_input(
+                        "Hora", value=(_ent_fecha.time() if _ent_fecha else time(10, 0)),
+                        step=1800, key=f"hora_ent_e_{venta_e['numero_factura']}")
+                    if len(_opc_ent) == 3:
+                        st.caption("Si eliges «Pendiente» o «Dejar como está», "
+                                   "la fecha de arriba no se usa.")
+                    else:
+                        st.caption("Si eliges «Pendiente», la fecha de arriba no se usa.")
 
                     st.markdown("##### Fórmula (Rx)")
                     esf_od_prev, cil_od_prev, eje_od_prev = rx_string_a_numeros(venta_e.get("rx_final_od"))
@@ -3935,6 +4251,11 @@ elif modulo == "🛍️ Óptica y Facturación":
                     st.markdown("##### 📋 Datos del paciente")
                     st.caption("Corrige aquí si algo quedó mal capturado -- por ejemplo, si por error se "
                                "escribió un nombre en el campo de documento.")
+                    e_obs_fac = st.text_input(
+                        "Observaciones de la factura",
+                        value=(venta_e.get("observaciones") or ""),
+                        placeholder="Lo que sale impreso en el recuadro OBS").upper()
+
                     pe1, pe2 = st.columns(2)
                     e_pac_nombre = pe1.text_input("Nombre del titular", value=(venta_e.get("titular_nombre") or "")).upper()
                     e_pac_doc = pe2.text_input("Documento del titular", value=(venta_e.get("titular_doc") or "")).upper()
@@ -3943,9 +4264,16 @@ elif modulo == "🛍️ Óptica y Facturación":
                     guardar_edicion = st.form_submit_button("💾 Guardar Cambios", type="primary", use_container_width=True)
 
                 if guardar_edicion:
+                    if _modo_ent_e == "Pendiente":
+                        e_entrega = ENTREGA_PENDIENTE
+                    elif _modo_ent_e.startswith("Dejar como está"):
+                        e_entrega = _ent_actual
+                    else:
+                        e_entrega = f"{_dia_e:%Y-%m-%d} {_hora_e:%H:%M}"
+
                     if e_abono > e_total:
-                        st.error(f"⚠️ El abono (\${format_currency_co(int(e_abono))}) no puede ser mayor que el "
-                                 f"total (\${format_currency_co(int(e_total))}). Corrige los valores y guarda de nuevo.")
+                        st.error(f"⚠️ El abono (\\${format_currency_co(int(e_abono))}) no puede ser mayor que el "
+                                 f"total (\\${format_currency_co(int(e_total))}). Corrige los valores y guarda de nuevo.")
                     elif e_pac_doc and not es_documento_numerico(e_pac_doc):
                         st.error(f"⚠️ El documento solo debe contener números. '{e_pac_doc}' no es válido.")
                     else:
@@ -3960,6 +4288,8 @@ elif modulo == "🛍️ Óptica y Facturación":
                             st.error(f"⚠️ {msg_doc}")
                         else:
                             supabase.table("ventas_facturacion").update({
+                                **({"observaciones": e_obs_fac}
+                                   if columna_existe("ventas_facturacion", "observaciones") else {}),
                                 "descripcion": e_desc, "metodo_pago": e_metodo,
                                 "total": int(e_total), "subtotal": int(e_total),
                                 "abono": int(e_abono), "saldo": int(e_saldo_calc),
@@ -4051,53 +4381,106 @@ elif modulo == "🛍️ Óptica y Facturación":
                 pac_data_r = supabase.table("pacientes").select("*").eq("documento", pac_doc).execute().data
                 paciente_r = pac_data_r[0] if pac_data_r else {
                     "nombre_completo": venta_r.get("titular_nombre", ""),
-                    "documento": pac_doc, "direccion": "", "celular": ""
+                    "documento": pac_doc or venta_r.get("titular_doc", ""),
+                    "direccion": "", "celular": ""
                 }
 
-                # La fórmula usada en ESTA venta específica ya se guarda
-                # directamente en ventas_facturacion desde que se creó (no
-                # depende de adivinar qué historia clínica corresponde por
-                # fecha). Solo para ventas anteriores a este cambio, que no
-                # tienen estos campos, se cae al comportamiento anterior:
-                # buscar la historia clínica más cercana (anterior o igual)
-                # a la fecha de venta.
-                if venta_r.get("rx_final_od") or venta_r.get("rx_final_oi"):
-                    hist_r = {
-                        "rx_final_od": venta_r.get("rx_final_od", ""),
-                        "rx_final_oi": venta_r.get("rx_final_oi", ""),
-                        "adicion": venta_r.get("adicion", ""),
-                        "dp": venta_r.get("dp", ""),
-                        "observaciones": f"ORIGEN: {venta_r.get('origen_rx', '')}".strip(": "),
-                    }
-                    detalles_rx_venta = {
-                        "av_od": venta_r.get("av_od", ""), "av_oi": venta_r.get("av_oi", ""),
-                        "av_cerca_od": venta_r.get("av_cerca_od", ""), "av_cerca_oi": venta_r.get("av_cerca_oi", ""),
-                    }
-                else:
-                    historias_r = supabase.table("historias_clinicas").select("*").eq(
-                        "paciente_documento", pac_doc
-                    ).order("fecha", desc=True).execute().data or []
+                # QUE FORMULA SE REIMPRIME
+                #
+                # Hay dos sitios donde vive la formula de una venta: la copia
+                # que la factura guardo el dia que se hizo, y la historia
+                # clinica de la que salio, que sigue viva y se puede corregir.
+                # Las dos se pueden tocar despues -- la factura desde "Editar
+                # Reciente", la historia desde "Editar Historia".
+                #
+                # Se reimprime LA ULTIMA CORREGIDA, comparando literalmente la
+                # fecha en que se toco cada una. Asi una correccion aparece en
+                # el papel sin importar donde se hizo.
+                #
+                # La historia que se mira es la que corresponde a ESA venta --
+                # la mas reciente anterior o igual a su fecha -- y no la ultima
+                # del paciente: si vuelve meses despues con una formula nueva,
+                # la factura de marzo tiene que seguir diciendo lo de marzo.
+                def _a_fecha(valor):
+                    """Una fecha comparable, o None si no se puede leer."""
+                    t = str(valor or "")
+                    if not t:
+                        return None
+                    try:
+                        if "T" in t:
+                            return datetime.fromisoformat(t.replace("Z", "+00:00")).replace(tzinfo=None)
+                        return datetime.strptime(t[:10], "%Y-%m-%d")
+                    except ValueError:
+                        return None
 
-                    hist_r = None
-                    if historias_r and fecha_original:
-                        # La más reciente que sea anterior o igual a la fecha de la venta
-                        for h in historias_r:
-                            h_raw = h.get("fecha", "")
-                            try:
-                                if "T" in h_raw:
-                                    h_dt = datetime.fromisoformat(h_raw.replace("Z", "+00:00")).replace(tzinfo=None)
-                                else:
-                                    h_dt = datetime.strptime(h_raw[:10], "%Y-%m-%d")
-                                if h_dt <= fecha_original:
-                                    hist_r = h
-                                    break
-                            except Exception:
-                                continue
-                    if not hist_r and historias_r:
-                        hist_r = historias_r[-1]  # Fallback: la más antigua disponible
-                    if not hist_r:
-                        hist_r = {"rx_final_od": "", "rx_final_oi": "", "dp": "", "adicion": "", "observaciones": ""}
-                    detalles_rx_venta = {}
+                historias_r = supabase.table("historias_clinicas").select("*").eq(
+                    "paciente_documento", pac_doc
+                ).order("fecha", desc=True).execute().data or [] if pac_doc else []
+
+                hist_de_la_venta = None
+                for h in historias_r:
+                    h_dt = _a_fecha(h.get("fecha"))
+                    if h_dt and fecha_original and h_dt <= fecha_original:
+                        hist_de_la_venta = h
+                        break
+                if not hist_de_la_venta and historias_r:
+                    hist_de_la_venta = historias_r[-1]
+
+                copia_venta = (venta_r.get("rx_final_od") or venta_r.get("rx_final_oi"))
+                _origen_formula = ""
+
+                if hist_de_la_venta and copia_venta:
+                    # Las dos existen: gana la que se corrigio mas tarde. Si no
+                    # se ha corregido ninguna son iguales, y da lo mismo cual.
+                    _tocada_hist = _a_fecha(hist_de_la_venta.get("modificado_fecha"))
+                    _tocada_venta = _a_fecha(venta_r.get("modificado_fecha"))
+                    _lejos = datetime(1900, 1, 1)
+                    if (_tocada_venta or _lejos) > (_tocada_hist or _lejos):
+                        usar_historia = False
+                        _origen_formula = "de la factura, corregida el " + \
+                            hora_co(venta_r.get("modificado_fecha"), "%d/%m/%Y")
+                    else:
+                        usar_historia = True
+                        _origen_formula = "de la historia clínica del " + \
+                            hora_co(hist_de_la_venta.get("fecha"), "%d/%m/%Y")
+                        if _tocada_hist:
+                            _origen_formula += ", corregida el " + \
+                                hora_co(hist_de_la_venta.get("modificado_fecha"), "%d/%m/%Y")
+                elif hist_de_la_venta:
+                    # Facturas viejas, de antes de que la venta guardara copia.
+                    usar_historia = True
+                    _origen_formula = "de la historia clínica del " + \
+                        hora_co(hist_de_la_venta.get("fecha"), "%d/%m/%Y")
+                else:
+                    # Formula externa o venta sin paciente: solo esta la copia.
+                    usar_historia = False
+                    _origen_formula = "de la propia factura"
+
+                if usar_historia:
+                    _f = hist_de_la_venta
+                else:
+                    _f = venta_r
+                hist_r = {
+                    "rx_final_od": _f.get("rx_final_od", "") or "",
+                    "rx_final_oi": _f.get("rx_final_oi", "") or "",
+                    "adicion": _f.get("adicion", "") or "",
+                    "dp": _f.get("dp", "") or "",
+                    # El OBS del papel sale de la propia venta, no de aqui.
+                    "observaciones": "",
+                }
+                # La agudeza visual solo se captura al facturar, asi que sale
+                # de la venta en los dos casos.
+                detalles_rx_venta = {
+                    "av_od": venta_r.get("av_od", ""), "av_oi": venta_r.get("av_oi", ""),
+                    "av_cerca_od": venta_r.get("av_cerca_od", ""),
+                    "av_cerca_oi": venta_r.get("av_cerca_oi", ""),
+                }
+                if hist_r["rx_final_od"] or hist_r["rx_final_oi"]:
+                    st.caption(f"📐 Fórmula {_origen_formula}: "
+                               f"OD `{format_rx_ui(hist_r['rx_final_od'])}` · "
+                               f"OI `{format_rx_ui(hist_r['rx_final_oi'])}`")
+                else:
+                    st.caption("📐 Esta venta no tiene fórmula registrada.")
 
                 st.markdown("---")
                 st.markdown("**Selecciona los documentos a descargar:**")
@@ -4323,7 +4706,7 @@ elif modulo == "📊 Cuadre de Caja Físico":
 
     ventas = supabase.table("ventas_facturacion").select("*").gte("fecha_venta", f"{fecha_str}T00:00:00-05:00").lte("fecha_venta", f"{fecha_str}T23:59:59-05:00").neq("estado", "ANULADA").execute().data or []
     recaudos = supabase.table("pagos_saldos").select("*").gte("fecha_pago", f"{fecha_str}T00:00:00-05:00").lte("fecha_pago", f"{fecha_str}T23:59:59-05:00").execute().data or []
-    gastos_todos_dia = supabase.table("gastos_caja").select("*").gte("fecha_gasto", f"{fecha_str}T00:00:00-05:00").lte("fecha_gasto", f"{fecha_str}T23:59:59-05:00").execute().data or []
+    gastos_todos_dia = gastos_vigentes(supabase.table("gastos_caja").select("*").gte("fecha_gasto", f"{fecha_str}T00:00:00-05:00").lte("fecha_gasto", f"{fecha_str}T23:59:59-05:00").execute().data or [])
     # El cuadre diario solo se cierra con gastos DIARIOS (operativos).
     # Los MENSUALES (nómina, arriendo, facturas de proveedores) no
     # distorsionan el cierre de caja del día -- se reflejan aparte, en
@@ -4496,8 +4879,8 @@ elif modulo == "📊 Cuadre de Caja Físico":
                    "Cámbialo aquí sin necesidad de borrarlo y volver a crearlo.")
         dias_reclasificar = st.slider("Ver gastos de los últimos N días:", 1, 30, 7, key="dias_reclasificar")
         limite_reclasificar = (now_co() - timedelta(days=dias_reclasificar)).isoformat()
-        gastos_recientes = supabase.table("gastos_caja").select("*") \
-            .gte("fecha_gasto", limite_reclasificar).order("fecha_gasto", desc=True).execute().data or []
+        gastos_recientes = gastos_vigentes(supabase.table("gastos_caja").select("*") \
+            .gte("fecha_gasto", limite_reclasificar).order("fecha_gasto", desc=True).execute().data or [])
 
         # La actualización se hace por id_gasto, la clave real de la fila.
         # Antes se identificaba por la terna fecha+descripción+monto: dos
@@ -4575,16 +4958,16 @@ elif modulo == "📊 Cuadre de Caja Físico":
         ultimo_dia = calendar.monthrange(anio_gm, mes_num_gm)[1]
         fin_mes = f"{mes_sel_gm}-{ultimo_dia:02d}T23:59:59-05:00"
 
-        gastos_mes = supabase.table("gastos_caja").select("*") \
+        gastos_mes = gastos_vigentes(supabase.table("gastos_caja").select("*") \
             .eq("tipo_gasto", "MENSUAL") \
-            .gte("fecha_gasto", inicio_mes).lte("fecha_gasto", fin_mes).execute().data or []
+            .gte("fecha_gasto", inicio_mes).lte("fecha_gasto", fin_mes).execute().data or [])
         ventas_mes_gm = traer_todas_las_filas(
             "ventas_facturacion",
             filtros_fn=lambda q: q.neq("estado", "ANULADA").gte("fecha_venta", inicio_mes).lte("fecha_venta", fin_mes)
         )
-        gastos_diarios_mes = supabase.table("gastos_caja").select("monto") \
+        gastos_diarios_mes = gastos_vigentes(supabase.table("gastos_caja").select("monto") \
             .eq("tipo_gasto", "DIARIO") \
-            .gte("fecha_gasto", inicio_mes).lte("fecha_gasto", fin_mes).execute().data or []
+            .gte("fecha_gasto", inicio_mes).lte("fecha_gasto", fin_mes).execute().data or [])
 
         total_ingresos_mes = sum(v.get("total", 0) for v in ventas_mes_gm)
         total_gastos_mensuales = sum(g.get("monto", 0) for g in gastos_mes)
@@ -5575,8 +5958,22 @@ elif modulo == "🔬 Control de Trabajos":
                         st.markdown(f"**Detalle:** {t['descripcion']}")
                     with c2:
                         entrega_val = t.get('fecha_entrega', '') or ''
-                        entrega_txt = entrega_val.strip() if entrega_val.strip() else "—"
+                        entrega_txt = formatear_entrega(entrega_val) or "—"
                         st.markdown(f"**Entrega:** {entrega_txt}")
+                        # Con la fecha guardada como fecha de verdad ya se
+                        # puede decir que esta atrasado sin que nadie lo
+                        # calcule de cabeza. De las de texto libre de antes
+                        # no se puede deducir nada, y no se dice nada.
+                        _est_ent, _txt_ent = estado_entrega(entrega_val)
+                        if _est_ent != "sin_fecha":
+                            _col_ent = {"atrasado": "#b0413c", "hoy": "#b0413c",
+                                        "manana": "#9a6a12", "pendiente": "#5f6368",
+                                        "proximo": "#2c7a5b"}[_est_ent]
+                            _peso = "700" if _est_ent in ("atrasado", "hoy") else "600"
+                            st.markdown(
+                                f"<span style='color:{_col_ent};font-weight:{_peso};"
+                                f"font-size:0.85em;'>{_txt_ent}</span>",
+                                unsafe_allow_html=True)
                         if int(t.get('saldo', 0)) > 0:
                             st.markdown(f"**Saldo:** ${format_currency_co(int(t['saldo']))}")
                         else:
@@ -5720,7 +6117,12 @@ elif modulo == "🧾 Pagos a Laboratorios":
     else:
         _facturas_lab = traer_todas_las_filas(
             "facturas_laboratorio", orden_col="fecha_factura", orden_desc=True)
-        _pagos_lab = traer_todas_las_filas("pagos_laboratorio")
+        # Un abono anulado se queda guardado pero deja de contar: como el
+        # saldo se calcula sumando los abonos, filtrarlo aqui devuelve la
+        # deuda a su sitio en todo el modulo de una vez.
+        _pagos_todos = traer_todas_las_filas("pagos_laboratorio")
+        _pagos_lab = [p for p in _pagos_todos
+                      if str(p.get("estado") or "ACTIVO").upper() != "ANULADO"]
 
         # Lo abonado NO se guarda en la factura: se suma de sus pagos. Un
         # dato que se puede calcular y además se guarda acaba
@@ -6036,6 +6438,157 @@ elif modulo == "🧾 Pagos a Laboratorios":
         # CORREGIR UNA FACTURA YA REGISTRADA
         # -------------------------------------------------------------
         with tab_lab_edit:
+            # -------------------------------------------------------
+            # CORREGIR O ANULAR UN ABONO
+            # -------------------------------------------------------
+            # Hasta ahora un abono solo se podia crear. Un cero de mas o un
+            # abono cargado a la factura equivocada no tenian arreglo desde
+            # la aplicacion, y habia que entrar a la base de datos.
+            #
+            # Cada abono creo ademas un gasto: si se corrige uno y no el
+            # otro, la analitica y el abono dejan de contar lo mismo. Por
+            # eso los dos se mueven juntos, siempre.
+            _pagos_ord = sorted(
+                _pagos_todos, key=lambda p: str(p.get("fecha_pago") or ""), reverse=True)
+            _fac_por_id = {f.get("id_factura_lab"): f for f in _facturas_lab}
+
+            with st.expander("💵 Corregir o anular un abono ya registrado"):
+                if not _pagos_ord:
+                    st.info("Todavía no hay abonos registrados.")
+                else:
+                    def _etiqueta_pago(p):
+                        _f = _fac_por_id.get(p.get("id_factura_lab")) or {}
+                        _anulado = str(p.get("estado") or "ACTIVO").upper() == "ANULADO"
+                        return (f"{hora_co(p.get('fecha_pago'), '%d/%m/%Y')} · "
+                                f"{str(_f.get('laboratorio') or '?').upper()} · "
+                                f"{_f.get('numero_factura_lab') or 'sin número'} · "
+                                f"${format_currency_co(p.get('monto'))} · "
+                                f"{p.get('metodo_pago') or ''}"
+                                + ("  (ANULADO)" if _anulado else ""))
+
+                    _idx_pago = st.selectbox(
+                        "¿Qué abono?", range(len(_pagos_ord)), index=None,
+                        format_func=lambda i: _etiqueta_pago(_pagos_ord[i]),
+                        key="pago_lab_corregir",
+                        placeholder="Elige el abono que hay que arreglar")
+
+                    if _idx_pago is not None:
+                        _pg = _pagos_ord[_idx_pago]
+                        _pg_id = _pg.get("id_pago")
+                        _pg_anulado = str(_pg.get("estado") or "ACTIVO").upper() == "ANULADO"
+                        _fac_pg = _fac_por_id.get(_pg.get("id_factura_lab")) or {}
+                        _hay_estado_pago = columna_existe("pagos_laboratorio", "estado")
+
+                        st.caption(f"Registrado por **{_pg.get('registrado_por') or '—'}** "
+                                   f"el {hora_co(_pg.get('fecha_pago'), '%d/%m/%Y a las %H:%M')}"
+                                   + (f" · gasto enlazado nº {_pg.get('id_gasto')}"
+                                      if _pg.get("id_gasto") else
+                                      " · sin gasto enlazado"))
+
+                        if _pg_anulado:
+                            st.warning("Este abono está **anulado**: no cuenta para el "
+                                       "saldo de la factura ni para los gastos.")
+                        elif not _hay_estado_pago:
+                            st.caption("ℹ️ Para poder anular abonos falta añadir la "
+                                       "columna `estado` en Supabase "
+                                       "(`migraciones/fase12_correcciones_noviembre.sql`).")
+
+                        _max_pg = float(_fac_pg.get("total") or 0)
+                        pc1, pc2 = st.columns(2)
+                        _nuevo_monto = pc1.number_input(
+                            "Monto corregido ($)", min_value=0, step=1000,
+                            value=int(float(_pg.get("monto") or 0)),
+                            key=f"monto_corr_{_pg_id}", disabled=_pg_anulado)
+                        _nuevo_metodo = pc2.selectbox(
+                            "Forma de pago", METODOS_PAGO_GASTO,
+                            index=(METODOS_PAGO_GASTO.index(_pg.get("metodo_pago"))
+                                   if _pg.get("metodo_pago") in METODOS_PAGO_GASTO else 0),
+                            key=f"metodo_corr_{_pg_id}", disabled=_pg_anulado)
+
+                        # Lo ya abonado sin contar este, para no dejar la
+                        # factura pagada de mas al corregir.
+                        _otros = sum(float(p.get("monto") or 0) for p in _pagos_lab
+                                     if p.get("id_factura_lab") == _pg.get("id_factura_lab")
+                                     and p.get("id_pago") != _pg_id)
+                        if not _pg_anulado and (_otros + _nuevo_monto) > _max_pg + 0.5:
+                            st.error(f"⚠️ Con ese monto la factura quedaría pagada de más: "
+                                     f"su total es ${format_currency_co(_max_pg)} y entre "
+                                     f"todos los abonos sumarían "
+                                     f"${format_currency_co(_otros + _nuevo_monto)}.")
+                            _monto_ok = False
+                        else:
+                            _monto_ok = True
+
+                        def _mover_gasto_del_pago(pago, cambios):
+                            """El gasto que nacio con el abono se mueve con el."""
+                            _gid = pago.get("id_gasto")
+                            if not _gid or _gid == "ERROR":
+                                return False
+                            try:
+                                supabase.table("gastos_caja").update(
+                                    {**cambios, **sello_auditoria()}
+                                ).eq("id_gasto", _gid).execute()
+                                return True
+                            except Exception:
+                                return False
+
+                        bc1, bc2 = st.columns(2)
+                        if bc1.button("💾 Guardar la corrección", type="primary",
+                                      use_container_width=True, key=f"btn_corr_{_pg_id}",
+                                      disabled=_pg_anulado or not _monto_ok):
+                            if _nuevo_monto <= 0:
+                                st.error("⚠️ El monto tiene que ser mayor que cero. Si el "
+                                         "abono no debió existir, anúlalo.")
+                            else:
+                                supabase.table("pagos_laboratorio").update({
+                                    "monto": int(_nuevo_monto),
+                                    "metodo_pago": _nuevo_metodo,
+                                    **(sello_auditoria()
+                                       if columna_existe("pagos_laboratorio", "modificado_por")
+                                       else {}),
+                                }).eq("id_pago", _pg_id).execute()
+                                _con_gasto = _mover_gasto_del_pago(_pg, {
+                                    "monto": int(_nuevo_monto),
+                                    "metodo_pago": _nuevo_metodo,
+                                    "tipo_gasto": "DIARIO" if _nuevo_metodo == "EFECTIVO" else "MENSUAL",
+                                })
+                                st.session_state.global_toast = (
+                                    f"Abono corregido a ${format_currency_co(_nuevo_monto)}."
+                                    + (" El gasto se ajustó igual." if _con_gasto else
+                                       " Ojo: no tenía gasto enlazado que ajustar."))
+                                st.rerun()
+
+                        if not _pg_anulado and _hay_estado_pago:
+                            with bc2:
+                                _ok_anular = st.checkbox(
+                                    "Sí, este abono no debió existir",
+                                    key=f"conf_anular_pago_{_pg_id}")
+                                if st.button("🚫 Anular el abono", use_container_width=True,
+                                             key=f"btn_anular_pago_{_pg_id}",
+                                             disabled=not _ok_anular):
+                                    supabase.table("pagos_laboratorio").update({
+                                        "estado": "ANULADO", **sello_auditoria(),
+                                    }).eq("id_pago", _pg_id).execute()
+                                    _con_gasto = _mover_gasto_del_pago(_pg, {"estado": "ANULADO"})
+                                    st.session_state.global_toast = (
+                                        f"Abono de ${format_currency_co(_pg.get('monto'))} anulado. "
+                                        f"La deuda con "
+                                        f"{str(_fac_pg.get('laboratorio') or '').upper()} vuelve a subir."
+                                        + ("" if _con_gasto else
+                                           " Ojo: no tenía gasto enlazado que anular."))
+                                    st.rerun()
+                        elif _pg_anulado and _hay_estado_pago:
+                            if bc2.button("♻️ Reactivar el abono", use_container_width=True,
+                                          key=f"btn_react_pago_{_pg_id}"):
+                                supabase.table("pagos_laboratorio").update({
+                                    "estado": "ACTIVO", **sello_auditoria(),
+                                }).eq("id_pago", _pg_id).execute()
+                                _mover_gasto_del_pago(_pg, {"estado": "ACTIVO"})
+                                st.session_state.global_toast = "Abono reactivado."
+                                st.rerun()
+
+            st.divider()
+
             if not _facturas_lab:
                 st.info("Todavía no hay facturas que corregir.")
             else:
@@ -6566,7 +7119,7 @@ elif modulo == "📈 Analítica y Estadísticas":
     recaudado_mes = sum(int(v.get("abono",0)) for v in ventas_mes)
     pendiente_mes = total_mes - recaudado_mes
     
-    gastos_db = traer_todas_las_filas("gastos_caja")
+    gastos_db = gastos_vigentes(traer_todas_las_filas("gastos_caja"))
     # Las filas marcadas como 'NO ES UN GASTO' se quedan en la base pero
     # no entran en ningún análisis: no son dinero que salió. Se filtran
     # aquí, en el origen, y no en cada suma -- olvidarlo en una sola de
