@@ -2459,7 +2459,7 @@ if "last_fac_search" not in st.session_state: st.session_state.last_fac_search =
 if "trigger_clear_doc" in st.session_state and st.session_state.trigger_clear_doc:
     for k in ["doc_input", "nom_input", "cel_input", "dir_input", "ocu_input", "edad_input", "mot_input", "ctrl_input", "dp_od_input", "dp_oi_input", "obs_input"]: st.session_state[k] = ""
     for k in ["esf_od", "cil_od", "eje_od", "esf_oi", "cil_oi", "eje_oi", "add_input"]: st.session_state[k] = 0.0 if "eje" not in k else 0
-    st.session_state.fecha_nac_input = datetime(1995, 1, 1)
+    st.session_state.fecha_nac_input = None
     # Por seguridad: el habeas data NUNCA debe quedar "encendido" para el
     # siguiente paciente sin su confirmación verbal real.
     st.session_state.habeas_check = False
@@ -2902,6 +2902,14 @@ if modulo == "👨‍⚕️ Consultorio":
                     st.session_state.doc_input = p.get("documento", ""); st.session_state.nom_input = p.get("nombre_completo", "")
                     st.session_state.cel_input = p.get("celular", ""); st.session_state.dir_input = p.get("direccion", "")
                     st.session_state.ocu_input = p.get("ocupacion", ""); st.session_state.edad_input = p.get("edad", "")
+                    # Sin esto el campo se quedaba en la fecha por defecto y
+                    # al guardar le borraba al paciente su fecha real.
+                    _fn_p = str(p.get("fecha_nacimiento") or "")[:10]
+                    try:
+                        st.session_state.fecha_nac_input = (
+                            datetime.strptime(_fn_p, "%Y-%m-%d").date() if _fn_p else None)
+                    except ValueError:
+                        st.session_state.fecha_nac_input = None
                     st.toast("✅ Paciente cargado.")
                     st.session_state.doc_autofill_preview = None
                 else:
@@ -2949,8 +2957,31 @@ if modulo == "👨‍⚕️ Consultorio":
             celular = col3.text_input("Celular *", key="cel_input")
             direccion = col1.text_input("Dirección", key="dir_input")
             ocupacion = col2.text_input("Ocupación", key="ocu_input")
-            fecha_nacimiento = col3.date_input("Fecha Nacimiento", value=datetime(1995, 1, 1), min_value=datetime(1900, 1, 1), max_value=now_co().replace(tzinfo=None), format="DD/MM/YYYY", key="fecha_nac_input")
-            edad = col1.text_input("Edad", key="edad_input")
+            fecha_nacimiento = col3.date_input(
+                "Fecha Nacimiento", value=None,
+                min_value=datetime(1900, 1, 1),
+                max_value=now_co().replace(tzinfo=None),
+                format="DD/MM/YYYY", key="fecha_nac_input")
+
+            # Con la fecha puesta, la edad es un dato que se deduce, no uno
+            # que se teclea: se calcula y se deja de solo lectura, para que
+            # no se queden las dos cosas diciendo cosas distintas. Sin
+            # fecha, se puede escribir a mano como antes.
+            if fecha_nacimiento:
+                _hoy_ed = now_co().replace(tzinfo=None).date()
+                edad = str(_hoy_ed.year - fecha_nacimiento.year
+                           - ((_hoy_ed.month, _hoy_ed.day)
+                              < (fecha_nacimiento.month, fecha_nacimiento.day)))
+                # El valor se siembra en session_state ANTES de dibujar el
+                # campo. Con 'key' puesto, Streamlit ignora 'value' a partir
+                # del primer render: al cargar un paciente de 1970 la edad se
+                # quedaba congelada en la del paciente anterior.
+                st.session_state["edad_calculada"] = edad
+                col1.text_input("Edad", disabled=True, key="edad_calculada")
+                col1.caption("Se calcula sola con la fecha de nacimiento.")
+            else:
+                edad = col1.text_input("Edad", key="edad_input")
+                col1.caption("Pon la fecha de nacimiento y la edad se calcula sola.")
             
         col_mot, col_ctrl = st.columns([2, 1])
         motivo = col_mot.text_input("Motivo de Consulta", key="mot_input")
@@ -3059,8 +3090,10 @@ if modulo == "👨‍⚕️ Consultorio":
                 except Exception:
                     pass
 
-                try: supabase.table("pacientes").upsert({"documento": doc_up, "nombre_completo": nom_up, "celular": cel_up, "ocupacion": str(ocupacion).upper(), "direccion": str(direccion).upper(), "edad": str(edad).upper(), "fecha_nacimiento": fecha_nacimiento.strftime("%Y-%m-%d"), "habeas_data": True, "habeas_data_fecha": fecha_habeas_final}).execute()
-                except Exception: supabase.table("pacientes").upsert({"documento": doc_up, "nombre_completo": nom_up, "celular": cel_up, "ocupacion": str(ocupacion).upper(), "direccion": str(direccion).upper(), "fecha_nacimiento": fecha_nacimiento.strftime("%Y-%m-%d"), "habeas_data": True, "habeas_data_fecha": fecha_habeas_final}).execute()
+                try: supabase.table("pacientes").upsert({"documento": doc_up, "nombre_completo": nom_up, "celular": cel_up, "ocupacion": str(ocupacion).upper(), "direccion": str(direccion).upper(), "edad": str(edad).upper(), "fecha_nacimiento": (fecha_nacimiento.strftime("%Y-%m-%d")
+                                                     if fecha_nacimiento else None), "habeas_data": True, "habeas_data_fecha": fecha_habeas_final}).execute()
+                except Exception: supabase.table("pacientes").upsert({"documento": doc_up, "nombre_completo": nom_up, "celular": cel_up, "ocupacion": str(ocupacion).upper(), "direccion": str(direccion).upper(), "fecha_nacimiento": (fecha_nacimiento.strftime("%Y-%m-%d")
+                                                     if fecha_nacimiento else None), "habeas_data": True, "habeas_data_fecha": fecha_habeas_final}).execute()
 
                 # La ficha de lentes de contacto solo se guarda si se
                 # lleno algo: una historia sin lentes de contacto no tiene
