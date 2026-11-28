@@ -1554,6 +1554,29 @@ UMBRAL_AJUSTE_ALTO = 10
 # sin saber desde cuando se contaban.
 ENTREGA_PENDIENTE = "PENDIENTE"
 
+# El estado de laboratorio con el que un trabajo deja de necesitar
+# seguimiento: ya se lo llevaron.
+ESTADO_LAB_ENTREGADO = "Entregado"
+
+
+def orden_por_entrega(trabajo):
+    """
+    Para poner arriba lo que hay que atender hoy.
+
+    Primero lo que no se ha entregado y tiene fecha, de lo mas atrasado a
+    lo mas lejano. Despues lo que esta en PENDIENTE o con una fecha vieja
+    escrita a mano, que no se puede comparar. Y al final lo ya entregado,
+    que no hay que perseguir.
+    """
+    entregado = str(trabajo.get("estado_lab") or "") == ESTADO_LAB_ENTREGADO
+    reciente = -valor_numerico_factura(trabajo.get("numero_factura"))
+    if entregado:
+        return (2, datetime.max, reciente)
+    d = entrega_a_fecha(trabajo.get("fecha_entrega"))
+    if d:
+        return (0, d, reciente)
+    return (1, datetime.max, reciente)
+
 # Los cilindros de lente de contacto no son continuos como los de unas
 # gafas: se fabrican en estos pasos. Siempre negativos, y sin cilindro
 # significa que la lente es esferica.
@@ -5904,6 +5927,19 @@ elif modulo == "🔬 Control de Trabajos":
         col_b1, col_b2 = st.columns(2)
         search_fac_lab = col_b1.text_input("🔍 Buscar por N° Factura:").upper()
         filtro_estado = col_b2.selectbox("Filtrar trabajos por estado:", ["Todos los Activos", "Pendiente de enviar", "En Laboratorio", "Recibido en Óptica", "Entregado"])
+
+        # Ahora que la entrega es una fecha de verdad, se puede ordenar y
+        # filtrar por ella. Antes la lista salia por numero de factura y
+        # habia que ir fila por fila buscando lo atrasado.
+        col_b3, col_b4 = st.columns(2)
+        FILTROS_ENTREGA = ["Todas", "🔴 Atrasadas", "📅 Se entregan hoy",
+                           "Próximos 7 días", "Sin fecha acordada"]
+        filtro_entrega = col_b3.selectbox("Filtrar por entrega:", FILTROS_ENTREGA,
+                                          key="filtro_entrega_trab")
+        orden_trab = col_b4.selectbox(
+            "Ordenar por:", ["Entrega (lo urgente primero)", "N° de factura"],
+            key="orden_trab_sel")
+        col_b3.caption("Los ya entregados no cuentan como atrasados.")
         
         def _filtros_trabajos(q):
             q = q.neq("estado", "ANULADA")
@@ -5923,7 +5959,30 @@ elif modulo == "🔬 Control de Trabajos":
         # de formato entre facturas nuevas y migradas). Como TRABAJOS.xlsx
         # y REGISTRO_DIARIO.xlsx comparten la misma numeración secuencial
         # del negocio, esto da un orden cronológico confiable.
-        trabajos_todos.sort(key=lambda t: valor_numerico_factura(t.get("numero_factura")), reverse=True)
+        if orden_trab.startswith("Entrega"):
+            trabajos_todos.sort(key=orden_por_entrega)
+        else:
+            trabajos_todos.sort(key=lambda t: valor_numerico_factura(t.get("numero_factura")), reverse=True)
+
+        # El filtro por entrega mira solo lo que sigue pendiente de
+        # entregar: una gafa que se llevaron hace un mes no esta atrasada.
+        if filtro_entrega != "Todas":
+            def _casa_entrega(t):
+                if str(t.get("estado_lab") or "") == ESTADO_LAB_ENTREGADO:
+                    return False
+                _e, _ = estado_entrega(t.get("fecha_entrega"))
+                if filtro_entrega.endswith("Atrasadas"):
+                    return _e == "atrasado"
+                if filtro_entrega.endswith("Se entregan hoy"):
+                    return _e == "hoy"
+                if filtro_entrega == "Próximos 7 días":
+                    _d = entrega_a_fecha(t.get("fecha_entrega"))
+                    if not _d:
+                        return False
+                    _dias = (_d.date() - now_co().replace(tzinfo=None).date()).days
+                    return 0 <= _dias <= 7
+                return _e in ("pendiente", "sin_fecha")
+            trabajos_todos = [t for t in trabajos_todos if _casa_entrega(t)]
         opciones_labs = ["NO ASIGNADO"] + [l['nombre'] for l in (supabase.table("laboratorios").select("nombre").execute().data or [])]
 
         # Paginación: 15 por página para no colapsar la carga con miles
@@ -5997,7 +6056,12 @@ elif modulo == "🔬 Control de Trabajos":
                         # puede decir que esta atrasado sin que nadie lo
                         # calcule de cabeza. De las de texto libre de antes
                         # no se puede deducir nada, y no se dice nada.
+                        # Un trabajo entregado no esta atrasado: decirle
+                        # "Atrasado 30 dias" a algo que el paciente ya se
+                        # llevo es ruido que resta credibilidad al aviso.
                         _est_ent, _txt_ent = estado_entrega(entrega_val)
+                        if est_act == ESTADO_LAB_ENTREGADO:
+                            _est_ent = "sin_fecha"
                         if _est_ent != "sin_fecha":
                             _col_ent = {"atrasado": "#b0413c", "hoy": "#b0413c",
                                         "manana": "#9a6a12", "pendiente": "#5f6368",
